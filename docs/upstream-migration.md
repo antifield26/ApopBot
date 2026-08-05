@@ -8,16 +8,21 @@
 |---|---|---|
 | minecraft-data 3.112.0 | overrides 固定版本 | ✅ 已正式支持 775 |
 | minecraft-protocol | overrides git SHA `3fb78a8d...` | ⏳ PR #1487 open |
-| prismarine-chunk | overrides git SHA `af619d32...` | ⚠️ PR #326 **closed 未合并**（最大风险点） |
-| prismarine-physics | overrides git SHA `11a96c10...` | ⏳ PR #134 open |
-| mineflayer | 直接依赖 git SHA `b30c85cb...` | ⏳ PR #3902 open |
+| prismarine-chunk 1.41.0 | overrides **官方 npm 版本** | ✅ **2026-07-31 正式发布 26.1**（PR #329 merged，含 #326 的 fluid-count + fromLocalPalette 修复） |
+| prismarine-physics 1.11.1 | overrides **官方 npm 版本** | ✅ **2026-07-28 发布版含 26.1 特性标记** |
+| mineflayer | 直接依赖 git SHA `b30c85cb...` | ⏳ PR #3902 open（被上面两项阻塞） |
+
+> chunk/physics 为何仍保留 overrides：mineflayer PR 分支的 package.json 把这两个依赖
+> 声明为 mneuhaus fork 的**可变分支名**（`#pc26_1_2-fluid-count` 等）。即使官方已发布，
+> npm 仍会按声明拉 fork 分支——overrides 以官方版本号覆盖，同时消除 fork 分支
+> force-push 的供应链风险（比早期 SHA pin 更进一步：内容也切换到维护者合并的实现）。
 
 上游状态跟踪：https://github.com/PrismarineJS/mineflayer/issues/3893
 
 ## 定期检查
 
 ```bash
-node scripts/migrate-upstream.mjs --check   # 建议 cron 每 2-4 周跑一次
+npm run migrate-upstream -- --check   # 建议 cron 每 2-4 周跑一次（npm script 已注册）
 ```
 
 上游合并后输出"上游已支持"，然后：
@@ -25,9 +30,10 @@ node scripts/migrate-upstream.mjs --check   # 建议 cron 每 2-4 周跑一次
 ## 执行迁移
 
 ```bash
-node scripts/migrate-upstream.mjs --dry-run   # 演练：输出将做的修改
-node scripts/migrate-upstream.mjs             # 实际执行：
-#   1. 改 package.json（mineflayer → ^正式版，删除 4 项协议 overrides）
+npm run migrate-upstream -- --dry-run   # 演练：输出将做的修改
+npm run migrate-upstream                # 实际执行：
+#   1. 改 package.json（mineflayer → ^正式版，删除 overrides 中的 git 引用；
+#      chunk/physics 版本覆盖与 minecraft-data 精确 pin 保留）
 #   2. npm install
 #   3. npm run check:compat + npm test 自动验证
 # 最后人工在树莓派上: node scripts/smoke.mjs --steps connect,spawn,move
@@ -40,13 +46,11 @@ node scripts/migrate-upstream.mjs             # 实际执行：
 若官方 PR 分支被关闭/重写，切到 mneuhaus fork 分支（PR 作者的 fork，内容相同）：
 
 ```bash
-git ls-remote https://github.com/mneuhaus/prismarine-chunk.git refs/heads/pc26_1_2-fluid-count
 git ls-remote https://github.com/mneuhaus/node-minecraft-protocol.git refs/heads/pc26_1_2-clean
-git ls-remote https://github.com/mneuhaus/prismarine-physics.git refs/heads/add-26.1-physics-features
-git ls-remote https://github.com/mneuhaus/mineflayer.git refs/heads/add-26.1.2-support   # 分支名以 ls-remote 实际输出为准
+git ls-remote https://github.com/mneuhaus/mineflayer.git refs/heads/pc26_1_2   # 分支名以 ls-remote 实际输出为准
 ```
 
-将输出 SHA 写入 package.json 对应引用。
+将输出 SHA 写入 package.json 对应引用（chunk/physics 已不需要：官方版本即可）。
 
 ## 降级开关（最坏情况）
 

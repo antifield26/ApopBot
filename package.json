@@ -2,7 +2,7 @@
   "name": "minecraft-bot",
   "private": true,
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Production Minecraft bot for PaperMC 26.1.2 on Raspberry Pi 5",
   "engines": {
     "node": ">=22"
@@ -12,7 +12,8 @@
     "dev": "node --watch src/index.js",
     "test": "node --test \"tests/*.test.mjs\"",
     "check:compat": "node scripts/check-compat.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "migrate-upstream": "node scripts/migrate-upstream.mjs"
   },
   "dependencies": {
     "mineflayer": "github:PrismarineJS/mineflayer#b30c85cb24d9fc7a009f61fe71a4fead516f8802",
@@ -31,7 +32,7 @@
     "mineflayer": "github:PrismarineJS/mineflayer#b30c85cb24d9fc7a009f61fe71a4fead516f8802",
     "minecraft-data": "3.112.0",
     "minecraft-protocol": "github:PrismarineJS/node-minecraft-protocol#3fb78a8da17cbce774a6cf8d78dfd889f1fbb8bf",
-    "prismarine-chunk": "github:PrismarineJS/prismarine-chunk#af619d32bfd2478a0ba08650e2966e0c0f6326a8",
-    "prismarine-physics": "github:PrismarineJS/prismarine-physics#11a96c10d44ebeb5ba1522a3279feec4452b6a9a"
+    "prismarine-chunk": "1.41.0",
+    "prismarine-physics": "1.11.1"
   }
 }

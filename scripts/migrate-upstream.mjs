@@ -18,11 +18,10 @@ const CHECK_ONLY = args.includes('--check')
 const DRY_RUN = args.includes('--dry-run')
 
 const TARGET_VERSION = '26.1.2'
+// 仍为 git pin 的包（chunk/physics 已随 1.41.0/1.11.1 正式发布 26.1 支持，2026-07-31 起无需 pin）
 const KNOWN_PINS = {
   mineflayer: 'b30c85cb24d9fc7a009f61fe71a4fead516f8802',
-  'minecraft-protocol': '3fb78a8da17cbce774a6cf8d78dfd889f1fbb8bf',
-  'prismarine-chunk': 'af619d32bfd2478a0ba08650e2966e0c0f6326a8',
-  'prismarine-physics': '11a96c10d44ebeb5ba1522a3279feec4452b6a9a'
+  'minecraft-protocol': '3fb78a8da17cbce774a6cf8d78dfd889f1fbb8bf'
 }
 
 // 检查 npm 上最新版 mineflayer 的 version.js 是否已含 26.1.2
@@ -36,7 +35,7 @@ async function checkUpstream () {
 function applyChanges (pkg, newMineflayerVersion) {
   const next = structuredClone(pkg)
   next.dependencies.mineflayer = `^${newMineflayerVersion}`
-  // 删除 overrides 中的协议相关 git 引用（minecraft-data 保留但放宽为 ^）
+  // 删除 overrides 中的 git 引用（minecraft-data 保留精确 pin：3.112.0 已含 775 且与 26.1.2 数据绑定）
   for (const key of Object.keys(KNOWN_PINS)) {
     delete next.overrides?.[key]
   }
