@@ -29,10 +29,5 @@
     "collectBlock": true,
     "autoEat": true,
     "armorManager": true
-  },
-  "l2": {
-    "enabled": false,
-    "provider": null,
-    "model": null
   }
 }
