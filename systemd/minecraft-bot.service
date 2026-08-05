@@ -4,6 +4,9 @@
 Description=Minecraft Bot (L1 core, protocol 775)
 After=network-online.target minecraft-server.service
 Wants=network-online.target
+# StartLimit* 属于 [Unit] 段（写在 [Service] 会被 systemd 忽略并告警）
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -14,8 +17,6 @@ ExecStart=/usr/bin/node src/index.js --config /etc/minecraft-bot/config.json
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10
-StartLimitIntervalSec=120
-StartLimitBurst=5
 TimeoutStopSec=30
 CPUWeight=30
 MemoryHigh=384M
@@ -24,7 +25,10 @@ TasksMax=128
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/minecraft-bot /etc/minecraft-bot
+ReadWritePaths=/var/lib/minecraft-bot /etc/minecraft-bot /opt/minecraft-bot/logs
+# 日志目录（M3 修复：默认 log.dir 在 ProtectSystem=strict 下必须显式可写，
+# 否则 pino-roll 以 EROFS 静默失败。配置中建议 log.dir=/var/lib/minecraft-bot/logs）
+LogsDirectory=minecraft-bot
 StandardOutput=journal
 StandardError=journal
 

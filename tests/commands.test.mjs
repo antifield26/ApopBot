@@ -15,6 +15,16 @@ test('parseCommand 双引号感知', () => {
   assert.deepEqual(parseCommand('!agent act mine {"a":1}'), { name: 'agent', args: ['act', 'mine', '{"a":1}'] })
 })
 
+test('parseCommand 未闭合引号报错（不再静默吞掉尾部）', () => {
+  const r = parseCommand('!say "a')
+  assert.equal(r.name, 'say')
+  assert.equal(r.error, '未闭合的引号')
+})
+
+test('parseCommand 转义双引号', () => {
+  assert.deepEqual(parseCommand('!say "a\\"b" c'), { name: 'say', args: ['a"b', 'c'] })
+})
+
 test('parseCommand 非命令返回 null', () => {
   assert.equal(parseCommand('hello').name, null)
   assert.equal(parseCommand('').name, null)
@@ -36,7 +46,7 @@ test('registry 注册与分发', async () => {
   const bot = {
     chat: (msg) => calls.push(['chat', msg])
   }
-  const ctx = { bot, cfg: { ops: ['op1'] }, onCmd: () => {} }
+  const ctx = { bot, cfg: { ops: ['op1'], chat: { commandCooldownMs: 0 } }, onCmd: () => {} }
 
   registry.register({ name: 'ping', permission: 'all', handler: (c, args) => { c.onCmd('ping', args) } })
   registry.register({ name: 'secret', handler: (c, args) => { c.onCmd('secret', args) } })

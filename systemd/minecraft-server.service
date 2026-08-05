@@ -4,6 +4,9 @@
 Description=PaperMC 26.1.2 Minecraft Server
 After=network-online.target
 Wants=network-online.target
+# StartLimit* 属于 [Unit] 段；O8：坏存档崩溃时 3 次重启后停止等待人工（此前无限重启）
+StartLimitIntervalSec=600
+StartLimitBurst=3
 
 [Service]
 Type=simple

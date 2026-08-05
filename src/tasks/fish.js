@@ -1,6 +1,8 @@
 import { BaseTask } from './base.js'
+import { withTimeout } from '../util/promise-timeout.js'
 
 // 钓鱼任务：bot.fish() 循环挂机钓鱼，按时长或背包满停止。
+// 每次抛竿以 60s 超时兜底（mineflayer 的 fish() 无超时，可能永久挂起 —— F1）。
 export class FishTask extends BaseTask {
   async init () {
     super.init()
@@ -8,7 +10,6 @@ export class FishTask extends BaseTask {
     if (typeof o.durationMinutes !== 'number') throw new Error('fish 任务需要 options.durationMinutes')
     this._durationMs = o.durationMinutes * 60 * 1000
     this._stopWhenInventoryFull = o.stopWhenInventoryFull ?? false
-    this.caught = 0
   }
 
   async run () {
@@ -24,15 +25,15 @@ export class FishTask extends BaseTask {
       }
 
       try {
-        await this.bot.fish()
-        this.caught++
-        this.log.debug({ total: this.caught }, 'fish caught')
+        await withTimeout(this.bot.fish(), 60 * 1000, 'fish attempt timeout')
+        this.incr('caught')
+        this.log.debug({ total: this.counters.caught }, 'fish caught')
       } catch (err) {
         this.log.warn({ err: err.message }, 'fish attempt failed, retrying in 5s')
-        await new Promise((resolve) => setTimeout(resolve, 5000))
+        await this._internalWait(5 * 1000, 'fish-retry')
       }
     }
-    this.log.info({ caught: this.caught }, 'fish task finished')
+    this.log.info({ caught: this.counters.caught ?? 0 }, 'fish task finished')
   }
 
   _inventoryFull () {

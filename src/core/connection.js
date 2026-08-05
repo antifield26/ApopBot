@@ -1,4 +1,4 @@
-import { createBotWithPlugins } from './bot.js'
+import { createBot as realCreateBot, loadMineflayerPluginsAsync as realLoadMineflayerPlugins } from './bot.js'
 import { classifyDisconnect, nextBackoff } from './reconnect.js'
 import { withTimeout } from '../util/promise-timeout.js'
 
@@ -6,6 +6,9 @@ const STATE_DISCONNECTED = 'disconnected'
 const STATE_CONNECTING = 'connecting'
 const STATE_CONNECTED = 'connected'
 const STATE_RECONNECTING = 'reconnecting'
+
+// 插件动态装载的超时（防止挂起的动态 import 卡死连接流程）
+const PLUGIN_LOAD_TIMEOUT_MS = 30000
 
 /**
  * 连接管理器：连接生命周期、断线分类、指数退避重连、spawn 超时、致命原因退出。
@@ -16,11 +19,16 @@ export class ConnectionManager {
    * @param {object} cfg 完整配置
    * @param {import('pino').Logger} logger
    * @param {{ onSpawn?: (bot: import('mineflayer').Bot) => void, onStateChange?: (state: string) => void }} hooks
+   * @param {{ createBot?: (cfg) => object, loadMineflayerPlugins?: (bot, cfg, logger) => Promise<object> }} deps 测试注入
    */
-  constructor (cfg, logger, hooks = {}) {
+  constructor (cfg, logger, hooks = {}, deps = {}) {
     this.cfg = cfg
     this.log = logger
     this.hooks = hooks
+    this._deps = {
+      createBot: deps.createBot ?? realCreateBot,
+      loadMineflayerPlugins: deps.loadMineflayerPlugins ?? realLoadMineflayerPlugins
+    }
 
     this.bot = null
     this.plugins = null
@@ -35,6 +43,7 @@ export class ConnectionManager {
     this._manuallyDisconnecting = false
     this._spawnPromise = null
     this._timeoutQuit = false // spawn 超时主动 quit → end 事件应走重连而非 fatal
+    this._fatalExit = false // 致命原因已判定 → 后续 end 事件不得再调度重连（竞态守卫）
   }
 
   getStatus () {
@@ -54,21 +63,38 @@ export class ConnectionManager {
   }
 
   /**
-   * 建立连接（含插件装载与事件接线）。重复调用前先 disconnect()。
+   * 建立连接。顺序：同步 createBot → 立即接线事件（无丢失窗口）→ 异步插件装载。
+   * 重复调用前先 disconnect()。
    */
   async connect () {
     this._manuallyDisconnecting = false
+    this._timeoutQuit = false // 每次全新尝试重置陈旧标记（避免误标后续正常断开）
     this._setState(STATE_CONNECTING)
     this.log.info({ host: this.cfg.host, port: this.cfg.port, mcVersion: this.cfg.mcVersion }, 'connecting')
 
-    const { bot, plugins } = await createBotWithPlugins(this.cfg, this.log)
+    // 1. 同步创建 + 立即接线：连接失败事件（error/end）不会在插件装载期间丢失
+    const bot = this._deps.createBot(this.cfg)
     this.bot = bot
-    this.plugins = plugins
     this.log = this.log.child({ bot: this.cfg.username })
-
     this._wireEvents()
 
-    // spawn 超时兜底：超时则主动断开，由 end 事件走重连路径
+    // 2. 异步插件装载（动态 import 可能较慢，设超时；失败为非致命网络类问题，重连重试）
+    try {
+      this.plugins = await withTimeout(
+        this._deps.loadMineflayerPlugins(bot, this.cfg, this.log),
+        PLUGIN_LOAD_TIMEOUT_MS,
+        '插件装载超时'
+      )
+    } catch (err) {
+      this.log.error({ err: err.message }, '插件装载失败，断开后重试')
+      this.lastFailMs = Date.now()
+      this.lastError = err.message
+      try { bot.quit() } catch { /* socket 可能已死 */ }
+      this._scheduleReconnect()
+      return
+    }
+
+    // 3. spawn 超时兜底：超时则主动断开，由 end 事件走重连路径
     this._spawnPromise = new Promise((resolve) => {
       bot.once('spawn', resolve)
     })
@@ -82,6 +108,14 @@ export class ConnectionManager {
         this._timeoutQuit = true
         try { bot.quit() } catch { /* socket 可能已死 */ }
       })
+  }
+
+  /**
+   * 更新配置（热重载：host/port/reconnect 参数在下次连接时生效）。
+   * @param {object} cfg
+   */
+  updateCfg (cfg) {
+    this.cfg = cfg
   }
 
   _wireEvents () {
@@ -105,8 +139,9 @@ export class ConnectionManager {
     })
 
     bot.on('end', (reason) => {
-      // end 在 kicked/error/quit 后触发；若已手动断开或已在重连调度中则跳过
+      // end 在 kicked/error/quit 后触发；若已手动断开、已在重连调度中或已判致命则跳过
       if (this._manuallyDisconnecting) return
+      if (this._fatalExit) return
       if (this.state === STATE_RECONNECTING) return
       // spawn 超时主动 quit：这是网络问题而非致命原因，走重连
       if (this._timeoutQuit) {
@@ -126,12 +161,13 @@ export class ConnectionManager {
     this.lastFailMs = Date.now()
     this.reconnectCount++
 
-    this.log.warn({ source, type: classified.type, isFatal: classified.isFatal, reason: classified.detail, attempt: this.attempt + 1 }, 'disconnected')
+    this.log.warn({ source, type: classified.type, isFatal: classified.isFatal, reason: classified.detail, attempt: this.attempt }, 'disconnected')
 
     if (classified.isFatal) {
       this.log.fatal({ type: classified.type, reason: classified.detail },
         '致命断线原因，退出等待人工介入（systemd 会按 StartLimitBurst 停止服务）')
-      // 给日志 flush 留时间
+      // 给日志 flush 留时间；后续 end 事件不得再调度重连
+      this._fatalExit = true
       setTimeout(() => process.exit(2), 500)
       return
     }

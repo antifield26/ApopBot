@@ -8,6 +8,7 @@ export class CommandRegistry {
   constructor (logger) {
     this.log = logger.child({ module: 'commands' })
     this.commands = new Map()
+    this._lastDispatch = new Map() // sender → 上次 op 命令时间戳（速率限制）
   }
 
   /**
@@ -40,15 +41,32 @@ export class CommandRegistry {
    * @returns {Promise<boolean>} 是否命中命令
    */
   async dispatch (line, { sender, ctx }) {
-    const { name, args } = parseCommand(line)
-    if (!name) return false
+    const parsed = parseCommand(line)
+    if (!parsed.name) return false
+    const { name, args, error } = parsed
     const def = this.commands.get(name)
     if (!def) return false
-
-    if (def.permission === 'op' && !isOp(sender, ctx.cfg)) {
-      ctx.bot.chat(`§c权限不足：${sender} 不在 ops 白名单`)
-      this.log.warn({ sender, cmd: name }, 'permission denied')
+    if (error) {
+      // 未闭合引号：明确提示而非静默吞掉消息尾部
+      ctx.bot.chat(`§c${error}（消息尾部被忽略）`)
       return true
+    }
+
+    if (def.permission === 'op') {
+      if (!isOp(sender, ctx.cfg)) {
+        ctx.bot.chat(`§c权限不足：${sender} 不在 ops 白名单`)
+        this.log.warn({ sender, cmd: name }, 'permission denied')
+        return true
+      }
+      // op 命令速率限制（防刷屏；all 命令不限制）
+      const cooldownMs = ctx.cfg.chat?.commandCooldownMs ?? 750
+      const now = Date.now()
+      const last = this._lastDispatch.get(sender) ?? 0
+      if (now - last < cooldownMs) {
+        this.log.warn({ sender, cmd: name }, 'command rate limited')
+        return true
+      }
+      this._lastDispatch.set(sender, now)
     }
 
     this.log.debug({ sender, cmd: name, args }, 'command dispatched')

@@ -3,3 +3,6 @@ logs/
 config/config.json
 *.log
 .DS_Store
+.env*
+coverage/
+*.local

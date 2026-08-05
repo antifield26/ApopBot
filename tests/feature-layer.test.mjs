@@ -1,0 +1,102 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
+import { loadConfig } from '../src/core/config.js'
+import { createFeatureLayerManager } from '../src/core/feature-layer.js'
+
+// 假 bot：EventEmitter + chat 收集
+class FakeBot extends EventEmitter {
+  constructor () {
+    super()
+    this.messages = []
+  }
+
+  chat (msg) { this.messages.push(msg) }
+}
+
+function makeLogger () {
+  return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {}, fatal () {}, flush (cb) { cb?.() } }
+}
+
+function makeCtx () {
+  const cfg = loadConfig({ argv: [], env: {} }) // tasks: [] → load 空转，无需真 bot API
+  return { cfg, logger: makeLogger(), bot: null, tasks: null, conn: null, agent: null, commands: null, chatHandler: null }
+}
+
+test('B1 修复：每次 spawn 全量重建功能层并挂新 bot 的 chat 监听', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+
+  const bot1 = new FakeBot()
+  const bot2 = new FakeBot()
+  await layer.rebuild(bot1)
+  assert.equal(ctx.bot, bot1)
+  assert.ok(ctx.tasks, 'tasks 应已初始化')
+  assert.ok(ctx.commands, 'commands 应已初始化')
+  assert.equal(bot1.listenerCount('chat'), 1, 'chat 监听应挂在 bot1 上')
+
+  const tasks1 = ctx.tasks
+  await layer.rebuild(bot2)
+  assert.equal(ctx.bot, bot2, 'ctx.bot 应指向新 bot')
+  assert.notEqual(ctx.tasks, tasks1, 'tasks 应为新实例（旧实例已 stopAll 拆除）')
+  assert.equal(bot2.listenerCount('chat'), 1, 'chat 监听应挂在 bot2 上')
+  assert.equal(ctx.tasks.getStatus().length, 0, '重建后无残留任务')
+
+  await layer.teardown()
+})
+
+test('B1 修复：重建后新 bot 上命令可分发（真实 commands 注册表）', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+
+  // 非命令消息不触发分发（不崩溃即可）
+  bot.emit('chat', 'steve', 'hello world')
+
+  // !ping 是内置命令（permission all）：必须在新 bot 上命中并回复
+  const hit = await ctx.commands.dispatch('!ping', { sender: 'steve', ctx })
+  assert.equal(hit, true)
+  assert.ok(bot.messages.some(m => m.startsWith('pong')), `应回复 pong，实际: ${bot.messages}`)
+  await layer.teardown()
+})
+
+test('B1 修复：chatHandler 读取实时 ctx（bot 重建后仍工作）', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+
+  const bot1 = new FakeBot()
+  const bot2 = new FakeBot()
+  await layer.rebuild(bot1)
+  const handler1 = ctx.chatHandler
+  await layer.rebuild(bot2)
+  assert.notEqual(ctx.chatHandler, handler1, '每次重建生成新 handler 引用（旧监听随旧 bot 消亡）')
+
+  // 触发 bot2 的 chat 监听 → 命令分发到新 bot（!ping 只依赖 bot.chat）
+  bot2.emit('chat', 'alex', '!ping')
+  await new Promise(r => setTimeout(r, 10))
+  assert.ok(bot2.messages.some(m => m.startsWith('pong')), `新 bot 应响应命令，实际: ${bot2.messages}`)
+  await layer.teardown()
+})
+
+test('queue 串行化：重叠操作按序执行', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const order = []
+  const p1 = layer.queue(async () => { await new Promise(r => setTimeout(r, 20)); order.push('a') })
+  const p2 = layer.queue(async () => { order.push('b') })
+  await Promise.all([p1, p2])
+  assert.deepEqual(order, ['a', 'b'], '队列应保证顺序')
+  await layer.teardown()
+})
+
+test('teardown 幂等（重复调用不抛）', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  await layer.rebuild(new FakeBot())
+  await layer.teardown()
+  await layer.teardown()
+  assert.equal(ctx.tasks, null)
+  assert.equal(ctx.commands, null)
+})

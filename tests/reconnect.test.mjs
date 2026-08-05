@@ -7,8 +7,6 @@ test('classifyDisconnect: 致命原因', () => {
   assert.equal(classifyDisconnect('You are not white-listed on this server').isFatal, true)
   assert.equal(classifyDisconnect('Outdated client! Please use 26.1.2').isFatal, true)
   assert.equal(classifyDisconnect('This server is not compatible with your client').type, 'version_mismatch')
-  assert.equal(classifyDisconnect('random unknown reason').isFatal, true)
-  assert.equal(classifyDisconnect('').isFatal, true)
 })
 
 test('classifyDisconnect: 非致命原因（值得重连）', () => {
@@ -17,6 +15,15 @@ test('classifyDisconnect: 非致命原因（值得重连）', () => {
   assert.equal(classifyDisconnect('Server is restarting').type, 'maintenance')
   assert.equal(classifyDisconnect(new Error('connect ETIMEDOUT')).type, 'network_error')
   assert.equal(classifyDisconnect(new Error('connect ETIMEDOUT')).isFatal, false)
+})
+
+test('classifyDisconnect: 未知/空原因 → 非 fatal（24/7 退避扛维护窗口）', () => {
+  assert.equal(classifyDisconnect('random unknown reason').isFatal, false)
+  assert.equal(classifyDisconnect('random unknown reason').type, 'other')
+  assert.equal(classifyDisconnect('').isFatal, false)
+  assert.equal(classifyDisconnect(undefined).isFatal, false)
+  assert.equal(classifyDisconnect(null).isFatal, false)
+  assert.equal(classifyDisconnect(new Error()).isFatal, false)
 })
 
 test('classifyDisconnect: Error 对象与 kick 对象', () => {

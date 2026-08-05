@@ -1,0 +1,67 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { chunkText, sendChat } from '../src/core/chat.js'
+
+test('chunkText: 短文本不分片', () => {
+  assert.deepEqual(chunkText('hello', 250), ['hello'])
+  assert.deepEqual(chunkText('', 250), [''])
+})
+
+test('chunkText: 长文本按 maxLength 硬切', () => {
+  const long = 'x'.repeat(700)
+  const chunks = chunkText(long, 250)
+  assert.equal(chunks.length, 3)
+  for (const c of chunks) assert.ok(c.length <= 250)
+  assert.equal(chunks.join(''), long, '拼接后应与原文一致')
+})
+
+test('chunkText: § 颜色码不被截断', () => {
+  const text = `${'§a'.repeat(3)}${'x'.repeat(300)}`
+  const chunks = chunkText(text, 250)
+  for (const c of chunks) {
+    // § 后必须是颜色字符（不允许 § 单独出现在片尾）
+    assert.notEqual(c[c.length - 1], '§', '颜色码不能断在 § 之后')
+  }
+  assert.equal(chunks.join(''), text)
+})
+
+test('chunkText: 空白处优先断开', () => {
+  const text = `${'a'.repeat(200)} ${'b'.repeat(200)}`
+  const chunks = chunkText(text, 250)
+  assert.equal(chunks.length, 2)
+  assert.equal(chunks[0], 'a'.repeat(200) + ' ') // 在空白后断开
+  assert.equal(chunks[1], 'b'.repeat(200))
+})
+
+test('sendChat: 逐片发送且每片不超上限', async () => {
+  const sent = []
+  const bot = { chat: (m) => sent.push(m) }
+  const long = '§c' + '中'.repeat(400) // 中文按字符计
+  const n = await sendChat(bot, long, 250)
+  assert.equal(n, sent.length)
+  assert.ok(n >= 2)
+  for (const m of sent) assert.ok(m.length <= 250)
+  assert.equal(sent.join(''), long)
+})
+
+test('sendChat: 无 chat 方法的 bot 返回 0（容错）', async () => {
+  assert.equal(await sendChat({}, 'x'), 0)
+})
+
+test('registry 速率限制：op 命令冷却期内静默丢弃', async () => {
+  const { CommandRegistry } = await import('../src/commands/registry.js')
+  const registry = new CommandRegistry({ child: () => ({ debug () {}, warn () {}, error () {} }) })
+  const calls = []
+  registry.register({
+    name: 'secret',
+    handler: async (c) => { calls.push(1) }
+  })
+  const ctx = { bot: { chat: () => {} }, cfg: { ops: ['op1'], chat: { commandCooldownMs: 10000 } } }
+  await registry.dispatch('!secret', { sender: 'op1', ctx })
+  await registry.dispatch('!secret', { sender: 'op1', ctx }) // 冷却期内
+  assert.equal(calls.length, 1, '冷却期内第二次应被丢弃')
+  // 冷却期过后（cooldown 归零）可再次执行——同一 registry 验证状态机
+  ctx.cfg.chat.commandCooldownMs = 0
+  await registry.dispatch('!secret', { sender: 'op1', ctx })
+  assert.equal(calls.length, 2)
+})

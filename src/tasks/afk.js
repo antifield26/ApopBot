@@ -15,28 +15,19 @@ export class AfkTask extends BaseTask {
 
     while (!this._stopRequested) {
       await this._waitIfPaused()
-      await this._sleep(this._intervalMs)
+      // 内部等待（stop/pause 可打断），不再需要自定义 _sleep/stop
+      await this._internalWait(this._intervalMs, 'afk-sleep')
       if (this._stopRequested) break
 
       // 微小的视角转动即可重置 afk 计时
-      const yaw = this.bot.entity.yaw + 0.05
-      this.bot.look(yaw, this.bot.entity.pitch, true)
-      this.log.debug('afk wiggle')
+      try {
+        const yaw = this.bot.entity.yaw + 0.05
+        this.bot.look(yaw, this.bot.entity.pitch, true)
+        this.incr('wiggles')
+        this.log.debug({ wiggles: this.counters.wiggles }, 'afk wiggle')
+      } catch (err) {
+        this.log.warn({ err: err.message }, 'afk 视角转动失败')
+      }
     }
-  }
-
-  _sleep (ms) {
-    return new Promise((resolve) => {
-      // 竞态守卫：stop() 可能在 run() 到达 _sleep 之前已执行
-      if (this._stopRequested) { resolve(); return }
-      this._sleepResolve = resolve
-      this._sleepTimer = setTimeout(resolve, ms)
-    })
-  }
-
-  async stop () {
-    clearTimeout(this._sleepTimer)
-    this._sleepResolve?.()
-    await super.stop()
   }
 }

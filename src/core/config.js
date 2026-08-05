@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, mkdirSync, accessSync, constants as FS_CONST } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -34,7 +34,25 @@ const BUILTIN_DEFAULTS = {
     autoEat: true,
     armorManager: true
   },
-  l2: { enabled: false, provider: null, model: null }
+  // L2 LLM 层：provider = auto（云端优先，失败回退 Ollama）| cloud | ollama。
+  // 所有密钥只从环境变量读取（l2.cloudApiKeyEnv 指定变量名），绝不进配置文件。
+  l2: {
+    enabled: false,
+    provider: 'auto',
+    model: 'claude-sonnet-5',
+    cloudBaseUrl: 'https://api.anthropic.com/v1/messages',
+    cloudApiKeyEnv: 'ANTHROPIC_API_KEY',
+    ollamaUrl: 'http://127.0.0.1:11434',
+    ollamaModel: 'qwen2.5:7b',
+    maxSteps: 5,
+    cooldownMs: 5000
+  },
+  // 聊天安全层：服务端单条消息上限 256 字符，Bot 分片发送时留冗余
+  chat: {
+    maxLength: 250,
+    commandCooldownMs: 750
+  },
+  scheduleTimezone: 'Asia/Shanghai'
 }
 
 // 环境变量映射：MCBOT_<KEY>，下划线命名 → 嵌套路径
@@ -52,6 +70,17 @@ const ENV_MAP = {
   MCBOT_OP_WHITELIST: ['ops'], // 逗号分隔
   MCBOT_TASKS_FILE: ['tasksFile'], // 任务 JSON 路径，合并入 tasks
   MCBOT_L2_ENABLED: ['l2', 'enabled'],
+  MCBOT_L2_PROVIDER: ['l2', 'provider'],
+  MCBOT_L2_MODEL: ['l2', 'model'],
+  MCBOT_L2_CLOUD_BASE_URL: ['l2', 'cloudBaseUrl'],
+  MCBOT_L2_CLOUD_API_KEY_ENV: ['l2', 'cloudApiKeyEnv'],
+  MCBOT_L2_OLLAMA_URL: ['l2', 'ollamaUrl'],
+  MCBOT_L2_OLLAMA_MODEL: ['l2', 'ollamaModel'],
+  MCBOT_L2_MAX_STEPS: ['l2', 'maxSteps'],
+  MCBOT_L2_COOLDOWN_MS: ['l2', 'cooldownMs'],
+  MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
+  MCBOT_CHAT_COMMAND_COOLDOWN_MS: ['chat', 'commandCooldownMs'],
+  MCBOT_SCHEDULE_TIMEZONE: ['scheduleTimezone'],
   MCBOT_RECONNECT_MAX_MS: ['reconnect', 'maxMs']
 }
 
@@ -115,7 +144,7 @@ function parseEnv (env) {
       value = raw === 'true'
     } else if (!Number.isNaN(Number(raw)) && /^-?\d+(\.\d+)?$/.test(raw) && pathArr[pathArr.length - 1].toLowerCase().includes('ms')) {
       value = Number(raw)
-    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && (pathArr[pathArr.length - 1] === 'keepDays' || pathArr[pathArr.length - 1] === 'port')) {
+    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && ['keepDays', 'port', 'maxSteps', 'maxLength'].includes(pathArr[pathArr.length - 1])) {
       value = Number(raw)
     } else {
       value = raw
@@ -165,8 +194,40 @@ export function loadConfig ({ argv = process.argv.slice(2), env = process.env } 
   // 相对路径基于项目根解析（跨平台：不用 process.cwd()）
   cfg.log.dir = path.isAbsolute(cfg.log.dir) ? cfg.log.dir : path.join(ROOT, cfg.log.dir)
 
-  return Object.freeze(cfg)
+  return deepFreeze(cfg)
 }
+
+function deepFreeze (obj) {
+  if (obj && typeof obj === 'object' && !Object.isFrozen(obj)) {
+    Object.freeze(obj)
+    for (const v of Object.values(obj)) deepFreeze(v)
+  }
+  return obj
+}
+
+/**
+ * 启动前检查日志目录可写（创建 + 写权限探测）。
+ * ProtectSystem=strict 下默认路径只读时，这里给出明确错误而非 pino-roll 静默 EROFS。
+ * @param {object} cfg
+ * @throws {Error} 目录不可写时抛出
+ */
+export function assertLogDirWritable (cfg) {
+  try {
+    mkdirSync(cfg.log.dir, { recursive: true })
+    accessSync(cfg.log.dir, FS_CONST.W_OK)
+  } catch (err) {
+    throw new Error(`日志目录不可写: ${cfg.log.dir}（${err.message}）。` +
+      '请将 log.dir 配置到可写路径（如 /var/lib/minecraft-bot/logs），' +
+      '或放宽 systemd 单元的 ProtectSystem/ReadWritePaths')
+  }
+}
+
+// 任务类型表（与 src/tasks/manager.js 的 TASK_TYPES 同步维护）
+const KNOWN_TASK_TYPES = ['mine', 'fish', 'afk', 'farm', 'chop', 'combat', 'breed']
+// 有自然完成语义的任务类型（scheduled 时无需 durationMinutes；afk 必须配）
+const NATURAL_COMPLETION_TYPES = ['mine', 'fish', 'farm', 'chop', 'combat', 'breed']
+const ROTATE_FREQUENCIES = ['hourly', 'daily', 'weekly', 'monthly', 'custom']
+const AREA_KEYS = ['x1', 'y1', 'z1', 'x2', 'y2', 'z2']
 
 /**
  * 配置校验。返回 { ok, errors }。
@@ -185,11 +246,74 @@ export function validateConfig (cfg) {
     if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) errors.push(`reconnect.${k} 必须为非负数: ${v}`)
   }
   if (cfg.reconnect.maxMs < cfg.reconnect.baseMs) errors.push('reconnect.maxMs 不能小于 baseMs')
+  if (typeof cfg.reconnect?.jitter === 'number' && (cfg.reconnect.jitter < 0 || cfg.reconnect.jitter > 1)) {
+    errors.push(`reconnect.jitter 必须在 0-1 之间，当前: ${cfg.reconnect.jitter}`)
+  }
   if (!Array.isArray(cfg.ops)) errors.push('ops 必须是数组')
   if (!['trace', 'debug', 'info', 'warn', 'error', 'fatal'].includes(cfg.log?.level)) {
     errors.push(`log.level 非法: ${cfg.log?.level}`)
   }
-  if (!Array.isArray(cfg.tasks)) errors.push('tasks 必须是数组')
+  if (!ROTATE_FREQUENCIES.includes(cfg.log?.rotate?.frequency)) {
+    errors.push(`log.rotate.frequency 必须是 ${ROTATE_FREQUENCIES.join('/')}，当前: ${cfg.log?.rotate?.frequency}`)
+  }
+  if (cfg.mineflayerPlugins && typeof cfg.mineflayerPlugins === 'object') {
+    for (const [k, v] of Object.entries(cfg.mineflayerPlugins)) {
+      if (typeof v !== 'boolean') errors.push(`mineflayerPlugins.${k} 必须是布尔值（"${v}" 是字符串会被视为真）`)
+    }
+  }
+  if (cfg.scheduleTimezone !== undefined && (typeof cfg.scheduleTimezone !== 'string' || !cfg.scheduleTimezone)) {
+    errors.push('scheduleTimezone 必须是非空字符串')
+  }
   if (!cfg.l2 || typeof cfg.l2.enabled !== 'boolean') errors.push('l2.enabled 必须是布尔值')
+  if (cfg.l2?.enabled) {
+    if (!['auto', 'cloud', 'ollama'].includes(cfg.l2.provider)) {
+      errors.push(`l2.provider 必须是 auto/cloud/ollama，当前: ${cfg.l2.provider}`)
+    }
+    if (typeof cfg.l2.model !== 'string' || !cfg.l2.model) errors.push('l2.model 必须是非空字符串（启用 L2 时）')
+  }
+  if (!Number.isInteger(cfg.chat?.maxLength) || cfg.chat.maxLength < 32 || cfg.chat.maxLength > 256) {
+    errors.push(`chat.maxLength 必须是 32-256 的整数，当前: ${cfg.chat?.maxLength}`)
+  }
+  if (!Number.isInteger(cfg.chat?.commandCooldownMs) || cfg.chat.commandCooldownMs < 0) {
+    errors.push(`chat.commandCooldownMs 必须是非负整数，当前: ${cfg.chat?.commandCooldownMs}`)
+  }
+  if (!Array.isArray(cfg.tasks)) errors.push('tasks 必须是数组')
+
+  // 任务条目校验：id 非空且唯一、类型已知、scheduled 完成语义、options 形状
+  const seenIds = new Set()
+  for (const [i, t] of (cfg.tasks ?? []).entries()) {
+    const label = `tasks[${i}]`
+    if (!t || typeof t !== 'object') { errors.push(`${label} 必须是对象`); continue }
+    if (typeof t.id !== 'string' || !t.id) { errors.push(`${label} 缺少非空 id`); continue }
+    if (seenIds.has(t.id)) errors.push(`${label} id 重复: ${t.id}`)
+    seenIds.add(t.id)
+    if (!KNOWN_TASK_TYPES.includes(t.type)) {
+      errors.push(`${label} 未知类型: ${t.type}（已知: ${KNOWN_TASK_TYPES.join(', ')}）`)
+      continue
+    }
+    if (t.schedule && !NATURAL_COMPLETION_TYPES.includes(t.type) && !t.options?.durationMinutes) {
+      errors.push(`${label} 类型 ${t.type} 无自然完成，scheduled 时必须配 options.durationMinutes`)
+    }
+    const opts = t.options ?? {}
+    if (opts.blockTypes !== undefined) {
+      if (!Array.isArray(opts.blockTypes) || opts.blockTypes.length === 0) {
+        errors.push(`${label} blockTypes 必须是非空数组`)
+      } else {
+        for (const b of opts.blockTypes) {
+          if (typeof b !== 'string' || !b) errors.push(`${label} blockTypes 条目必须是非空字符串`)
+          else if (b.startsWith('minecraft:')) errors.push(`${label} blockTypes 不能带命名空间前缀: ${b}（用无前缀名如 iron_ore）`)
+        }
+      }
+    }
+    if (opts.area !== undefined) {
+      const a = opts.area
+      for (const c of AREA_KEYS) {
+        if (!Number.isInteger(a?.[c])) errors.push(`${label} area.${c} 必须是整数`)
+      }
+      if (Number.isInteger(a?.x1) && Number.isInteger(a?.x2) && a.x1 > a.x2) errors.push(`${label} area.x1 不能大于 x2`)
+      if (Number.isInteger(a?.y1) && Number.isInteger(a?.y2) && a.y1 > a.y2) errors.push(`${label} area.y1 不能大于 y2`)
+      if (Number.isInteger(a?.z1) && Number.isInteger(a?.z2) && a.z1 > a.z2) errors.push(`${label} area.z1 不能大于 z2`)
+    }
+  }
   return { ok: errors.length === 0, errors }
 }
