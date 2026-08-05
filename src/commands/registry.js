@@ -1,5 +1,6 @@
 import { parseCommand } from './parser.js'
 import { isOp } from './permissions.js'
+import { sendChat } from '../core/chat.js'
 
 /**
  * 命令注册与分发。
@@ -48,13 +49,13 @@ export class CommandRegistry {
     if (!def) return false
     if (error) {
       // 未闭合引号：明确提示而非静默吞掉消息尾部
-      ctx.bot.chat(`§c${error}（消息尾部被忽略）`)
+      await sendChat(ctx.bot, `§c${error}（消息尾部被忽略）`, ctx.cfg.chat?.maxLength)
       return true
     }
 
     if (def.permission === 'op') {
       if (!isOp(sender, ctx.cfg)) {
-        ctx.bot.chat(`§c权限不足：${sender} 不在 ops 白名单`)
+        await sendChat(ctx.bot, `§c权限不足：${sender} 不在 ops 白名单`, ctx.cfg.chat?.maxLength)
         this.log.warn({ sender, cmd: name }, 'permission denied')
         return true
       }
@@ -74,7 +75,7 @@ export class CommandRegistry {
       await def.handler(ctx, args, sender)
     } catch (err) {
       this.log.error({ cmd: name, err: err.message }, 'command handler error')
-      ctx.bot.chat(`§c命令执行出错: ${err.message}`)
+      await sendChat(ctx.bot, `§c命令执行出错: ${err.message}`, ctx.cfg.chat?.maxLength)
     }
     return true
   }

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chunkText, sendChat } from '../src/core/chat.js'
+import { chunkText, sendChat, stripColorCodes } from '../src/core/chat.js'
 
 test('chunkText: 短文本不分片', () => {
   assert.deepEqual(chunkText('hello', 250), ['hello'])
@@ -41,11 +41,27 @@ test('sendChat: 逐片发送且每片不超上限', async () => {
   assert.equal(n, sent.length)
   assert.ok(n >= 2)
   for (const m of sent) assert.ok(m.length <= 250)
-  assert.equal(sent.join(''), long)
+  assert.equal(sent.join(''), '中'.repeat(400), '拼接后应等于剥色后的原文')
 })
 
 test('sendChat: 无 chat 方法的 bot 返回 0（容错）', async () => {
   assert.equal(await sendChat({}, 'x'), 0)
+})
+
+test('stripColorCodes: 剥离 § 颜色码（Paper 26.1.2 非法字符踢出修复）', () => {
+  assert.equal(stripColorCodes('§a[status] ok'), '[status] ok')
+  assert.equal(stripColorCodes('§c权限不足'), '权限不足')
+  assert.equal(stripColorCodes('plain text'), 'plain text')
+  assert.equal(stripColorCodes('尾部§'), '尾部')
+  assert.equal(stripColorCodes('§a§l混合§r格式'), '混合格式')
+})
+
+test('sendChat: 发送时统一剥离颜色码', async () => {
+  const sent = []
+  const bot = { chat: (m) => sent.push(m) }
+  await sendChat(bot, '§a[status] pos=1,2,3', 250)
+  assert.deepEqual(sent, ['[status] pos=1,2,3'])
+  assert.ok(!sent.join('').includes('§'), '发送内容不得含 §')
 })
 
 test('registry 速率限制：op 命令冷却期内静默丢弃', async () => {

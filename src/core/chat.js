@@ -1,8 +1,23 @@
 // 聊天发送安全层：服务端单条消息上限 256 字符，超长会被截断/拒绝。
-// sendChat 将长文本按 cfg.chat.maxLength 分片发送（优先在 § 颜色码/空白处断开，
-// 避免把颜色码或单词截成两半），片间 100ms 间隔防刷屏触发服务端速率限制。
+// sendChat 将长文本按 cfg.chat.maxLength 分片发送（优先在空白处断开，
+// 避免把单词截成两半），片间 100ms 间隔防刷屏触发服务端速率限制。
+//
+// 颜色码剥离：Paper 26.1.2 起聊天消息含 § 颜色码会被服务器直接踢出
+// （multiplayer.disconnect.illegal_characters，实测定位）。源码中的 §a/§c 前缀
+// 保留作设计标记，发送层统一剥离（若服务器日后允许颜色码，改此处即可恢复）。
 
 const INTER_MESSAGE_DELAY_MS = 100
+
+/**
+ * 移除聊天颜色码（§ 及合法颜色字符）。
+ * @param {string|unknown} text
+ * @returns {string}
+ */
+export function stripColorCodes (text) {
+  return String(text)
+    .replace(/§[0-9a-fk-or]/gi, '') // §a-§f / §k-§o / §r
+    .replace(/§/g, '') // 孤立 §（结尾等）
+}
 
 /**
  * 将文本按 maxLength 分片（纯函数，便于单测）。
@@ -42,7 +57,7 @@ export function chunkText (text, maxLength) {
  */
 export async function sendChat (bot, text, maxLength = 250) {
   if (!bot?.chat) return 0
-  const chunks = chunkText(String(text), maxLength)
+  const chunks = chunkText(stripColorCodes(text), maxLength)
   for (let i = 0; i < chunks.length; i++) {
     bot.chat(chunks[i])
     if (i < chunks.length - 1) {

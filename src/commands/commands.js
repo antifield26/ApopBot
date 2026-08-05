@@ -117,17 +117,17 @@ export function registerBuiltinCommands (registry, ctx) {
     description: '跟随指定玩家（需配置 mineflayerPlugins.follow=true）',
     handler: async (c, args) => {
       const [name] = args
-      if (!name) { c.bot.chat('§c用法: !follow <player>|off'); return }
-      if (!c.plugins?.follow) { c.bot.chat('§c未启用 follow 插件'); return }
+      if (!name) { await sendChat(c.bot, '§c用法: !follow <player>|off', c.cfg.chat?.maxLength); return }
+      if (!c.plugins?.follow) { await sendChat(c.bot, '§c未启用 follow 插件', c.cfg.chat?.maxLength); return }
       if (name === 'off') {
         c.plugins.follow.stop()
-        c.bot.chat('§a已停止跟随')
+        await sendChat(c.bot, '§a已停止跟随', c.cfg.chat?.maxLength)
         return
       }
       const player = Object.values(c.bot.players).find(p => p.username === name)
-      if (!player?.entity) { c.bot.chat(`§c找不到玩家 ${name}`); return }
+      if (!player?.entity) { await sendChat(c.bot, `§c找不到玩家 ${name}`, c.cfg.chat?.maxLength); return }
       c.plugins.follow.setTarget(player.entity)
-      c.bot.chat(`§a开始跟随 ${name}`)
+      await sendChat(c.bot, `§a开始跟随 ${name}`, c.cfg.chat?.maxLength)
     }
   })
 
@@ -136,7 +136,7 @@ export function registerBuiltinCommands (registry, ctx) {
     usage: '!agent chat <text> | !agent act <name> [json]',
     description: 'L2 LLM 层（需配置 l2.enabled=true；act 需 op）',
     handler: async (c, args, sender) => {
-      if (!c.agent) { c.bot.chat('§cL2 未启用（配置 l2.enabled=true 后重启）'); return }
+      if (!c.agent) { await sendChat(c.bot, '§cL2 未启用（配置 l2.enabled=true 后重启）', c.cfg.chat?.maxLength); return }
       const [action, ...rest] = args
       if (action === 'chat') {
         const { reply } = await c.agent.chat(sender, rest.join(' '))
