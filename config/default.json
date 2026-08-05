@@ -1,0 +1,38 @@
+{
+  "mcVersion": "26.1.2",
+  "host": "localhost",
+  "port": 25565,
+  "username": "mcbot",
+  "auth": "offline",
+  "spawnTimeoutMs": 60000,
+  "reconnect": {
+    "baseMs": 5000,
+    "maxMs": 300000,
+    "factor": 2,
+    "jitter": 0.2,
+    "resetAfterSpawnMs": 60000,
+    "minGapMs": 10000
+  },
+  "ops": [],
+  "log": {
+    "dir": "./logs",
+    "level": "info",
+    "pretty": false,
+    "rotate": {
+      "frequency": "daily",
+      "keepDays": 14
+    }
+  },
+  "tasks": [],
+  "mineflayerPlugins": {
+    "pathfinder": true,
+    "collectBlock": true,
+    "autoEat": true,
+    "armorManager": true
+  },
+  "l2": {
+    "enabled": false,
+    "provider": null,
+    "model": null
+  }
+}

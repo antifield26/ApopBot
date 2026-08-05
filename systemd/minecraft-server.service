@@ -1,0 +1,31 @@
+# Paper 服务端（同机运行）— 安装到 /etc/systemd/system/minecraft-server.service
+# JVM flags: Pi 5 8G 简化版（Xms=Xmx，不要上完整 Aikar's flags，见 docs/deploy.md）
+[Unit]
+Description=PaperMC 26.1.2 Minecraft Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/minecraft-server
+ExecStart=/usr/bin/java -Xms2G -Xmx2G -XX:+UseG1GC -XX:+ParallelRefProcEnabled \
+  -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC \
+  -XX:+AlwaysPreTouch -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 \
+  -XX:G1HeapRegionSize=8M -XX:G1ReservePercent=20 -XX:G1HeapWastePercent=5 \
+  -XX:G1MixedGCCountTarget=4 -XX:InitiatingHeapOccupancyPercent=15 \
+  -XX:G1MixedGCLiveThresholdPercent=90 -XX:G1RSetUpdatingPauseTimePercent=5 \
+  -XX:SurvivorRatio=32 -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1 \
+  -Dusing.aikars.flags=https://mcflags.emc.gs -Daikars.new.flags=true \
+  -jar paper-26.1.2.jar nogui
+Restart=on-failure
+RestartSec=10
+CPUWeight=70
+MemoryHigh=3G
+MemoryMax=3.5G
+TasksMax=256
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

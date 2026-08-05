@@ -1,0 +1,32 @@
+# Minecraft Bot (L1 core, protocol 775) — 安装到 /etc/systemd/system/minecraft-bot.service
+# 部署: sudo cp systemd/minecraft-bot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+[Unit]
+Description=Minecraft Bot (L1 core, protocol 775)
+After=network-online.target minecraft-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/minecraft-bot
+EnvironmentFile=-/etc/minecraft-bot/env
+ExecStart=/usr/bin/node src/index.js --config /etc/minecraft-bot/config.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=5
+TimeoutStopSec=30
+CPUWeight=30
+MemoryHigh=384M
+MemoryMax=768M
+TasksMax=128
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/minecraft-bot /etc/minecraft-bot
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,35 @@
+{
+  "_comment": "生产配置示例。复制为 config/config.json 使用（该文件已被 gitignore）。环境变量 MCBOT_* 可覆盖以下任意项。",
+  "mcVersion": "26.1.2",
+  "host": "localhost",
+  "port": 25565,
+  "username": "mcbot",
+  "auth": "offline",
+  "ops": ["steve"],
+  "tasks": [
+    {
+      "id": "mine-iron",
+      "type": "mine",
+      "enabled": true,
+      "options": {
+        "blockTypes": ["iron_ore", "deepslate_iron_ore"],
+        "radius": 32,
+        "maxBlocks": 64,
+        "area": { "x1": -50, "y1": -60, "z1": -50, "x2": 50, "y2": 0, "z2": 50 }
+      }
+    },
+    {
+      "id": "night-fish",
+      "type": "fish",
+      "enabled": true,
+      "schedule": "0 20 * * *",
+      "options": { "durationMinutes": 60, "stopWhenInventoryFull": true }
+    },
+    {
+      "id": "afk-main",
+      "type": "afk",
+      "enabled": true,
+      "options": { "intervalMinutes": 5 }
+    }
+  ]
+}
