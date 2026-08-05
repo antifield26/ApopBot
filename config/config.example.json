@@ -15,6 +15,7 @@
         "blockTypes": ["iron_ore", "deepslate_iron_ore"],
         "radius": 32,
         "maxBlocks": 64,
+        "chestLocations": [{ "x": 0, "y": 0, "z": 0 }],
         "area": { "x1": -50, "y1": -60, "z1": -50, "x2": 50, "y2": 0, "z2": 50 }
       }
     },
@@ -30,6 +31,51 @@
       "type": "afk",
       "enabled": true,
       "options": { "intervalMinutes": 5 }
+    },
+    {
+      "id": "wheat-farm",
+      "type": "farm",
+      "enabled": false,
+      "options": {
+        "area": { "x1": -10, "y1": 64, "z1": -10, "x2": 10, "y2": 64, "z2": 10 },
+        "cropTypes": ["wheat"],
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "wood-chop",
+      "type": "chop",
+      "enabled": false,
+      "options": { "area": { "x1": -30, "y1": 60, "z1": -30, "x2": 30, "y2": 90, "z2": 30 } }
+    },
+    {
+      "id": "guard-base",
+      "type": "combat",
+      "enabled": false,
+      "options": { "area": { "x1": -50, "y1": -64, "z1": -50, "x2": 50, "y2": 100, "z2": 50 }, "maxTargets": 5 }
+    },
+    {
+      "id": "breed-cows",
+      "type": "breed",
+      "enabled": false,
+      "options": { "area": { "x1": -15, "y1": 60, "z1": -15, "x2": 15, "y2": 70, "z2": 15 }, "animalTypes": ["cow"], "foodItem": "wheat", "maxBreedings": 2 }
     }
-  ]
+  ],
+  "chat": {
+    "maxLength": 250,
+    "commandCooldownMs": 750
+  },
+  "scheduleTimezone": "Asia/Shanghai",
+  "l2": {
+    "enabled": false,
+    "provider": "auto",
+    "model": "claude-sonnet-5",
+    "cloudBaseUrl": "https://api.anthropic.com/v1/messages",
+    "cloudApiKeyEnv": "ANTHROPIC_API_KEY",
+    "ollamaUrl": "http://127.0.0.1:11434",
+    "ollamaModel": "qwen2.5:7b",
+    "maxSteps": 5,
+    "cooldownMs": 5000,
+    "_comment": "API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（如 ANTHROPIC_API_KEY），绝不写进配置文件"
+  }
 }
