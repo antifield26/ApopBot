@@ -26,7 +26,8 @@ export function registerBuiltinCommands (registry, ctx) {
       const pos = e ? `${Math.floor(e.position.x)},${Math.floor(e.position.y)},${Math.floor(e.position.z)}` : 'n/a'
       const mem = `${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`
       const taskSummary = c.tasks.getStatus().map(t => `${t.id}:${t.state}${t.waitingReason ? `(${t.waitingReason})` : ''}`).join(' ') || 'none'
-      await sendChat(c.bot, `§a[status] pos=${pos} hp=${e?.health?.toFixed(0) ?? 'n/a'} food=${e?.food ?? 'n/a'} state=${s.state} reconnects=${s.reconnectCount} mem=${mem} tasks=[${taskSummary}]`, c.cfg.chat?.maxLength)
+      // health/food 走 update_health 包（bot.health/bot.food）：26.1 下实体元数据不解析 health（实测 undefined）
+      await sendChat(c.bot, `§a[status] pos=${pos} hp=${c.bot.health?.toFixed(0) ?? 'n/a'} food=${c.bot.food ?? 'n/a'} state=${s.state} reconnects=${s.reconnectCount} mem=${mem} tasks=[${taskSummary}]`, c.cfg.chat?.maxLength)
     }
   })
 

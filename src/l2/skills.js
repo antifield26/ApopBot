@@ -71,8 +71,8 @@ export function createSkillRegistry (ctx) {
         state: s.state,
         reconnectCount: s.reconnectCount,
         position: e ? [Math.floor(e.position.x), Math.floor(e.position.y), Math.floor(e.position.z)] : null,
-        health: e?.health ?? null,
-        food: e?.food ?? null,
+        health: c.bot?.health ?? null, // update_health 包（26.1 实体元数据不解析 health）
+        food: c.bot?.food ?? null,
         memMb: Math.round(process.memoryUsage().rss / 1024 / 1024)
       }
     }
