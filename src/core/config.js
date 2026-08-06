@@ -267,6 +267,7 @@ export function validateConfig (cfg) {
   }
   if (cfg.mineflayerPlugins && typeof cfg.mineflayerPlugins === 'object') {
     for (const [k, v] of Object.entries(cfg.mineflayerPlugins)) {
+      if (k === '_comment') continue // JSON 注释惯例（config.example.json 使用）
       if (typeof v !== 'boolean') errors.push(`mineflayerPlugins.${k} 必须是布尔值（"${v}" 是字符串会被视为真）`)
     }
   }

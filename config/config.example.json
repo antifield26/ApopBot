@@ -61,6 +61,10 @@
       "options": { "area": { "x1": -15, "y1": 60, "z1": -15, "x2": 15, "y2": 70, "z2": 15 }, "animalTypes": ["cow"], "foodItem": "wheat", "maxBreedings": 2 }
     }
   ],
+  "mineflayerPlugins": {
+    "follow": true,
+    "_comment": "可选插件 follow：显式 true 才装载（!follow 命令依赖）。注意：插件在连接期装载，改此项需 nssm restart 生效（热重载不重装插件）。其余插件（pathfinder/collectBlock/autoEat/armorManager）默认启用，无需列出"
+  },
   "chat": {
     "maxLength": 250,
     "commandCooldownMs": 750
