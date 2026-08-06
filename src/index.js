@@ -121,11 +121,14 @@ async function reload () {
 const reloadQueued = () => layer.queue(reload)
 ctx.onReload = reloadQueued
 
-// 当前生效的配置文件路径（--config 参数或默认 default.json），用于热监视
+// 当前生效的配置文件路径（--config 参数，否则 config/config.json 存在时用生产路径，
+// 最后退回 default.json），用于热监视——与 loadConfig 的回退顺序一致（B7）
 function activeConfigPath () {
   const argv = process.argv.slice(2)
   const i = argv.indexOf('--config')
   if (i !== -1 && argv[i + 1]) return argv[i + 1]
+  const prodFile = path.join(ROOT, 'config', 'config.json')
+  if (fs.existsSync(prodFile)) return prodFile
   return path.join(ROOT, 'config', 'default.json')
 }
 

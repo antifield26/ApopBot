@@ -121,7 +121,8 @@ test('farm run: 区域空 → 自然完成', async () => {
     registry: { blocksByName: { wheat: { id: 1 } } },
     collectBlock: {},
     pathfinder: {},
-    blockAt: () => ({ name: 'air', type: 0 })
+    findBlocks: () => [],
+    blockAt: (p) => ({ position: p, name: 'air', type: 0 })
   }
   const task = new FarmTask('fm', 'farm', { area: AREA1, cropTypes: ['wheat'] }, makeCtx(bot))
   await task.start()
@@ -135,6 +136,7 @@ test('farm run: 收割成熟作物 → 计数 → 完成后停止', async () => 
     registry: { blocksByName: { wheat: { id: 1 } } },
     collectBlock: { collect: async () => { mature = false }, cancelTask () {} },
     pathfinder: { stop () {} },
+    findBlocks: () => (mature ? [new Vec3(0, 64, 0)] : []),
     blockAt: () => mature
       ? { name: 'wheat', type: 1, getProperties: () => ({ age: 7 }) }
       : { name: 'air', type: 0 },
@@ -154,6 +156,7 @@ test('farm run: 种植（equip + placeBlock）→ planted 计数', async () => {
     registry: { blocksByName: { wheat: { id: 1 }, farmland: { id: 3 } } },
     collectBlock: {},
     pathfinder: {},
+    findBlocks: () => [new Vec3(0, 64, 0)],
     blockAt: () => ({ name: 'farmland', type: 3 }),
     inventory: { items: () => [{ name: 'wheat_seeds' }] },
     equip: async (it) => { actions.push(['equip', it.name]) },

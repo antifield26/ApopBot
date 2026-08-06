@@ -10,7 +10,9 @@ const CLASSIFIERS = [
   { type: 'version_mismatch', fatal: true, keywords: ['outdated', 'version', 'client'] },
   { type: 'behavior', fatal: false, keywords: ['flying', 'spam', 'speed'] },
   { type: 'server_full', fatal: false, keywords: ['server is full', 'full server'] },
-  { type: 'maintenance', fatal: false, keywords: ['maintenance', 'updating', 'closed', 'restarting'] },
+  // 注意：不用裸 'closed'（会先于 network_error 匹配 "socket closed"/"connection closed"，
+  // 网络断开被误标 maintenance）；服务端主动关闭的显式措辞单独列出
+  { type: 'maintenance', fatal: false, keywords: ['maintenance', 'updating', 'restarting', 'server is closed', 'server closed'] },
   // 消息违规（§ 颜色码/非法字符踢出）：Bot 自身 bug 或误操作，无限重连无意义 → fatal 等人工
   { type: 'illegal_message', fatal: true, keywords: ['illegal_characters', 'multiplayer.disconnect.illegal'] },
   // 同时覆盖 Node.js 原生网络错误码（etimedout / socket hang up / econnreset 等）；

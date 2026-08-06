@@ -81,6 +81,9 @@ const ENV_MAP = {
   MCBOT_L2_OLLAMA_MODEL: ['l2', 'ollamaModel'],
   MCBOT_L2_MAX_STEPS: ['l2', 'maxSteps'],
   MCBOT_L2_COOLDOWN_MS: ['l2', 'cooldownMs'],
+  MCBOT_L2_MAX_TOKENS: ['l2', 'maxTokens'],
+  MCBOT_L2_CLOUD_TIMEOUT_MS: ['l2', 'cloudTimeoutMs'],
+  MCBOT_L2_OLLAMA_TIMEOUT_MS: ['l2', 'ollamaTimeoutMs'],
   MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
   MCBOT_CHAT_COMMAND_COOLDOWN_MS: ['chat', 'commandCooldownMs'],
   MCBOT_SCHEDULE_TIMEZONE: ['scheduleTimezone'],
@@ -147,7 +150,7 @@ function parseEnv (env) {
       value = raw === 'true'
     } else if (!Number.isNaN(Number(raw)) && /^-?\d+(\.\d+)?$/.test(raw) && pathArr[pathArr.length - 1].toLowerCase().includes('ms')) {
       value = Number(raw)
-    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && ['keepDays', 'port', 'maxSteps', 'maxLength'].includes(pathArr[pathArr.length - 1])) {
+    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && ['keepDays', 'port', 'maxSteps', 'maxLength', 'maxTokens'].includes(pathArr[pathArr.length - 1])) {
       value = Number(raw)
     } else {
       value = raw
@@ -180,6 +183,11 @@ export function loadConfig ({ argv = process.argv.slice(2), env = process.env } 
     const fileCfg = readJson(explicit)
     if (fileCfg === null) throw new Error(`指定的配置文件不存在: ${explicit}`)
     cfg = deepMerge(cfg, fileCfg)
+  } else {
+    // 无显式 --config：存在 config/config.json（按 README 复制示例的生产路径）则合并——
+    // 此前只读 default.json，config.json 仅在 NSSM AppParameters 显式传入时生效
+    const prodFile = readJson(path.join(ROOT, 'config', 'config.json'))
+    if (prodFile !== null) cfg = deepMerge(cfg, prodFile)
   }
   cfg = deepMerge(cfg, envCfg)
   cfg = deepMerge(cfg, cli)
@@ -227,10 +235,11 @@ export function assertLogDirWritable (cfg) {
   }
 }
 
-// 任务类型表（与 src/tasks/manager.js 的 TASK_TYPES 同步维护）
-const KNOWN_TASK_TYPES = ['mine', 'fish', 'afk', 'farm', 'chop', 'combat', 'breed']
-// 有自然完成语义的任务类型（scheduled 时无需 durationMinutes；afk 必须配）
-const NATURAL_COMPLETION_TYPES = ['mine', 'fish', 'farm', 'chop', 'combat', 'breed']
+// 任务类型表（与 src/tasks/manager.js 的 TASK_TYPES 同步维护；tests 有一致性断言防漂移）
+export const KNOWN_TASK_TYPES = ['mine', 'fish', 'afk', 'farm', 'chop', 'combat', 'breed']
+// 有自然完成语义的任务类型（scheduled 时无需 durationMinutes；afk/fish 必须配——
+// fish 语义同 afk：到点停止，缺 durationMinutes 应在配置校验期报错而非运行时）
+const NATURAL_COMPLETION_TYPES = ['mine', 'farm', 'chop', 'combat', 'breed']
 const ROTATE_FREQUENCIES = ['hourly', 'daily', 'weekly', 'monthly', 'custom']
 const AREA_KEYS = ['x1', 'y1', 'z1', 'x2', 'y2', 'z2']
 

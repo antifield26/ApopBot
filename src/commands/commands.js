@@ -79,7 +79,14 @@ export function registerBuiltinCommands (registry, ctx) {
       }
       if (!id) { await sendChat(c.bot, `§c用法: !task ${action} <id>`, c.cfg.chat?.maxLength); return }
       switch (action) {
-        case 'start': await c.tasks.startTask(id); break
+        case 'start': {
+          const p = await c.tasks.startTask(id)
+          // exclusive 互斥排队时 startTask 返回 null 且任务存在——明确反馈而非静默（B5）
+          if (!p && c.tasks.getStatus().some(t => t.id === id)) {
+            await sendChat(c.bot, `§a任务 ${id} 已排队（等待冲突的 exclusive 任务结束）`, c.cfg.chat?.maxLength)
+          }
+          break
+        }
         case 'stop': await c.tasks.stopTask(id); break
         case 'pause': await c.tasks.pauseTask(id); break
         case 'resume': await c.tasks.resumeTask(id); break

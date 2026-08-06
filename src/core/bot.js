@@ -25,13 +25,3 @@ export function createBot (cfg) {
 export function loadMineflayerPluginsAsync (bot, cfg, logger) {
   return loadMineflayerPlugins(bot, cfg, logger)
 }
-
-/**
- * @deprecated 请改用 createBot + loadMineflayerPluginsAsync（ConnectionManager 已拆分接线）。
- * @returns {Promise<{ bot: import('mineflayer').Bot, plugins: object }>}
- */
-export async function createBotWithPlugins (cfg, logger) {
-  const bot = createBot(cfg)
-  const plugins = await loadMineflayerPlugins(bot, cfg, logger)
-  return { bot, plugins }
-}

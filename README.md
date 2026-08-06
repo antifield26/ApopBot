@@ -5,7 +5,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 ## 功能
 
 - **分层架构**：L1 精简生产核心（默认）+ L2 LLM 智能体层（可选启用，双 Provider：云端 API + 本地 Ollama）
-- **连接守护**：断线原因分类（LoginGuard 思想）、指数退避重连（5s→300s）、10s 防抖防崩溃循环、spawn 超时兜底；仅名字冲突/白名单/版本不匹配算致命，未知原因退避重连
+- **连接守护**：断线原因分类（LoginGuard 思想）、指数退避重连（5s→300s）、10s 防抖防崩溃循环、spawn 超时兜底；名字冲突/白名单/版本不匹配/消息违规（illegal）算致命，其余退避重连
 - **重连自愈**：每次 spawn 全量重建功能层（任务/命令/LLM 重新绑定新 bot，一次重连后一切照常）
 - **任务系统**：7 种任务——挖矿（区域+背包满暂停）、钓鱼、AFK 防踢、**种植收割、伐木、战斗巡逻、养殖**；cron 调度（run-completion 语义，防重叠+时长上限）、热重载（SIGHUP/改配置/`!reload` 同一队列）
 - **聊天命令**：`!ping` `!status` `!task`（含 `!task new/remove` 临时任务）`!reload` `!say` `!pos` `!follow` `!agent`，op 白名单 + 速率限制 + 256 字符自动分片（见下方指令列表）
@@ -45,7 +45,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 | `breed` | — | 区域内白名单动物喂养繁殖（`maxBreedings` 上限） | 无动物 / 达上限 |
 
 - 调度：`schedule`（cron 表达式，时区 `scheduleTimezone`）触发后运行到完成，防重叠、`durationMinutes` 时长上限、完成/失败聊天通知（`notifyChat: false` 关闭）
-- mine/farm/chop/combat/breed 为区域限定（`area: {x1,y1,z1,x2,y2,z2}`；afk/fish 无区域）；farm/chop/combat/breed 为 exclusive（互斥，避免争抢寻路/采集）
+- 仅 farm/chop 强制 area（mine 可选、combat/breed 可省略=无区域约束；afk/fish 无区域）；farm/chop/combat/breed 为 exclusive（互斥，避免争抢寻路/采集）
 - 遥测：`counters`（mined/caught/planted/chopped/kills/breedings…）显示于 `!task list`
 
 ## 快速开始（开发机）

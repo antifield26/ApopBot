@@ -29,6 +29,12 @@ export async function loadMineflayerPlugins (bot, cfg, logger, deps = {}) {
     })
   }
 
+  // 依赖校验：collectBlock 强依赖 pathfinder（运行期寻路静默失效会误导任务）——
+  // 配置层错误在装载期显式抛出（B6）
+  if (enabled.collectBlock !== false && enabled.pathfinder === false) {
+    throw new Error('mineflayerPlugins.collectBlock 依赖 pathfinder——不能关闭 pathfinder 而保留 collectBlock')
+  }
+
   // 顺序: pathfinder → tool(collectblock 传递依赖自动装载) → collectBlock → autoEat → armorManager
   if (enabled.pathfinder !== false) {
     const { pathfinder, Movements } = await imp('pathfinder', () => import('mineflayer-pathfinder'))()

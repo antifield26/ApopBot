@@ -10,6 +10,11 @@
 
 import { isOp } from '../commands/permissions.js'
 
+// 文本长度上限（低配 4B 模型上下文与聊天消息长度双重约束；B6 从硬编码提为常量）
+const INPUT_MAX_CHARS = 1000 // 用户消息截断
+const REPLY_MAX_CHARS = 250 // 回复截断（与 chat.maxLength 默认一致）
+const TOOL_RESULT_MAX_CHARS = 2000 // 工具结果回填截断（大 JSON 撑爆 4B 上下文）
+
 const SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（minecraft-bot）。
 规则：
 1. 回答保持简短（≤250 字符），用 reply 技能说话。
@@ -68,7 +73,7 @@ export class AgentInterface {
     const ac = new AbortController()
     this._abort = ac
     try {
-      const messages = [{ role: 'user', content: String(text).slice(0, 1000) }]
+      const messages = [{ role: 'user', content: String(text).slice(0, INPUT_MAX_CHARS) }]
       const maxSteps = this.cfg.maxSteps ?? 5
       let reply = '（无回复）'
       for (let step = 0; step < maxSteps; step++) {
@@ -90,13 +95,13 @@ export class AgentInterface {
           // 会撑爆 4B 模型上下文或放大云端成本
           let output = r
           if (typeof output !== 'string') output = JSON.stringify(output)
-          if (output.length > 2000) output = output.slice(0, 2000) + '…(截断)'
+          if (output.length > TOOL_RESULT_MAX_CHARS) output = output.slice(0, TOOL_RESULT_MAX_CHARS) + '…(截断)'
           results.push({ id: tc.id, name: tc.name, output })
         }
         messages.push({ role: 'assistant', content: res.text ?? '', toolCalls: calls })
         messages.push({ role: 'user', content: '', toolResults: results })
       }
-      return { reply: reply.slice(0, 250) }
+      return { reply: reply.slice(0, REPLY_MAX_CHARS) }
     } catch (err) {
       if (err.name === 'AbortError') return { reply: '请求已中止' }
       this.log.error({ err: err.message }, 'agent chat failed')

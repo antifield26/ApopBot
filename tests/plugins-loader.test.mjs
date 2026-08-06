@@ -51,19 +51,19 @@ test('follow: true 时装载（含顺序在 armorManager 之后）', async () =>
   assert.ok(bot.pathfinder, 'getHandle 应记录 pathfinder 句柄')
 })
 
-test('条件关闭：pathfinder: false / autoEat: false 不装载', async () => {
+test('条件关闭：pathfinder/collectBlock/autoEat: false 不装载（B6 后 collectBlock 依赖校验）', async () => {
   const bot = makeBot()
   const loaded = await loadMineflayerPlugins(
     bot,
-    { mineflayerPlugins: { pathfinder: false, autoEat: false } },
+    { mineflayerPlugins: { pathfinder: false, collectBlock: false, autoEat: false } },
     makeLogger(),
     { imports: makeFakes() }
   )
   runInjections(bot)
   assert.ok(!loaded.pathfinder)
+  assert.ok(!loaded.collectBlock)
   assert.ok(!loaded.autoEat)
-  assert.ok(loaded.collectBlock, '未关闭的插件应正常装载')
-  assert.ok(loaded.armorManager)
+  assert.ok(loaded.armorManager, '未关闭的插件应正常装载')
 })
 
 test('pathfinder 注入时立即 setMovements（2.x 必需）', async () => {
@@ -76,4 +76,25 @@ test('pathfinder 注入时立即 setMovements（2.x 必需）', async () => {
   await loadMineflayerPlugins(bot, { mineflayerPlugins: {} }, makeLogger(), { imports: makeFakes() })
   runInjections(bot)
   assert.equal(setMovementsCalls, 1, 'pathfinder 注入时应立即 setMovements')
+})
+
+test('B6: collectBlock 依赖 pathfinder——关闭 pathfinder 保留 collectBlock 报错', async () => {
+  const bot = makeBot()
+  await assert.rejects(
+    loadMineflayerPlugins(bot, { mineflayerPlugins: { pathfinder: false, collectBlock: true } }, makeLogger(), { imports: makeFakes() }),
+    /依赖 pathfinder/
+  )
+})
+
+test('B6: 同时关闭 pathfinder 与 collectBlock 合法（无依赖问题）', async () => {
+  const bot = makeBot()
+  const loaded = await loadMineflayerPlugins(
+    bot,
+    { mineflayerPlugins: { pathfinder: false, collectBlock: false } },
+    makeLogger(),
+    { imports: makeFakes() }
+  )
+  runInjections(bot)
+  assert.ok(!loaded.pathfinder && !loaded.collectBlock)
+  assert.ok(loaded.autoEat, '其余插件不受影响')
 })

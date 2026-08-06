@@ -18,7 +18,8 @@ function sortKeys (v) {
   return v
 }
 
-const TASK_TYPES = {
+// 任务类型工厂表（与 src/core/config.js 的 KNOWN_TASK_TYPES 同步维护；tests 有一致性断言）
+export const TASK_TYPES = {
   mine: (id, options, ctx) => new MineTask(id, 'mine', options, ctx),
   fish: (id, options, ctx) => new FishTask(id, 'fish', options, ctx),
   afk: (id, options, ctx) => new AfkTask(id, 'afk', options, ctx),

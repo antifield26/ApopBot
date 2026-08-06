@@ -70,3 +70,14 @@ test('nextBackoff: minGapMs 防抖（崩溃循环保护）', () => {
   const long = nextBackoff({ ...params, lastFailMs: nowMs - 30000, nowMs })
   assert.ok(long.delayMs <= 2500)
 })
+
+test('B1 修复：connection closed → network_error（裸 closed 不再误标 maintenance）', () => {
+  const r = classifyDisconnect(new Error('connection closed'))
+  assert.equal(r.type, 'network_error')
+  assert.equal(r.isFatal, false)
+})
+
+test('B1 修复：Server is closed（服务端重启）→ maintenance', () => {
+  const r = classifyDisconnect('Server is closed.')
+  assert.equal(r.type, 'maintenance')
+})

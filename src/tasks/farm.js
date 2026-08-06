@@ -88,18 +88,24 @@ export class FarmTask extends BaseTask {
   }
 
   _scanArea (area) {
-    const out = []
-    for (let y = area.y1; y <= area.y2; y++) {
-      for (let x = area.x1; x <= area.x2; x++) {
-        for (let z = area.z1; z <= area.z2; z++) {
-          try {
-            const block = this.bot.blockAt(new Vec3(x, y, z))
-            if (block && block.type !== 0) out.push(block)
-          } catch { /* 区块未加载，跳过该位置 */ }
-        }
-      }
-    }
-    return out
+    // 逐格 blockAt（20×20×4 ≈ 1600 次/cycle）在低配机是纯 CPU 空转——
+    // 改 findBlocks（客户端区块内扫描）后按区域过滤，与 mine/chop 同模式（B4）
+    const anchor = this.bot.entity?.position ?? new Vec3(
+      (area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2, (area.z1 + area.z2) / 2)
+    const diag = Math.hypot(area.x2 - area.x1, area.y2 - area.y1, area.z2 - area.z1)
+    let found
+    try {
+      found = this.bot.findBlocks({
+        matching: (b) => b.type !== 0,
+        maxDistance: Math.ceil(diag) + 16, // 区域对角线 + 缓冲（锚点未必在区域中心）
+        count: 10000
+      })
+    } catch { return [] } // 区块未加载/API 缺失
+    return found
+      .filter(({ x, y, z }) =>
+        x >= area.x1 && x <= area.x2 && y >= area.y1 && y <= area.y2 && z >= area.z1 && z <= area.z2)
+      .map(p => this.bot.blockAt(p))
+      .filter(Boolean)
   }
 
   _isCrop (block) {

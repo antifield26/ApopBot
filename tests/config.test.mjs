@@ -223,3 +223,49 @@ test('P1-4 修复：顶层 _comment 放行（config.example.json 复制为 confi
   const { ok, errors } = validateConfig(cfg)
   assert.equal(ok, true, `含顶层 _comment 的配置应通过校验: ${errors.join('; ')}`)
 })
+
+test('B2: ENV_MAP 覆盖 l2.maxTokens/cloudTimeoutMs/ollamaTimeoutMs', () => {
+  const cfg = loadConfig({
+    argv: [],
+    env: {
+      MCBOT_L2_MAX_TOKENS: '2048',
+      MCBOT_L2_CLOUD_TIMEOUT_MS: '30000',
+      MCBOT_L2_OLLAMA_TIMEOUT_MS: '45000'
+    }
+  })
+  assert.equal(cfg.l2.maxTokens, 2048)
+  assert.equal(cfg.l2.cloudTimeoutMs, 30000)
+  assert.equal(cfg.l2.ollamaTimeoutMs, 45000)
+})
+
+test('B2: scheduled fish 缺 durationMinutes 在配置校验期报错（与 afk 一致）', () => {
+  const cfg = { ...loadConfig({ argv: [], env: {} }),
+    tasks: [{ id: 'f', type: 'fish', schedule: '0 20 * * *' }] }
+  const { ok, errors } = validateConfig(cfg)
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => e.includes('durationMinutes')), `应报缺 durationMinutes: ${errors.join('; ')}`)
+})
+
+test('B3: KNOWN_TASK_TYPES 与 TASK_TYPES 键集一致（双处同步不漂移）', async () => {
+  const { KNOWN_TASK_TYPES } = await import('../src/core/config.js')
+  const { TASK_TYPES } = await import('../src/tasks/manager.js')
+  assert.deepEqual([...KNOWN_TASK_TYPES].sort(), Object.keys(TASK_TYPES).sort())
+})
+
+test('B7: 无 --config 时存在 config/config.json 则合并（README 复制即用生效）', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const file = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'config', 'config.json')
+  const existed = fs.existsSync(file)
+  const backup = existed ? fs.readFileSync(file, 'utf8') : null
+  fs.writeFileSync(file, JSON.stringify({ host: 'prod.example.com' }))
+  try {
+    const cfg = loadConfig({ argv: [], env: {} })
+    assert.equal(cfg.host, 'prod.example.com', 'config.json 应合并覆盖 default.json（此前只读 default）')
+    assert.equal(cfg.mcVersion, '26.1.2', 'default 键应保留（合并而非替换）')
+  } finally {
+    if (existed) fs.writeFileSync(file, backup)
+    else fs.rmSync(file)
+  }
+})

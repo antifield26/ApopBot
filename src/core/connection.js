@@ -53,7 +53,8 @@ export class ConnectionManager {
       attempt: this.attempt,
       reconnectCount: this.reconnectCount,
       connectedAt: this.connectedAt,
-      uptimeMs: this.connectedAt ? Date.now() - this.connectedAt : 0,
+      // 断线期间 uptime 展示失真（connectedAt 不重置）——非 connected 状态返回 0（P2）
+      uptimeMs: this.state === STATE_CONNECTED && this.connectedAt ? Date.now() - this.connectedAt : 0,
       lastError: this.lastError
     }
   }

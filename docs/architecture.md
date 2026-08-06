@@ -31,7 +31,7 @@ minecraft-bot (Node.js ≥22, ESM)
 │   ├── permissions.js        config.ops 白名单（offline 模式无法查 OP；大小写不敏感）
 │   ├── registry.js           注册/分发/权限校验/op 命令速率限制
 │   └── commands.js           内置命令
-├── src/plugins/              mineflayer 生态插件装载（pathfinder→tool→collectBlock→autoEat→armorManager）
+├── src/plugins/              mineflayer 生态插件装载（pathfinder→collectBlock→autoEat→armorManager→follow（条件装载））
 ├── src/l2/                   LLM 层（l2.enabled=false 时零依赖；双 Provider 见 docs/l2.md）
 └── src/util/                 promise-timeout
 ```
@@ -48,8 +48,8 @@ minecraft-bot (Node.js ≥22, ESM)
 
 ## 重连与失败语义
 
-- 断线分类：`name_conflict` / `access_denied` / `version_mismatch` = **fatal**（exit(2)，NSSM `AppExit 2 Exit` / systemd `StartLimitBurst` 停止重启等人工）；`behavior` / `server_full` / `maintenance` / `network_error` / **未知原因** = **非 fatal**（指数退避重连——24/7 headless bot 应扛过维护窗口）
-- 退避：base 5s，×2，max 300s，±20% jitter；`minGapMs: 10s` 进程内防抖；spawn 后正常运行 60s 重置计数
+- 断线分类：`name_conflict` / `access_denied` / `version_mismatch` / `illegal_message` = **fatal**（exit(2)，NSSM `AppExit 2 Exit` / systemd `StartLimitBurst` 停止重启等人工）；`behavior` / `server_full` / `maintenance` / `network_error` / **未知原因** = **非 fatal**（指数退避重连——24/7 headless bot 应扛过维护窗口）
+- 退避：base 5s，×2，max 300s，±20% jitter；`minGapMs: 10s` 进程内防抖；spawn 即重置重连计数（attempt=0）
 - **重连自愈（B1）**：每次 spawn 由 feature-layer 全量重建功能层（tasks/commands/L2 重新绑定新 bot，chat 监听重挂）——重连后命令与任务照常
 - 热重载：配置文件变化（fs.watch 防抖 500ms，rename 重挂）/ `!reload`（Linux 另支持 SIGHUP）走同一串行队列 → 校验 → updateCfg → 日志配置变化重建 logger → 任务 diff 重载
 
