@@ -129,7 +129,7 @@ test('gotoPoint: 无 range → GoalBlock；有 range → GoalNear', async () => 
   assert.equal(last.rangeSq, 9, 'range 3 → rangeSq 9')
 })
 
-test('gotoNearest: GoalCompositeAny 含全部候选（range 正确）', async () => {
+test('gotoNearest: GoalCompositeAny 含全部候选（range 与坐标正确）', async () => {
   const bot = makePathBot(() => Promise.resolve())
   const move = createMovement(bot, makeLogger(), { pollMs: 10 })
   await move.gotoNearest([new Vec3(1, 64, 1), new Vec3(10, 65, 10)], 3, { timeoutMs: 1000 })
@@ -138,6 +138,11 @@ test('gotoNearest: GoalCompositeAny 含全部候选（range 正确）', async ()
   assert.equal(goal.goals.length, 2)
   assert.ok(goal.goals.every(g => g instanceof goals.GoalNear))
   assert.equal(goal.goals[0].rangeSq, 9)
+  // 防回归：Vec3 单参构造会 NaN（Math.floor(Vec3)）
+  assert.ok(goal.goals.every(g => Number.isInteger(g.x) && Number.isInteger(g.y) && Number.isInteger(g.z)),
+    '子 goal 坐标必须有效')
+  assert.equal(goal.goals[1].x, 10)
+  assert.equal(goal.goals[1].y, 65)
 })
 
 // ---- approachEntity ----
@@ -159,6 +164,10 @@ test('approachEntity: 范围外 → goto 到达（setGoal 仅一次，A* 不被�
   await new Promise(r => setTimeout(r, 40)) // 多个 pollMs 周期（A* 挂起中）
   const nearCalls = bot.setGoalCalls.filter(g => g instanceof goals.GoalNear)
   assert.equal(nearCalls.length, 1, '回归核心：goto 期间不得重复 setGoal（每 500ms 重建会重置 A* → 原地不动）')
+  const g = nearCalls[0]
+  assert.ok(Number.isInteger(g.x) && Number.isInteger(g.y) && Number.isInteger(g.z),
+    `GoalNear 坐标必须有效（传 Vec3 单参会 NaN）: x=${g.x} y=${g.y} z=${g.z}`)
+  assert.equal(g.x, 5, '目标坐标应正确传入')
   d.resolve()
   const r = await p
   assert.equal(r.ok, true)

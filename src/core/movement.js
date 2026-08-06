@@ -177,7 +177,9 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
     const combined = () => guard() || (
       entity?.position && entity.position.distanceTo(anchor) > RECALC_DIST
     )
-    const r = await goto(new goals.GoalNear(entity.position, range), {
+    // GoalNear 构造签名 (x, y, z, range)——传 Vec3 单参会 NaN（Math.floor(Vec3)），
+    // A* 行为异常（follow 实测回归同款，此处全库排查发现）
+    const r = await goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, range), {
       isInterrupted: combined,
       timeoutMs,
       pollMs
