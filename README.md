@@ -1,6 +1,6 @@
-# Minecraft Bot（PaperMC 26.1.2 / 树莓派 5）
+# Minecraft Bot（PaperMC 26.1.2 / Windows PC + 树莓派服务端）
 
-Minecraft Bot，连接运行在树莓派 5 8G 上的 PaperMC 26.1.2 服务端（协议 775）。基于 [mineflayer](https://github.com/PrismarineJS/mineflayer)（PR #3902 分支，26.1.2 支持），整合了 mindcraft / Voyager / baritone 的分析结论（见 [docs/architecture.md](docs/architecture.md)）。
+Minecraft Bot，以 NSSM Windows 服务运行在低配 Windows PC（i7-4720HQ / 8GB）上，连接运行在树莓派 5 8G 上的 PaperMC 26.1.2 服务端（协议 775）。基于 [mineflayer](https://github.com/PrismarineJS/mineflayer)（PR #3902 分支，26.1.2 支持），整合了 mindcraft / Voyager / baritone 的分析结论（见 [docs/architecture.md](docs/architecture.md)）。
 
 ## 功能
 
@@ -9,7 +9,7 @@ Minecraft Bot，连接运行在树莓派 5 8G 上的 PaperMC 26.1.2 服务端（
 - **重连自愈**：每次 spawn 全量重建功能层（任务/命令/LLM 重新绑定新 bot，一次重连后一切照常）
 - **任务系统**：7 种任务——挖矿（区域+背包满暂停）、钓鱼、AFK 防踢、**种植收割、伐木、战斗巡逻、养殖**；cron 调度（run-completion 语义，防重叠+时长上限）、热重载（SIGHUP/改配置/`!reload` 同一队列）
 - **聊天命令**：`!ping` `!status` `!task`（含 `!task new/remove` 临时任务）`!reload` `!say` `!pos` `!follow` `!agent`，op 白名单 + 速率限制 + 256 字符自动分片（见下方指令列表）
-- **生产设施**：pino 结构化日志（按天轮转）、systemd 双单元（资源限流+防崩循环）、一键部署脚本、兼容性门禁、冒烟测试
+- **生产设施**：pino 结构化日志（按天轮转）、NSSM Windows 服务（自启+崩溃重启+fatal 停止等人工）、PowerShell 一键部署（`scripts/deploy.ps1`）、兼容性门禁、冒烟测试
 
 ## 指令列表
 
@@ -23,7 +23,7 @@ Minecraft Bot，连接运行在树莓派 5 8G 上的 PaperMC 26.1.2 服务端（
 | `!task new <type> <id> [jsonOptions]` | op | 运行时创建并启动任务（不持久化），如 `!task new mine probe-1 {"blockTypes":["iron_ore"]}` |
 | `!task remove <id>` | op | 移除任务（含其 cron 调度） |
 | `!task start\|stop\|pause\|resume <id>` | op | 启停/暂停/恢复任务（`!task start` 支持终态重启） |
-| `!reload` | op | 热重载配置与任务（与 `systemctl reload`/改配置文件同一队列） |
+| `!reload` | op | 热重载配置与任务（与改配置文件/`nssm restart` 等效） |
 | `!say <text>` | op | 以 Bot 身份说话（超长自动分片） |
 | `!pos` | op | 当前坐标与朝向（调试） |
 | `!follow <player>\|off` | op | 跟随/停止跟随玩家（需 `mineflayerPlugins.follow: true`） |
@@ -58,11 +58,13 @@ cp config/config.example.json config/config.json   # 按需编辑
 npm start                   # 连接 localhost:25565
 ```
 
-## 树莓派部署
+## 部署（Windows PC）
 
-```bash
-# Pi 一次性准备见 docs/deploy.md（Node 22 LTS、Java 25、systemd 单元）
-./scripts/deploy.sh pi@<host> --fast
+Bot 以 NSSM Windows 服务运行于低配 PC（同机跑 Ollama 做 L2 本地推理）；PaperMC 服务端仍在树莓派（systemd）。见 [docs/deploy.md](docs/deploy.md)。
+
+```powershell
+# Windows PC，管理员 PowerShell（前置：Node 22 LTS + NSSM，见 docs/deploy.md）
+powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Smoke
 ```
 
 ## 验证
@@ -70,18 +72,28 @@ npm start                   # 连接 localhost:25565
 ```bash
 # 开发机
 npm test && npm run check:compat
-# Pi（需服务端在线）
+# Windows PC（需树莓派服务端在线；--host 指向服务端 IP）
 node scripts/check-compat.mjs --probe
-node scripts/smoke.mjs --config config/smoke.json          # 全步骤
-node scripts/smoke.mjs --config config/smoke.json --steps connect,spawn,chat   # 快速档
+node scripts/smoke.mjs --config config/smoke.json --host 192.168.3.93          # 全步骤
+node scripts/smoke.mjs --config config/smoke.json --host 192.168.3.93 --steps connect,spawn,chat   # 快速档
 ```
 
 ## 文档
 
 - [架构与整合决策](docs/architecture.md)
-- [树莓派部署指南](docs/deploy.md)
+- [部署指南（Windows PC + 树莓派服务端）](docs/deploy.md)
 - [L2 LLM 层设计](docs/l2.md)
 - [上游迁移（PR pin → 正式版）](docs/upstream-migration.md)
+- [legacy/（已退役的 Linux 部署产物）](legacy/README.md)
+
+## 性能要点（低配 PC + 同机 Ollama）
+
+部署目标为 8GB 内存的 Windows PC，同机运行 Ollama（qwen3.5:4b）做 L2 本地推理：
+
+- Bot 常驻 ~200-400MB RSS，已设低进程优先级（NSSM `BELOW_NORMAL_PRIORITY_CLASS`），不抢 Ollama 与其它程序的 CPU
+- 内存预算：系统 ~2G + Ollama ~2.5-5G（视量化/GPU 卸载）+ Bot ~0.4G + 余量 ~1G——重程序按需关闭
+- 依赖安装 `--omit=dev`（deploy.ps1 默认）；`maxSteps: 5` 防 LLM 工具循环；farm/chop/combat/breed 互斥不并发
+- Windows 无 cgroup 等价物：内存靠任务管理器观察；Ollama 吃紧时换小量化档
 
 ## 配置
 
@@ -91,7 +103,7 @@ node scripts/smoke.mjs --config config/smoke.json --steps connect,spawn,chat   #
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `mcVersion` | `26.1.2` | 协议 775；降级为 `1.21.11` 需同步更换依赖（见 upstream-migration.md） |
-| `host` / `port` | `localhost` / `25565` | |
+| `host` / `port` | `localhost` / `25565` | 生产指向树莓派局域网 IP（如 `192.168.3.93`） |
 | `username` / `auth` | `mcbot` / `offline` | 生产为 LAN 离线服；Microsoft 认证需 `auth: microsoft` |
 | `ops` | `[]` | 命令白名单（offline 模式无法查 OP；大小写不敏感） |
 | `reconnect` | base 5s, max 300s | 指数退避参数 |
@@ -99,7 +111,7 @@ node scripts/smoke.mjs --config config/smoke.json --steps connect,spawn,chat   #
 | `chat.maxLength` | `250` | 聊天分片上限（服务端上限 256） |
 | `chat.commandCooldownMs` | `750` | op 命令冷却（防刷屏） |
 | `scheduleTimezone` | `Asia/Shanghai` | cron 调度时区 |
-| `l2` | `enabled: false` | LLM 层：`provider: auto\|cloud\|ollama`，密钥只走环境变量 |
+| `l2` | `enabled: false` | LLM 层：`provider: auto\|cloud\|ollama`，密钥只走环境变量；默认 Ollama 模型 `qwen3.5:4b` |
 
 环境变量示例：`MCBOT_USERNAME=bot2 MCBOT_OP_WHITELIST=steve,alex npm start`
 

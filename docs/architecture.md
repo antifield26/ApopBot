@@ -7,13 +7,13 @@ minecraft-bot (Node.js ≥22, ESM)
 ├── src/index.js              入口：配置 → logger → ConnectionManager → 功能层 → 信号
 ├── src/core/                 基础设施
 │   ├── config.js             配置分层加载与校验（默认值 < default.json < --config < MCBOT_* < CLI）
-│   ├── logger.js             pino 结构化日志（文件按天轮转 + stdout → journald）
+│   ├── logger.js             pino 结构化日志（文件按天轮转 + stdout）
 │   ├── connection.js         ConnectionManager：连接/退避重连/spawn 超时/致命退出
 │   ├── reconnect.js          断线分类（classifyDisconnect）+ 指数退避（nextBackoff），纯函数
 │   ├── bot.js                createBot（同步）+ loadMineflayerPlugins（异步，事件零丢失窗口）
 │   ├── feature-layer.js      功能层生命周期（每次 spawn 全量重建 tasks/commands/L2 + chat 监听）
 │   ├── chat.js               聊天安全层（256 字符分片发送）
-│   └── signals.js            SIGINT/SIGTERM 优雅退出；SIGHUP 热重载
+│   └── signals.js            SIGINT/SIGTERM 优雅退出；热重载（配置监视/!reload，Linux 另支持 SIGHUP）
 ├── src/tasks/                任务系统
 │   ├── base.js               BaseTask 状态机（created→init→running⇄paused→stopped/completed/failed；
 │   │                          run-completion 语义 + 终态重启 + _cancel 取消钩子 + _internalWait）
@@ -41,17 +41,17 @@ minecraft-bot (Node.js ≥22, ESM)
 | 层 | 来源 | 决策 |
 |---|---|---|
 | 协议层 | **mineflayer**（PrismarineJS） | 唯一协议级 headless 实现、27 版本集成测试、MIT。直接依赖 PR #3902 分支获得 775 支持 |
-| 生产模式 | **mindcraft**（借鉴，不依赖） | LoginGuard 断线分类 → 本项目 `reconnect.js`；10s 崩溃保护 → `minGapMs` + systemd StartLimitBurst；配置分层 → `config.js`。mindcraft 锁定 mineflayer 4.33.0 + patch-package，不适合生产依赖 |
+| 生产模式 | **mindcraft**（借鉴，不依赖） | LoginGuard 断线分类 → 本项目 `reconnect.js`；10s 崩溃保护 → `minGapMs` + 服务管理器重启语义（NSSM `AppExit 2 Exit` / systemd `StartLimitBurst`）；配置分层 → `config.js`。mindcraft 锁定 mineflayer 4.33.0 + patch-package，不适合生产依赖 |
 | 任务/技能 | **Voyager**（借鉴思想） | control_primitives 原子技能思想 → 本项目任务系统（7 种任务）作为 L2 agent 的技能层 |
 | 寻路 | **baritone**（仅参考） | 客户端 Mod 无法 headless 集成；本项目用 mineflayer-pathfinder + collectblock 达成类似能力 |
 | L2 LLM | mindcraft AgentProcess 模式（参考后弃用） | 本实现采用进程内双 Provider（Node 22 全局 fetch 零依赖）；mindcraft 的 AgentProcess/JSONL IPC 在此规模无收益，见 l2.md |
 
 ## 重连与失败语义
 
-- 断线分类：`name_conflict` / `access_denied` / `version_mismatch` = **fatal**（exit(2)，systemd 连续 5 次失败停止服务等人工）；`behavior` / `server_full` / `maintenance` / `network_error` / **未知原因** = **非 fatal**（指数退避重连——24/7 headless bot 应扛过维护窗口）
+- 断线分类：`name_conflict` / `access_denied` / `version_mismatch` = **fatal**（exit(2)，NSSM `AppExit 2 Exit` / systemd `StartLimitBurst` 停止重启等人工）；`behavior` / `server_full` / `maintenance` / `network_error` / **未知原因** = **非 fatal**（指数退避重连——24/7 headless bot 应扛过维护窗口）
 - 退避：base 5s，×2，max 300s，±20% jitter；`minGapMs: 10s` 进程内防抖；spawn 后正常运行 60s 重置计数
 - **重连自愈（B1）**：每次 spawn 由 feature-layer 全量重建功能层（tasks/commands/L2 重新绑定新 bot，chat 监听重挂）——重连后命令与任务照常
-- 热重载：SIGHUP / 配置文件变化（fs.watch 防抖 500ms，rename 重挂）/ `!reload` 走同一串行队列 → 校验 → updateCfg → 日志配置变化重建 logger → 任务 diff 重载
+- 热重载：配置文件变化（fs.watch 防抖 500ms，rename 重挂）/ `!reload`（Linux 另支持 SIGHUP）走同一串行队列 → 校验 → updateCfg → 日志配置变化重建 logger → 任务 diff 重载
 
 ## 任务运行语义
 

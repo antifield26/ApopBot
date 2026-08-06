@@ -1,129 +1,143 @@
-# 树莓派 5 部署指南
+# 部署指南（Bot: Windows PC / 服务端: 树莓派）
 
-## 环境准备（一次性）
+## 拓扑
 
-```bash
-# 1. Raspberry Pi OS 64-bit (Bookworm)，启用 SSH
-sudo raspi-config   # Interface → SSH
-
-# 2. Node.js 22 LTS (ARM64)
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs
-node -v   # 应 ≥ 22
-
-# 3. Java 25+（Paper 26.1.2 要求）
-sudo apt install -y openjdk-25-jdk-headless   # 源内没有则用 sdkman 装 temurin-25
-java -version
-
-# 4. 基础工具与目录
-sudo apt install -y git rsync
-sudo mkdir -p /opt/minecraft-bot /opt/minecraft-server /var/lib/minecraft-bot /etc/minecraft-bot
-sudo chown -R pi:pi /opt/minecraft-bot /opt/minecraft-server /var/lib/minecraft-bot /etc/minecraft-bot
-
-# 5. journald 限容（服务器+bot 日志共享）
-sudo tee -a /etc/systemd/journald.conf <<'EOF'
-SystemMaxUse=100M
-EOF
-sudo systemctl restart systemd-journald
+```
+树莓派 5 8G (LAN 192.168.3.93)            Windows PC（低配：i7-4720HQ / 8GB DDR3）
+├── PaperMC 26.1.2 服务端                 ├── Bot —— NSSM 服务 minecraft-bot
+│   └── systemd/minecraft-server.service  ├── Ollama（qwen3.5:4b，L2 本地推理）
+│   └── 白名单: mcbot / smokebot           └── deploy.ps1 一键部署
+└── white-list=true
 ```
 
-## Paper 服务端配置（/opt/minecraft-server）
+- Bot 不再部署到树莓派（旧 Linux 产物 `deploy.sh` / `minecraft-bot.service` 在 [legacy/](../legacy/README.md)）
+- PaperMC 服务端仍在树莓派运行（单元文件 `systemd/minecraft-server.service` 未移动）
 
-1. 放置 `paper-26.1.2.jar`，`server.properties` 关键项：
+## 环境准备（Windows PC，一次性）
 
-```properties
-online-mode=false
-enforce-secure-profile=false
-view-distance=8
-simulation-distance=6
-white-list=true
-motd=Minecraft 26.1.2 on Pi 5
+```powershell
+winget install --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements   # Node.js 22 LTS
+winget install --id NSSM.NSSM --accept-package-agreements --accept-source-agreements           # Windows 服务注册
+winget install --id Git.Git                                                                     # git（npm ci 需要）
+# npm ci 的 git+ssh 依赖（mineflayer PR pin）防挂起：
+git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
 ```
 
-2. 白名单放行 bot 与 smoke：`whitelist add mcbot` 和 `whitelist add smokebot`
-   （smoke 用 `config/smoke.json` 以 smokebot 身份登录，不白名单会直接失败）
-3. 关闭/调大 AFK 踢出（否则 afk 任务白费）：`afk-kick-timeout=-1` 或按需求保留
+重开 shell 后验证：`node -v`（≥22）、`nssm version`。
 
-## Bot 配置（/etc/minecraft-bot/config.json）
+## 目录布局
+
+- 建议 `C:\minecraft-bot`（整仓拷贝/克隆）
+- 日志：`log.dir` 默认 `./logs`（项目内，无需额外目录；相对路径基于项目根解析，跨平台）
+- 配置：`config/config.json`（gitignore；缺失时 deploy.ps1 从 example 复制，不会覆盖已有配置）
+- 私密配置：`config/service.env`（gitignore；`KEY=VALUE` 行，`#` 开头为注释）→ deploy.ps1 注入 NSSM 服务环境变量（L2 密钥只走这里）
+
+## Bot 配置（config/config.json）
 
 ```json
 {
+  "host": "192.168.3.93",
   "username": "mcbot",
   "ops": ["steve", "alex"],
-  "log": { "dir": "/var/lib/minecraft-bot/logs" },
-  "l2": { "enabled": false }
+  "l2": { "enabled": true, "provider": "ollama", "ollamaModel": "qwen3.5:4b" }
 }
 ```
 
-- `log.dir` 必须指向可写路径（systemd `ProtectSystem=strict` 下 `/opt/minecraft-bot` 只读；
-  默认值会落在只读目录并启动失败——这是设计：宁可启动报错，不要日志静默丢失）
-- L2 密钥只走环境变量（见 docs/l2.md），绝不写进配置文件
+- `host` 指向树莓派局域网 IP（`localhost` 仅限开发机连本机服务端）
+- `username: mcbot` 已在服务端白名单；smoke 用 `config/smoke.json` 以 smokebot 身份登录（同样需白名单）
+- L2 默认 `ollama` + `qwen3.5:4b`（已是代码默认值）；云端回退/密钥见 [docs/l2.md](l2.md)
 
-## 安装 systemd 单元
+## 部署（管理员 PowerShell）
 
-```bash
-sudo cp systemd/minecraft-bot.service systemd/minecraft-server.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now minecraft-server   # 先启动服务端
-sudo systemctl enable --now minecraft-bot      # bot 依赖 After=minecraft-server
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1          # 部署 + 启动/重启
+powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Smoke   # 部署后冒烟快速档（connect,spawn,chat）
+powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Status  # 只读状态（无需管理员）
+powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Restart # 仅重启服务
 ```
 
-- 服务端 JVM：`-Xms2G -Xmx2G`（Pi 5 8G 的实际上限约 3G 堆，Aikar's flags 要求 6-10G 堆，**不适用于 Pi**）
-- bot 内存：systemd `MemoryHigh=384M / MemoryMax=768M`；实际 RSS 约 200-400MB
-- CPU 权重：服务端 70 / bot 30
+deploy.ps1 流程：预检（node ≥22、非 Store 存根、nssm 存在）→ 补 config.json → 依赖哈希门控 `npm ci --omit=dev` → `check:compat` + `npm test` → 服务不存在则 `nssm install` → **重跑全部 `nssm set`（幂等，参数变更即生效）** → 启动/重启。`nssm set` 不自动提权，故变更操作必须在管理员 shell 中执行。
 
-## 部署更新（开发机执行）
+## NSSM 服务语义（systemd → NSSM 映射）
 
-```bash
-./scripts/deploy.sh pi@<host>            # 常规部署（预检→rsync→按需 npm ci→重启）
-./scripts/deploy.sh pi@<host> --fast     # 部署 + 冒烟快速档（connect,spawn,chat）
-./scripts/deploy.sh pi@<host> --no-restart
-```
-
-- **Windows 前置**：deploy.sh 需要 `rsync`（Git for Windows 不内置）。推荐 WSL 中运行本脚本，
-  或安装 MSYS2（`pacman -S rsync`）/cwRsync 并加入 PATH。脚本会先检查 rsync 是否存在。
-- **Pi 的 npm ci**：lockfile 含 `git+ssh://` 依赖，HTTP 代理无法穿透。在 Pi 上执行一次：
-  ```bash
-  git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
-  ```
-  否则 npm ci 可能长时间卡住。npm ci 失败会自动降级为同步本机 node_modules（纯 JS 跨架构可用，
-  该降级路径也会把 SSH 依赖换成 HTTPS 无法覆盖的场景一并兜住）。
-- deploy.sh 会自动把 `systemd/*.service` 安装到 `/etc/systemd/system` 并 daemon-reload
-  （仓库内单元文件是唯一来源，改单元只需重新部署）
-- 依赖变更判定基于 `package-lock.json + package.json + .npmrc` 的复合哈希，仅成功后落盘
-- 私密配置放 `/etc/minecraft-bot/config.json`（rsync 排除 `config/config.json`）
+| systemd（legacy/） | NSSM / Windows |
+|---|---|
+| `Restart=on-failure` + `RestartSec=10` | 非 0 退出码默认自动重启 + `AppRestartDelay 10000`（崩溃 10s 后拉起） |
+| `StartLimitBurst=5`（fatal 后停止） | `AppExit 2 Exit`：fatal（exit 2：白名单拒绝/名字冲突/版本不匹配）→ 服务一次即停等人工；修复后 `nssm start minecraft-bot` |
+| `ExecReload`（SIGHUP） | Windows 无 SIGHUP。热重载 = 改 config 自动生效（fs.watch 500ms 防抖）/ 游戏内 `!reload` / `nssm restart` |
+| `EnvironmentFile=/etc/minecraft-bot/env` | `AppEnvironmentExtra`（deploy.ps1 从 `config/service.env` 注入）；改动后重跑 deploy 或手动 `nssm set` + restart |
+| `CPUWeight=30` | `AppPriority BELOW_NORMAL_PRIORITY_CLASS`（低优先级：同机 Ollama/其他程序优先） |
+| `MemoryHigh` / `MemoryMax` | **无等价**（Windows 无 cgroup）→ 内存靠预算与监控（见性能） |
+| `LogsDirectory` + `StandardOutput=journal` | pino `logs/bot.log` 按天轮转 + `AppStdout/AppStderr` → `logs/nssm-*.log` |
+| `systemctl status` / `journalctl -u minecraft-bot -f` | `nssm status minecraft-bot` / `Get-Content logs\bot.log -Wait` |
+| `systemctl stop/restart` | `nssm stop/restart minecraft-bot`（stop 发 Ctrl+C 事件 → Node SIGINT → 优雅退出：停任务→断开→flush 日志） |
+| `systemctl reset-failed` | 不需要（`AppExit 2 Exit` 后服务为 Stopped，修复后直接 `nssm start`） |
 
 ## 日常运维
 
-```bash
-systemctl status minecraft-bot           # 状态
-journalctl -u minecraft-bot -f           # 实时日志
-systemctl reload minecraft-bot           # 热重载配置+任务（SIGHUP；也可直接改 config.json 自动生效）
-systemctl status minecraft-server        # 服务端
-systemctl reset-failed minecraft-bot     # 连续 5 次 fatal 后单元进入 failed 态，修复后需先 reset
+```powershell
+nssm status minecraft-bot                  # 状态（SERVICE_RUNNING / STOPPED）
+nssm restart minecraft-bot                 # 全量重启
+Get-Content logs\bot.log -Wait             # 实时日志（pino 按天轮转）
+Get-Content logs\nssm-stderr.log -Tail 50  # 启动期 stderr（服务起不来先看这里）
 ```
 
 游戏内命令（op 白名单在 `config.ops`）：`!ping` `!status` `!task list` `!task new <type> <id> [json]` `!task remove <id>` `!task start|stop|pause|resume <id>` `!reload` `!say` `!pos` `!follow <player>|off` `!agent ...`
 
-任务类型：`mine`（挖矿，需 blockTypes/area）、`fish`（钓鱼）、`afk`（防踢）、`farm`（种植收割）、`chop`（伐木）、`combat`（战斗巡逻）、`breed`（养殖）
+## 性能（低配 PC：i7-4720HQ / 8GB DDR3 + 同机 Ollama）
+
+内存预算（约）：
+
+| 组件 | 占用 |
+|---|---|
+| Windows + 系统进程 | ~2GB |
+| Ollama qwen3.5:4b（Q4 量化，部分层卸载到 GTX 960M） | ~2.5–5GB |
+| Bot（Node） | 200–400MB |
+| 余量 | ~1GB（浏览器等重程序按需关闭） |
+
+- 依赖安装 `--omit=dev`（deploy.ps1 默认，省 dev 包）
+- Bot 已设 `BELOW_NORMAL_PRIORITY_CLASS`：Ollama 推理与其他程序优先；卡顿可 `nssm set minecraft-bot AppPriority NORMAL_PRIORITY_CLASS` 后 restart
+- `maxSteps: 5` 保持默认（防 LLM 工具循环吃 CPU）；`l2.cooldownMs` 可调大（如 10000）降低 Ollama 负载
+- 任务均为区域限定；farm/chop/combat/breed 为 exclusive 互斥（不会并发抢寻路/采集）
+- 无 MemoryMax 等价物：用任务管理器观察；Ollama 吃紧时换更小量化档（`ollama ps` 查看当前模型）或关浏览器
+
+## 服务端（树莓派）运维速查
+
+服务端单元仍在仓库 `systemd/minecraft-server.service`（Pi 上使用）：
+
+```bash
+ssh pi@<host>   # 或直接在 Pi 上操作
+systemctl status minecraft-server        # 状态
+journalctl -u minecraft-server -f        # 实时日志
+systemctl restart minecraft-server       # 重启
+# 白名单（游戏控制台）：
+whitelist add mcbot
+whitelist add smokebot
+```
+
+- JVM `-Xms2G -Xmx2G`（Pi 5 8G 上限约 3G 堆）；`white-list=true`；`online-mode=false`
+- Pi 侧无需再装 Node（Bot 已不在 Pi 上跑）；`legacy/minecraft-bot.service` 仅作历史参考
 
 ## 验证清单
 
 ```bash
-# 开发机（Windows）：
-npm ci && npm test && npm run check:compat          # 全部通过
-# Pi：
-node scripts/check-compat.mjs --probe                # 服务器协议 775 ✓
-node scripts/smoke.mjs --config config/smoke.json    # 全步骤 PASS（mine 默认 SKIP，--dangerous 开启）
+# 开发机/部署机（Windows）：
+npm ci && npm test && npm run check:compat
+# Windows PC（需树莓派服务端在线）：
+node scripts/check-compat.mjs --probe
+node scripts/smoke.mjs --config config/smoke.json --host 192.168.3.93          # 全步骤（mine 默认 SKIP，--dangerous 开启）
+node scripts/smoke.mjs --config config/smoke.json --host 192.168.3.93 --steps connect,spawn,chat   # 快速档
 ```
 
 ## 故障排查
 
 | 症状 | 排查 |
 |---|---|
-| bot 反复重启后停止 | `journalctl -u minecraft-bot -n 50` — fatal 原因仅三类：名字冲突/白名单拒绝/版本不匹配，StartLimitBurst=5 触发；未知原因不再算 fatal（退避重连） |
-| 启动即退出 "日志目录不可写" | 见上文 Bot 配置段：`log.dir` 需指向可写路径 |
+| 服务启动即停止 | `Get-Content logs\nssm-stderr.log -Tail 50` + `logs\bot.log`。fatal（exit 2：白名单拒绝/名字冲突/版本不匹配）触发 `AppExit 2 Exit` 停止——修复后 `nssm start minecraft-bot` |
+| 服务反复重启 | 启动期错误（exit 1，如配置/日志目录问题）每 10s 重试 → 看 `logs\bot.log` 首段报错 |
+| 启动即退出 "日志目录不可写" | `log.dir` 指向不可写路径；改用默认 `./logs` 或确认运行账户写权限 |
+| 连不上服务端 | `Test-NetConnection 192.168.3.93 -Port 25565`；确认服务端在线、`host` 正确、Windows 防火墙放行出站 25565 |
 | `unsupported protocol version` | 本地 `npm run check:compat` 未过；overrides 被意外改动 |
-| 服务器 OOM | `journalctl -k | grep -i oom`；调小 `-Xmx` 或 view-distance |
+| Ollama 内存不足/无响应 | 任务管理器看内存；`ollama ps` 确认模型已加载；换小量化档或 `ollama stop` 后重试 |
 | 挖矿任务不动 | `!task list` 看 waitingReason（no-target/inventory-full/collect-retry）；背包满需配置 `chestLocations` 或清空背包 |
 | 定时任务不执行 | 检查 `schedule` 表达式与 `scheduleTimezone`；afk 类无自然完成的任务必须配 `options.durationMinutes` |
