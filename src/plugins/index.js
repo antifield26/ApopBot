@@ -1,3 +1,5 @@
+import { createMovements } from '../core/movement.js'
+
 // mineflayer 生态插件装载器：按配置条件装载，顺序敏感（collectblock 依赖 pathfinder 实例化）。
 // 插件均为 registry 驱动、不解析协议字节，与 775 兼容（其传递依赖被 overrides 覆盖）。
 //
@@ -6,6 +8,8 @@
 //   - 插件句柄（bot.pathfinder 等）在 loadMineflayerPlugins 返回时可能还未存在，
 //     必须通过包装函数在注入时记录到 loaded（旧实现直接读 bot.X 会得到 undefined）
 //   - pathfinder 2.x 必需 setMovements（不设置时寻路不可靠），注入时立即设置
+//   - Movements 统一由 src/core/movement.js 的 createMovements 创建，并同时喂给
+//     collectBlock（其 collect() 自建 Movements 覆盖全局配置——同一实例后仅 resetPath）
 
 /**
  * @param {import('mineflayer').Bot} bot
@@ -39,14 +43,21 @@ export async function loadMineflayerPlugins (bot, cfg, logger, deps = {}) {
   if (enabled.pathfinder !== false) {
     const { pathfinder, Movements } = await imp('pathfinder', () => import('mineflayer-pathfinder'))()
     wrap(pathfinder, 'pathfinder', (b) => {
-      b.pathfinder.setMovements(new Movements(b)) // 2.x 必需，否则寻路不可靠
+      b.pathfinder.setMovements(createMovements(b, Movements)) // 2.x 必需 + 统一配置（movement.js）
       return b.pathfinder
     })
   }
 
   if (enabled.collectBlock !== false) {
     const { plugin } = await imp('collectblock', () => import('mineflayer-collectblock'))()
-    wrap(plugin, 'collectBlock')
+    wrap(plugin, 'collectBlock', (b) => {
+      // 修 Movements 覆盖：collect() 自建 Movements 并 setMovements（CollectBlock.js:192-196，
+      // 任务结束后不恢复）——注入同一实例后其 setMovements(this.movements) 仅 resetPath，
+      // 不再覆盖统一配置。collect() 置 dontMineUnderFallingBlock/dontCreateFlow=false 的
+      // 副作用仍残留（更宽松配置），接受并注释。
+      if (b.pathfinder?.movements) b.collectBlock.movements = b.pathfinder.movements
+      return b.collectBlock
+    })
   }
 
   if (enabled.autoEat !== false) {

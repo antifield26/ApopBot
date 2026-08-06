@@ -98,3 +98,15 @@ test('B6: 同时关闭 pathfinder 与 collectBlock 合法（无依赖问题）',
   assert.ok(!loaded.pathfinder && !loaded.collectBlock)
   assert.ok(loaded.autoEat, '其余插件不受影响')
 })
+
+test('collectBlock 注入共享 Movements（修覆盖：collect() 不再替换统一配置）', async () => {
+  const bot = {
+    injected: [],
+    pathfinder: { setMovements () {}, movements: { shared: true } },
+    loadPlugin: (fn) => { bot.injected.push(fn) }
+  }
+  await loadMineflayerPlugins(bot, { mineflayerPlugins: {} }, makeLogger(), { imports: makeFakes() })
+  runInjections(bot)
+  assert.equal(bot.collectBlock.movements, bot.pathfinder.movements,
+    'collectBlock 应复用 pathfinder 的 Movements 实例（collect() 内 setMovements 仅 resetPath 不覆盖）')
+})

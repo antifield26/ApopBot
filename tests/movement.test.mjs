@@ -1,0 +1,276 @@
+// 统一移动层测试：goto 四拒绝名分类/墙钟超时/谓词中断/gotoNearest 结构/
+// approachEntity 四路径/findSurfaceBlocks 六场景。fake bot 的 goto stub 先 setGoal
+// 再 settle（镜像真实 goto 语义）；stop() 在 setImmediate 里 emit path_stop
+// （模拟真实"下一 tick 触发"）。
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
+import { Vec3 } from 'vec3'
+import { createMovement, createMovements, stopPathfinding, findSurfaceBlocks } from '../src/core/movement.js'
+import pathfinderPkg from 'mineflayer-pathfinder'
+const { goals } = pathfinderPkg
+
+function makeLogger () {
+  return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }
+}
+
+/** fake bot：pathfinder.goto 由测试注入手动 settle 的 promise。
+ * 镜像真实语义：stop() → path_stop 事件 → goto 拒绝 PathStopped。 */
+function makePathBot (gotoImpl) {
+  const bot = new EventEmitter()
+  bot.entity = { position: new Vec3(0, 64, 0) }
+  bot.setGoalCalls = []
+  bot.stopCalls = 0
+  bot.pathfinder = {
+    setGoal: (g) => { bot.setGoalCalls.push(g) },
+    stop: () => {
+      bot.stopCalls++
+      setImmediate(() => bot.emit('path_stop'))
+    },
+    goto: (goal) => {
+      bot.setGoalCalls.push(goal) // 镜像真实：goto 内部先 setGoal
+      const inner = gotoImpl(goal)
+      return new Promise((resolve, reject) => {
+        const onStop = () => {
+          bot.removeListener('path_stop', onStop)
+          reject(Object.assign(new Error('PathStopped'), { name: 'PathStopped' }))
+        }
+        bot.on('path_stop', onStop)
+        inner.then(
+          (v) => { bot.removeListener('path_stop', onStop); resolve(v) },
+          (e) => { bot.removeListener('path_stop', onStop); reject(e) }
+        )
+      })
+    }
+  }
+  return bot
+}
+
+/** 可控 settle 的 goto 实现：返回 { promise, resolve, reject }。 */
+function deferredGoto (name) {
+  let resolveFn, rejectFn
+  const promise = new Promise((resolve, reject) => { resolveFn = resolve; rejectFn = reject })
+  const impl = () => promise
+  return { impl, resolve: resolveFn, reject: rejectFn, name }
+}
+
+// ---- goto ----
+
+test('goto: 到达 resolve → ok:true（不调 stop）', async () => {
+  const d = deferredGoto()
+  const bot = makePathBot(d.impl)
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  const p = move.goto(new goals.GoalBlock(5, 64, 5), { timeoutMs: 1000 })
+  d.resolve()
+  const r = await p
+  assert.deepEqual(r, { ok: true })
+  assert.equal(bot.stopCalls, 0, '成功路径不清理（goal_reached 已自清）')
+})
+
+test('goto: 四拒绝名分类 + 失败路径调 stop', async () => {
+  for (const [name, reason] of [['NoPath', 'no-path'], ['Timeout', 'timeout'], ['GoalChanged', 'goal-changed'], ['PathStopped', 'interrupted']]) {
+    const d = deferredGoto(name)
+    const bot = makePathBot(d.impl)
+    const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+    const p = move.goto(new goals.GoalBlock(5, 64, 5), { timeoutMs: 1000 })
+    d.reject(Object.assign(new Error(name), { name }))
+    const r = await p
+    assert.equal(r.ok, false, `${name} 应失败`)
+    assert.equal(r.reason, reason, `${name} → ${reason}`)
+    assert.equal(bot.setGoalCalls.at(-1), null, '失败路径应 setGoal(null) 清理残留 stateGoal（否则会重新 A*）')
+  }
+})
+
+test('goto: 墙钟超时（goto 永不 settle）→ timeout + stop', async () => {
+  const d = deferredGoto('Hang')
+  const bot = makePathBot(d.impl)
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  const r = await move.goto(new goals.GoalBlock(5, 64, 5), { timeoutMs: 50 })
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'timeout', '墙钟超时优先于 PathStopped 分类')
+  assert.ok(bot.stopCalls >= 1)
+})
+
+test('goto: 谓词中断 → interrupted', async () => {
+  const d = deferredGoto('Hang2')
+  const bot = makePathBot(d.impl)
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  let interrupted = false
+  const p = move.goto(new goals.GoalBlock(5, 64, 5), { timeoutMs: 5000, isInterrupted: () => interrupted })
+  setTimeout(() => { interrupted = true }, 20)
+  const r = await p
+  assert.equal(r.reason, 'interrupted')
+  assert.ok(bot.stopCalls >= 1)
+})
+
+test('goto: A* Timeout 自动重试一次（第二次成功）', async () => {
+  let calls = 0
+  const bot = makePathBot((goal) => {
+    calls++
+    if (calls === 1) return Promise.reject(Object.assign(new Error('Timeout'), { name: 'Timeout' }))
+    return Promise.resolve()
+  })
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  const r = await move.goto(new goals.GoalBlock(5, 64, 5), { timeoutMs: 5000 })
+  assert.equal(r.ok, true, 'Timeout 应重试一次后成功')
+  assert.equal(calls, 2)
+})
+
+// ---- gotoPoint / gotoNearest ----
+
+test('gotoPoint: 无 range → GoalBlock；有 range → GoalNear', async () => {
+  const bot = makePathBot(() => Promise.resolve())
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  await move.gotoPoint(new Vec3(5.5, 64.4, -3.2), { timeoutMs: 1000 })
+  assert.ok(bot.setGoalCalls.at(-1) instanceof goals.GoalBlock, '缺省应 GoalBlock')
+  await move.gotoPoint(new Vec3(5, 64, 5), { range: 3, timeoutMs: 1000 })
+  const last = bot.setGoalCalls.at(-1)
+  assert.ok(last instanceof goals.GoalNear, '提供 range 应 GoalNear')
+  assert.equal(last.rangeSq, 9, 'range 3 → rangeSq 9')
+})
+
+test('gotoNearest: GoalCompositeAny 含全部候选（range 正确）', async () => {
+  const bot = makePathBot(() => Promise.resolve())
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  await move.gotoNearest([new Vec3(1, 64, 1), new Vec3(10, 65, 10)], 3, { timeoutMs: 1000 })
+  const goal = bot.setGoalCalls.at(-1)
+  assert.ok(goal instanceof goals.GoalCompositeAny, '多候选应包成 CompositeAny')
+  assert.equal(goal.goals.length, 2)
+  assert.ok(goal.goals.every(g => g instanceof goals.GoalNear))
+  assert.equal(goal.goals[0].rangeSq, 9)
+})
+
+// ---- approachEntity ----
+
+test('approachEntity: 已到位 → 立即 ok（仅清残留 goal，不设新目标）', async () => {
+  const bot = makePathBot(() => Promise.resolve())
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  const r = await move.approachEntity({ position: new Vec3(1, 64, 0) }, { range: 2, timeoutMs: 1000 })
+  assert.deepEqual(r, { ok: true })
+  assert.equal(bot.setGoalCalls.at(-1), null, '到位仅 setGoal(null) 清残留')
+  assert.ok(!bot.setGoalCalls.some(g => g instanceof goals.GoalNear), '不应设置接近目标')
+})
+
+test('approachEntity: 范围外 → setGoal 接近 → 拉近后 ok + setGoal(null)', async () => {
+  const bot = makePathBot(() => Promise.resolve())
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  const entity = { position: new Vec3(5, 64, 0) }
+  const p = move.approachEntity(entity, { range: 2, timeoutMs: 2000 })
+  setTimeout(() => { entity.position = new Vec3(1, 64, 0) }, 30) // 模拟目标被接近
+  const r = await p
+  assert.equal(r.ok, true)
+  assert.ok(bot.setGoalCalls.some(g => g instanceof goals.GoalNear), '应设置接近 goal')
+  assert.equal(bot.setGoalCalls.at(-1), null, '到达后应 setGoal(null) 同步停')
+})
+
+test('approachEntity: 谓词中断 → interrupted + stop', async () => {
+  const bot = makePathBot(() => Promise.resolve())
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  let interrupted = false
+  const p = move.approachEntity(
+    { position: new Vec3(10, 64, 0) },
+    { range: 2, timeoutMs: 5000, isInterrupted: () => interrupted }
+  )
+  setTimeout(() => { interrupted = true }, 20)
+  const r = await p
+  assert.equal(r.reason, 'interrupted')
+  assert.ok(bot.stopCalls >= 1)
+})
+
+test('approachEntity: path_update noPath → 立即放弃（不等 500ms 轮询）', async () => {
+  const bot = makePathBot(() => Promise.resolve())
+  const move = createMovement(bot, makeLogger(), { pollMs: 1000 })
+  const t0 = Date.now()
+  const p = move.approachEntity({ position: new Vec3(10, 64, 0) }, { range: 2, timeoutMs: 5000 })
+  setTimeout(() => bot.emit('path_update', { status: 'noPath' }), 20)
+  const r = await p
+  assert.ok(Date.now() - t0 < 500, 'noPath 应立即放弃而非等下一轮询')
+  assert.equal(r.reason, 'no-path')
+})
+
+test('approachEntity: 超时 → timeout + stop', async () => {
+  const bot = makePathBot(() => Promise.resolve())
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  const r = await move.approachEntity({ position: new Vec3(50, 64, 0) }, { range: 2, timeoutMs: 50 })
+  assert.equal(r.reason, 'timeout')
+  assert.ok(bot.stopCalls >= 1)
+})
+
+test('approachEntity: 实体消失（无 position）→ error', async () => {
+  const bot = makePathBot(() => Promise.resolve())
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  const r = await move.approachEntity({}, { range: 2, timeoutMs: 1000 })
+  assert.equal(r.reason, 'error')
+})
+
+// ---- stopPathfinding / createMovements ----
+
+test('stopPathfinding: 插件缺失容错', () => {
+  stopPathfinding({}) // 不抛
+  stopPathfinding({ pathfinder: { stop: () => { throw new Error('gone') } } }) // 不抛
+})
+
+test('createMovements: 构造 Movements 实例', () => {
+  class FakeMovements { constructor (b) { this.bot = b } }
+  const m = createMovements({}, FakeMovements)
+  assert.ok(m instanceof FakeMovements)
+})
+
+// ---- findSurfaceBlocks ----
+
+function makeFindBot ({ blocksByName, findBlocks, blockAt }) {
+  return {
+    registry: { blocksByName },
+    findBlocks,
+    blockAt
+  }
+}
+
+test('findSurfaceBlocks: 上方 2 格空 → 地表候选', () => {
+  const bot = makeFindBot({
+    blocksByName: { iron_ore: { id: 44 } },
+    findBlocks: () => [new Vec3(5, 64, 5)],
+    blockAt: () => ({ boundingBox: 'empty', name: 'air' })
+  })
+  const { block, candidates } = findSurfaceBlocks(bot, 'iron_ore')
+  assert.equal(block.id, 44)
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0].x, 5)
+})
+
+test('findSurfaceBlocks: 上方有实体方块 → 排除（埋地下/洞顶）', () => {
+  const bot = makeFindBot({
+    blocksByName: { iron_ore: { id: 44 } },
+    findBlocks: () => [new Vec3(5, 64, 5)],
+    blockAt: (p, extra) => (p.y === 65 ? { boundingBox: 'block', name: 'stone' } : { boundingBox: 'empty', name: 'air' })
+  })
+  const { candidates } = findSurfaceBlocks(bot, 'iron_ore')
+  assert.equal(candidates.length, 0)
+})
+
+test('findSurfaceBlocks: 区块未加载（blockAt null）→ 排除', () => {
+  const bot = makeFindBot({
+    blocksByName: { iron_ore: { id: 44 } },
+    findBlocks: () => [new Vec3(5, 64, 5)],
+    blockAt: () => null
+  })
+  assert.equal(findSurfaceBlocks(bot, 'iron_ore').candidates.length, 0)
+})
+
+test('findSurfaceBlocks: 上方液体 → 排除（防走入岩浆/水）', () => {
+  const bot = makeFindBot({
+    blocksByName: { iron_ore: { id: 44 } },
+    findBlocks: () => [new Vec3(5, 64, 5)],
+    blockAt: () => ({ boundingBox: 'empty', name: 'lava' })
+  })
+  assert.equal(findSurfaceBlocks(bot, 'iron_ore').candidates.length, 0)
+})
+
+test('findSurfaceBlocks: 未知方块名 → throw', () => {
+  const bot = makeFindBot({
+    blocksByName: {},
+    findBlocks: () => [],
+    blockAt: () => null
+  })
+  assert.throws(() => findSurfaceBlocks(bot, 'not_a_block'), /未知方块类型/)
+})
