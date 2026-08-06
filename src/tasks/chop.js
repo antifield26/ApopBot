@@ -1,4 +1,5 @@
 import { BaseTask } from './base.js'
+import { stopPathfinding } from '../core/movement.js'
 
 // 伐木任务：区域内查找原木/木头方块并收集。
 // 默认匹配所有名字匹配 /_log$|_wood$/ 的方块；可用 logTypes 指定。
@@ -94,6 +95,6 @@ export class ChopTask extends BaseTask {
 
   async _cancel () {
     try { this.bot.collectBlock?.cancelTask() } catch { /* 插件可能已卸载 */ }
-    try { this.bot.pathfinder?.stop() } catch { /* 同上 */ }
+    stopPathfinding(this.bot) // cancelTask 已含 stop，幂等兜底
   }
 }

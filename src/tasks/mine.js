@@ -1,5 +1,6 @@
 import { BaseTask } from './base.js'
 import { Vec3 } from 'vec3'
+import { stopPathfinding } from '../core/movement.js'
 
 // 挖矿任务：collectblock + pathfinder 在限定区域内挖掘指定方块。
 // 内部等待全部用 _internalWait（F3：不触碰用户暂停）；背包满（NoChests）单独识别
@@ -90,6 +91,6 @@ export class MineTask extends BaseTask {
   /** F1：stop 时取消进行中的收集与寻路。 */
   async _cancel () {
     try { this.bot.collectBlock?.cancelTask() } catch { /* 插件可能已卸载 */ }
-    try { this.bot.pathfinder?.stop() } catch { /* 同上 */ }
+    stopPathfinding(this.bot) // cancelTask 已含 stop，幂等兜底
   }
 }

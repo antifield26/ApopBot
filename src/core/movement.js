@@ -50,6 +50,11 @@ export function stopPathfinding (bot) {
   try { bot.pathfinder?.stop() } catch { /* 插件可能已卸载 */ }
 }
 
+/** 统一清残留 goal（非移动时的状态清理：无目标分支/攻击前/低血前）。 */
+export function clearGoal (bot) {
+  try { bot.pathfinder?.setGoal(null) } catch { /* 插件可能已卸载 */ }
+}
+
 /**
  * 移动入口工厂。
  * @param {import('mineflayer').Bot} bot

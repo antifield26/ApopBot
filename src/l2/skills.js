@@ -116,10 +116,12 @@ export function createSkillRegistry (ctx) {
       }
     },
     handler: async (c, { x, y, z }) => {
-      const mod = await import('mineflayer-pathfinder') // 动态导入：CJS default 为完整 exports
-      const { goals: g } = mod.default ?? mod
-      c.bot.pathfinder.setGoal(new g.GoalBlock(Math.floor(x), Math.floor(y), Math.floor(z)))
-      return `开始移动到 ${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`
+      // 统一移动层阻塞式移动（C2）：到达/失败如实反馈，LLM 不再收到 fire-and-forget 假成功
+      const { Vec3 } = await import('vec3')
+      const { createMovement, REASON_TEXT } = await import('../core/movement.js')
+      const r = await createMovement(c.bot, c.logger).gotoPoint(new Vec3(x, y, z), { timeoutMs: 60000 })
+      if (r.ok) return `已到达 ${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`
+      return `移动失败: ${REASON_TEXT[r.reason] ?? r.err?.message}`
     }
   })
 

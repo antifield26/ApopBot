@@ -7,6 +7,12 @@
 // sticky jump：目标高于阈值（0.6 格）时持续按住跳跃键直到高度差修正（≤0.3 格），
 // 而不是每 tick 用瞬时差判断——跟随延迟下目标 y 数据滞后，瞬时差波动会导致跳跃
 // 被错误松开、只跳一次且跳在滞后位置（实测反馈）。
+//
+// 分层说明：本插件是独立于任务/命令体系的 setInterval 直接控制层（近距离
+// setControlState，远距才借用 pathfinder）。统一移动层（src/core/movement.js）
+// 服务于任务/命令体系（goto/approachEntity）。二者经"任务 exclusive 互斥 +
+// follow 手动开关"隔离，互不调用——follow 的实时性要求不适合任务体系的可取消
+// 移动封装。
 
 import pathfinderPkg from 'mineflayer-pathfinder' // CJS 包：default 导入后解构（ESM named 互操作不可靠）
 const { goals } = pathfinderPkg

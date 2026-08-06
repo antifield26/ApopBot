@@ -1,10 +1,10 @@
 import { BaseTask } from './base.js'
-import pathfinderPkg from 'mineflayer-pathfinder' // CJS 包：default 导入后解构（ESM named 互操作不可靠）
-const { goals } = pathfinderPkg
+import { createMovement, stopPathfinding, clearGoal } from '../core/movement.js'
 
 // 养殖任务：区域内对白名单动物喂食繁殖（useOn 两次触发繁殖，等待幼崽生成）。
 // 行为边界：区域限定、maxBreedings 上限（默认 4，退化安全）、useCooldown 防刷。
 // 繁殖成功判定：目标动物 entityGone（成年个体被幼崽替换）计一次。
+// 移动统一走 movement.js（approachEntity 接近——含 pause 响应，修手写轮询不响应 pause 的缺陷）。
 export class BreedTask extends BaseTask {
   constructor (id, type, options, ctx) {
     super(id, type, options, ctx)
@@ -28,6 +28,7 @@ export class BreedTask extends BaseTask {
     // 默认巡逻：无动物时等待（动物可能未加载/未刷新）而非秒完成——同款防误判；
     // 一次性配 stopWhenNoAnimals: true
     this._stopWhenNoAnimals = o.stopWhenNoAnimals === true
+    this._move = createMovement(this.bot, this.log) // 统一移动层（C2）
     this._currentAnimal = null
     this._onEntityGone = (entity) => {
       if (entity === this._currentAnimal) {
@@ -61,7 +62,7 @@ export class BreedTask extends BaseTask {
       const animal = this._findAnimal()
       if (!animal) {
         this._currentAnimal = null
-        try { this.bot.pathfinder.setGoal(null) } catch { /* 未在移动 */ }
+        clearGoal(this.bot)
         if (this._stopWhenNoAnimals) {
           this.log.info('区域内没有可繁殖的动物，任务完成')
           break
@@ -71,8 +72,16 @@ export class BreedTask extends BaseTask {
       }
       this._currentAnimal = animal
 
-      // 接近动物（3s 超时保护：寻路失败也不卡死）
-      await this._approach(animal)
+      // 移动层接近（approachEntity：到达判定/pause 响应/超时兜底；30s 超时保护）
+      const r = await this._move.approachEntity(animal, {
+        range: 2,
+        timeoutMs: 30000,
+        isInterrupted: () => this._stopRequested || this._pauseRequested
+      })
+      if (!r.ok && r.reason !== 'interrupted') {
+        this.log.warn({ reason: r.reason }, '接近动物失败')
+        await this._internalWait(3 * 1000, 'path-retry')
+      }
       if (this._stopRequested) break
 
       // 喂食（两次，间隔冷却）；失败（无食物/装备失败）等待重试而非忙等——
@@ -98,23 +107,6 @@ export class BreedTask extends BaseTask {
       }
       return true
     }) ?? null
-  }
-
-  async _approach (animal) {
-    try {
-      this.bot.pathfinder.setGoal(new goals.GoalNear(animal.position, 2))
-    } catch (err) {
-      this.log.warn({ err: err.message }, '寻路失败')
-      await this._internalWait(3 * 1000, 'path-retry')
-      return
-    }
-    // 等待到达（轮询，上限 30s）
-    const deadline = Date.now() + 30 * 1000
-    while (!this._stopRequested && Date.now() < deadline) {
-      if (this.bot.entity.position.distanceTo(animal.position) <= 3) break
-      await new Promise(r => setTimeout(r, 500))
-    }
-    try { this.bot.pathfinder.setGoal(null) } catch { /* 已停 */ }
   }
 
   /** 装备食物并喂食两次。成功返回 true。 */
@@ -146,6 +138,6 @@ export class BreedTask extends BaseTask {
   }
 
   async _cancel () {
-    try { this.bot.pathfinder?.stop() } catch { /* 插件可能已卸载 */ }
+    stopPathfinding(this.bot)
   }
 }

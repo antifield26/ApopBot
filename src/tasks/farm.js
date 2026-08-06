@@ -1,5 +1,6 @@
 import { BaseTask } from './base.js'
 import { Vec3 } from 'vec3' // blockAt 必须传 Vec3 实例（普通对象触发 pos.floored 崩溃）
+import { stopPathfinding } from '../core/movement.js'
 
 // 农场任务：区域内 种植 → 等待成熟 → 收割 → 补种 的循环。
 // 成熟度按方块 state 的 age 属性对照成熟表；收割用 collectBlock（掉落物自动收集）。
@@ -154,7 +155,7 @@ export class FarmTask extends BaseTask {
   /** 收割/种植的进行中动作取消。 */
   async _cancel () {
     try { this.bot.collectBlock?.cancelTask() } catch { /* 插件可能已卸载 */ }
-    try { this.bot.pathfinder?.stop() } catch { /* 同上 */ }
+    stopPathfinding(this.bot) // cancelTask 已含 stop，幂等兜底
   }
 }
 

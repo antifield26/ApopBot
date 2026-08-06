@@ -1,10 +1,11 @@
 import { BaseTask } from './base.js'
-import pathfinderPkg from 'mineflayer-pathfinder' // CJS 包：default 导入后解构（ESM named 互操作不可靠）
-const { goals } = pathfinderPkg
+import { createMovement, stopPathfinding, clearGoal } from '../core/movement.js'
 
 // 战斗任务：区域内对敌对实体（entity.type === 'hostile'）进行巡逻战斗。
 // 行为边界：区域限定（每轮重查 inArea）、低血自动进食/远离、攻击冷却、
 // 击杀遥测（entityGone 监听）、maxTargets 上限。绝不追出区域。
+// 移动统一走 movement.js（approachEntity 接近/gotoPoint 撤退）——含到达判定、
+// pause/stop 响应、超时兜底、统一清理（C2 迁移）。
 export class CombatTask extends BaseTask {
   constructor (id, type, options, ctx) {
     super(id, type, options, ctx)
@@ -38,6 +39,7 @@ export class CombatTask extends BaseTask {
         .filter(e => e.type === 'hostile')
         .map(e => e.id)
     )
+    this._move = createMovement(this.bot, this.log) // 统一移动层（C2）
     this._currentTarget = null
     this._onEntityGone = (entity) => {
       if (entity === this._currentTarget) {
@@ -78,7 +80,7 @@ export class CombatTask extends BaseTask {
       const target = this._findTarget()
       if (!target) {
         this._currentTarget = null
-        try { this.bot.pathfinder.setGoal(null) } catch { /* 未在移动 */ }
+        clearGoal(this.bot)
         if (this._stopWhenNoTargets) {
           this.log.info('区域内没有敌对目标，任务完成')
           break
@@ -88,17 +90,24 @@ export class CombatTask extends BaseTask {
       }
       this._currentTarget = target
 
-      // 距离内攻击，否则接近（每轮重查 inArea，绝不追出区域）
+      // 距离内攻击，否则移动层接近（approachEntity：到达判定/pause 响应/超时兜底）。
+      // 行为变化：approach 期间不换目标（原每轮重扫）——由 30s 超时 + 循环顶部重扫兜底；
+      // isInterrupted 含 aggroRange 检查保住"绝不追出区域/范围"语义
       const dist = this.bot.entity.position.distanceTo(target.position)
       if (dist > this._attackRange) {
-        try {
-          this.bot.pathfinder.setGoal(new goals.GoalNear(target.position, 2))
-        } catch (err) {
-          this.log.warn({ err: err.message }, '寻路失败')
+        const r = await this._move.approachEntity(target, {
+          range: Math.min(2, this._attackRange - 0.5), // 停点保证能攻击到（attackRange 3.5）
+          timeoutMs: 30000,
+          isInterrupted: () => this._stopRequested || this._pauseRequested ||
+            !target?.position ||
+            this.bot.entity.position.distanceTo(target.position) > this._aggroRange
+        })
+        if (!r.ok && r.reason !== 'interrupted') {
+          this.log.warn({ reason: r.reason, err: r.err?.message }, '接近目标失败')
           await this._internalWait(this._checkIntervalMs, 'path-retry')
         }
       } else {
-        try { this.bot.pathfinder.setGoal(null) } catch { /* 已停 */ }
+        clearGoal(this.bot) // 攻击前清残留 goal（防 pathfinder 继续走旧目标）
         await this._equipWeapon()
         try {
           this.bot.attack(target)
@@ -144,7 +153,7 @@ export class CombatTask extends BaseTask {
 
   /** 低血处理：autoEat 进食，失败则远离敌人。 */
   async _handleLowHealth () {
-    try { this.bot.pathfinder.setGoal(null) } catch { /* 已停 */ }
+    clearGoal(this.bot)
     if (this._eatWhenLowHealth && this.bot.autoEat?.eat) {
       try {
         await this.bot.autoEat.eat()
@@ -152,13 +161,13 @@ export class CombatTask extends BaseTask {
         return
       } catch { /* 没有食物或正在进食 */ }
     }
-    // 撤退：往远离最近敌人方向走 15 格
+    // 撤退：往远离最近敌人方向走 15 格（移动层 gotoPoint——到达即返回，
+    // 优于原 fire-and-forget + 固定 10s 睡眠）
     const enemy = this.bot.nearestEntity((e) => e && this._isHostile(e) && e !== this.bot.entity)
     if (enemy) {
       const away = this.bot.entity.position.minus(enemy.position).normalize().scaled(15).plus(this.bot.entity.position)
-      try {
-        this.bot.pathfinder.setGoal(new goals.GoalBlock(away.x, away.y, away.z))
-      } catch { /* 寻路失败忽略 */ }
+      const r = await this._move.gotoPoint(away, { timeoutMs: 10000 })
+      if (!r.ok) this.log.warn({ reason: r.reason }, '撤退寻路失败，原地等待')
     }
     await this._internalWait(10 * 1000, 'retreat-low-health')
   }
@@ -176,6 +185,6 @@ export class CombatTask extends BaseTask {
   }
 
   async _cancel () {
-    try { this.bot.pathfinder?.stop() } catch { /* 插件可能已卸载 */ }
+    stopPathfinding(this.bot)
   }
 }
