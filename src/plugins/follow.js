@@ -2,8 +2,11 @@
 //
 // 实现：混合跟随。pathfinder 的 GoalFollow 基于 A*，其动作集不含跳跃——目标跳过
 // 障碍/跳上台阶后 Bot 无法到达（实测丢失跟随）。故近距离用 setControlState 直接
-// 控制（前进 + 按需跳跃），卡住（原地无位移）/目标远离/前方虚空时切 pathfinder
-// 寻路绕行，接近后回到直接控制。
+// 控制（前进 + 爬升跳跃 sticky jump），卡住（原地无位移）/目标远离/前方虚空时切
+// pathfinder 寻路绕行，接近后回到直接控制。
+// sticky jump：目标高于阈值（0.6 格）时持续按住跳跃键直到高度差修正（≤0.3 格），
+// 而不是每 tick 用瞬时差判断——跟随延迟下目标 y 数据滞后，瞬时差波动会导致跳跃
+// 被错误松开、只跳一次且跳在滞后位置（实测反馈）。
 
 import pathfinderPkg from 'mineflayer-pathfinder' // CJS 包：default 导入后解构（ESM named 互操作不可靠）
 const { goals } = pathfinderPkg
@@ -25,6 +28,7 @@ export function followPlugin (bot) {
   let stuckCount = 0
   let pathing = false
   let lastGoalPos = null
+  let jumpHeld = false // 爬升模式（sticky jump）：目标高于阈值时持续按住跳跃键
 
   function stopMoving () {
     bot.setControlState('forward', false)
@@ -40,6 +44,7 @@ export function followPlugin (bot) {
     const p = bot.entity.position
     const tp = target.position
     const dist = p.distanceTo(tp)
+    const yDiff = tp.y - p.y
 
     if (dist <= REACH) {
       // 已跟上：停下；目标在 Bot 上方（高台上）时补一次跳跃对齐
@@ -47,32 +52,45 @@ export function followPlugin (bot) {
       pathing = false
       lastPos = p.clone()
       stuckCount = 0
-      bot.setControlState('jump', tp.y - p.y > 1.1)
+      jumpHeld = false
+      bot.setControlState('jump', yDiff > 1.1)
       return
     }
 
     try { bot.lookAt(tp.offset(0, 0.5, 0)) } catch { /* 位置可能失效 */ }
 
     if (dist < DIRECT_RANGE && !pathing) {
-      // 直接控制：前进 + 按需跳跃（解决 GoalFollow 不跳导致丢失跟随的问题）
+      // 直接控制：前进 + 爬升跳跃（解决 GoalFollow 不跳导致丢失跟随的问题）。
+      // sticky jump：目标高于阈值 → 持续按住跳跃键直到高度差修正（≤0.3）。
+      // 此前每 tick 用瞬时差判断——跟随延迟下目标 y 数据滞后，瞬时差波动导致
+      // 跳跃被错误松开，Bot 只跳一次且跳在滞后位置（实测反馈）
       bot.setControlState('forward', true)
-      bot.setControlState('jump', tp.y - p.y > JUMP_Y_DIFF)
-      // 前方 2 格是虚空/未加载（直走会掉落）→ 切寻路
+      if (yDiff > JUMP_Y_DIFF) {
+        jumpHeld = true
+      } else if (yDiff <= 0.3) {
+        jumpHeld = false // 高度已修正，停止跳跃（缓坡 0.3-0.6 不跳）
+      }
+      bot.setControlState('jump', jumpHeld)
+      // 前方 2 格是虚空/未加载（直走会掉落）→ 切寻路（无条件，爬升中也防跳崖）
       const dx = (tp.x - p.x) / dist
       const dz = (tp.z - p.z) / dist
       const ahead = bot.blockAt(p.offset(dx * 2, -1, dz * 2))
-      const moved = lastPos && p.distanceTo(lastPos) > 0.2
+      // 卡住检测：爬升中看 y 位移（贴墙跳时水平位移小会被误判卡住）；否则看水平位移
+      const movedY = jumpHeld && lastPos ? Math.abs(p.y - lastPos.y) > 0.15 : false
+      const moved = !jumpHeld && lastPos && p.distanceTo(lastPos) > 0.2
       lastPos = p.clone()
-      stuckCount = moved ? 0 : stuckCount + 1
+      stuckCount = moved || movedY ? 0 : stuckCount + 1
       if (stuckCount >= STUCK_TICKS || !ahead) {
         stopMoving()
         pathing = true
         lastGoalPos = null
+        jumpHeld = false
       }
     } else {
       // 寻路绕行：目标位移超阈值才重建 goal
       stopMoving()
       pathing = true
+      jumpHeld = false
       const moved = lastGoalPos && tp.distanceTo(lastGoalPos) > PATH_UPDATE_DIST
       if (!lastGoalPos || moved) {
         try { bot.pathfinder.setGoal(new goals.GoalNear(tp, 1)) } catch { /* 未在移动 */ }
@@ -109,6 +127,7 @@ export function followPlugin (bot) {
 
     stop () {
       target = null
+      jumpHeld = false
       if (timer) { clearInterval(timer); timer = null }
       stopMoving()
       clearGoal()
@@ -128,6 +147,7 @@ export function followPlugin (bot) {
 
   bot.on('end', () => {
     target = null
+    jumpHeld = false
     if (timer) { clearInterval(timer); timer = null }
   })
 }

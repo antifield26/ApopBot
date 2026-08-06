@@ -118,3 +118,59 @@ test('follow: 缺 pathfinder 时 setTarget 明确报错', () => {
   followPlugin(bot)
   assert.throws(() => bot.follow.setTarget({ id: 1 }), /需要 pathfinder/)
 })
+
+// ---- sticky jump（爬升模式）：目标高于阈值持续跳跃直到高度修正 ----
+
+test('follow: 目标持续高于 → 跳跃保持（sticky，不因瞬时差波动松开）', (t) => {
+  useMockTimers(t)
+  const bot = makeBot(new Vec3(0, 64, 0))
+  // 目标在高台（y 差 1.8 恒定——即使位置数据滞后，只要判定高于就持续跳）
+  const player = { id: 7, position: new Vec3(3, 65.8, 0) }
+  bot.follow.setTarget(player)
+  for (let i = 0; i < 4; i++) mock.timers.tick(500) // 2s 内 4 个 tick
+  assert.equal(bot.controls.jump, true, '高度差未修正前应持续按住跳跃键')
+  assert.equal(bot.controls.forward, true)
+})
+
+test('follow: 高度差修正（≤0.3）→ 停止跳跃', (t) => {
+  useMockTimers(t)
+  const bot = makeBot(new Vec3(0, 64, 0))
+  // 目标 y 数据滞后更新：先高（触发爬升），随后修正为同高度
+  let targetY = 65.8
+  const player = { id: 7, position: new Vec3(3, 65.8, 0) }
+  bot.follow.setTarget(player)
+  mock.timers.tick(500)
+  assert.equal(bot.controls.jump, true, '触发爬升模式')
+  // 模拟 Bot 跳起 + 目标数据修正：y 差降到 0.2
+  bot.entity.position.y = 65.6
+  mock.timers.tick(500)
+  assert.equal(bot.controls.jump, false, '高度差修正后应停止跳跃')
+})
+
+test('follow: 爬升中卡住（y 无位移）→ 切寻路绕行', (t) => {
+  useMockTimers(t)
+  const bot = makeBot(new Vec3(0, 64, 0))
+  const player = { id: 7, position: new Vec3(3, 66, 0) } // y 差 2 > 0.6
+  bot.follow.setTarget(player)
+  mock.timers.tick(500)
+  assert.equal(bot.controls.jump, true, '应进入爬升模式')
+  // 6 轮 y 不动（头顶有方块跳不过去）→ 卡住计数到阈值 → 切寻路
+  for (let i = 0; i < 6; i++) mock.timers.tick(500)
+  assert.equal(bot.controls.jump, false, '卡住后停止跳跃')
+  assert.ok(bot.setGoalCalls.length >= 1, '爬升失败应切 pathfinder 绕行')
+})
+
+test('follow: 到达后停止跳跃并清除爬升模式（跳上高台不再继续跳）', (t) => {
+  useMockTimers(t)
+  const bot = makeBot(new Vec3(0, 64, 0))
+  const player = { id: 7, position: new Vec3(3, 65.8, 0) }
+  bot.follow.setTarget(player)
+  mock.timers.tick(500)
+  assert.equal(bot.controls.jump, true)
+  // Bot 跳上高台：与目标水平距离 ≤ REACH 且同高度
+  bot.entity.position.y = 65.8
+  bot.entity.position.x = 2
+  mock.timers.tick(500)
+  assert.equal(bot.controls.jump, false, '到达后不应持续跳跃')
+  assert.equal(bot.controls.forward, false)
+})
