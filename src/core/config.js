@@ -17,7 +17,6 @@ const BUILTIN_DEFAULTS = {
     maxMs: 300000,
     factor: 2,
     jitter: 0.2,
-    resetAfterSpawnMs: 60000,
     minGapMs: 10000
   },
   ops: [],
@@ -247,7 +246,7 @@ export function validateConfig (cfg) {
   if (cfg.username.length > 16) errors.push(`username 不能超过 16 字符: ${cfg.username}`)
   if (!['offline', 'microsoft'].includes(cfg.auth)) errors.push(`auth 必须是 offline 或 microsoft，当前: ${cfg.auth}`)
   if (!Number.isInteger(cfg.spawnTimeoutMs) || cfg.spawnTimeoutMs <= 0) errors.push('spawnTimeoutMs 必须为正整数')
-  for (const k of ['baseMs', 'maxMs', 'factor', 'jitter', 'resetAfterSpawnMs', 'minGapMs']) {
+  for (const k of ['baseMs', 'maxMs', 'factor', 'jitter', 'minGapMs']) {
     const v = cfg.reconnect?.[k]
     if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) errors.push(`reconnect.${k} 必须为非负数: ${v}`)
   }

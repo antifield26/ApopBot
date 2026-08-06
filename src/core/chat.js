@@ -15,7 +15,7 @@ const INTER_MESSAGE_DELAY_MS = 100
  */
 export function stripColorCodes (text) {
   return String(text)
-    .replace(/§[0-9a-fk-or]/gi, '') // §a-§f / §k-§o / §r
+    .replace(/§[0-9a-fk-orx]/gi, '') // §a-§f / §k-§o / §r / §x（RGB 十六进制头）
     .replace(/§/g, '') // 孤立 §（结尾等）
 }
 

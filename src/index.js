@@ -146,7 +146,7 @@ function watchConfig () {
     if (watcher && !fs.existsSync(file)) { watcher.close(); watcher = null }
     if (!watcher && fs.existsSync(file)) arm()
   }, 3000).unref?.()
-  return () => { clearTimeout(timer); watcher?.close() }
+  return () => { clearTimeout(timer); clearInterval(guard); watcher?.close() }
 }
 const stopWatch = watchConfig()
 

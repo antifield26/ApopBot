@@ -97,7 +97,7 @@ Get-Content logs\nssm-stderr.log -Tail 50  # 启动期 stderr（服务起不来�
 
 - 依赖安装 `--omit=dev`（deploy.ps1 默认，省 dev 包）
 - Bot 已设 `BELOW_NORMAL_PRIORITY_CLASS`：Ollama 推理与其他程序优先；卡顿可 `nssm set minecraft-bot AppPriority NORMAL_PRIORITY_CLASS` 后 restart
-- `maxSteps: 5` 保持默认（防 LLM 工具循环吃 CPU）；`l2.cooldownMs` 可调大（如 10000）降低 Ollama 负载
+- `maxSteps: 5` 保持默认（防 LLM 工具循环吃 CPU）；`l2.cooldownMs` 可调大（如 10000）降低 Ollama 负载；`l2.ollamaTimeoutMs` 默认 60s（低配机长回复放宽到 120s）
 - 任务均为区域限定；farm/chop/combat/breed 为 exclusive 互斥（不会并发抢寻路/采集）
 - 无 MemoryMax 等价物：用任务管理器观察；Ollama 吃紧时换更小量化档（`ollama ps` 查看当前模型）或关浏览器
 

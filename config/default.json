@@ -10,7 +10,6 @@
     "maxMs": 300000,
     "factor": 2,
     "jitter": 0.2,
-    "resetAfterSpawnMs": 60000,
     "minGapMs": 10000
   },
   "ops": [],

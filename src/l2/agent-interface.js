@@ -72,7 +72,12 @@ export class AgentInterface {
         const results = []
         for (const tc of calls) {
           const r = await this.skills.execute(tc.name, tc.arguments, user)
-          results.push({ id: tc.id, name: tc.name, output: r })
+          // 工具结果截断：maxSteps×多技能的大 JSON（inventory_summary/task_status）
+          // 会撑爆 4B 模型上下文或放大云端成本
+          let output = r
+          if (typeof output !== 'string') output = JSON.stringify(output)
+          if (output.length > 2000) output = output.slice(0, 2000) + '…(截断)'
+          results.push({ id: tc.id, name: tc.name, output })
         }
         messages.push({ role: 'assistant', content: res.text ?? '', toolCalls: calls })
         messages.push({ role: 'user', content: '', toolResults: results })

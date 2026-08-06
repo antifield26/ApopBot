@@ -45,7 +45,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在低配 Windows PC（i7-4720HQ / 
 | `breed` | — | 区域内白名单动物喂养繁殖（`maxBreedings` 上限） | 无动物 / 达上限 |
 
 - 调度：`schedule`（cron 表达式，时区 `scheduleTimezone`）触发后运行到完成，防重叠、`durationMinutes` 时长上限、完成/失败聊天通知（`notifyChat: false` 关闭）
-- 任务均为区域限定（`area: {x1,y1,z1,x2,y2,z2}`）；farm/chop/combat/breed 为 exclusive（互斥，避免争抢寻路/采集）
+- mine/farm/chop/combat/breed 为区域限定（`area: {x1,y1,z1,x2,y2,z2}`；afk/fish 无区域）；farm/chop/combat/breed 为 exclusive（互斥，避免争抢寻路/采集）
 - 遥测：`counters`（mined/caught/planted/chopped/kills/breedings…）显示于 `!task list`
 
 ## 快速开始（开发机）
@@ -97,7 +97,7 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 ## 配置
 
 优先级：内置默认 → `config/default.json` → `--config` 文件 → `MCBOT_*` 环境变量 → CLI。
-关键项（完整见 `config/default.json`）：
+关键项（完整键值见内置默认（src/core/config.js）与 `config/config.example.json`）：
 
 | 键 | 默认 | 说明 |
 |---|---|---|
