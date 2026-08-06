@@ -27,11 +27,33 @@ function parseArgs () {
           console.error('错误: --steps 需要一个逗号分隔的步骤列表（如 connect,spawn,chat）')
           process.exit(1)
         }
-        out.steps = raw.split(',').map(s => s.trim()).filter(Boolean)
+        const steps = raw.split(',').map(s => s.trim()).filter(Boolean)
+        if (steps.length === 0) {
+          console.error('错误: --steps 为空（示例: connect,spawn,chat）')
+          process.exit(1)
+        }
+        // 去重（重复 connect 会创建两个同名 bot 登录互踢）；重复步骤直接报错
+        const seen = new Set()
+        for (const s of steps) {
+          if (seen.has(s)) {
+            console.error(`错误: --steps 步骤重复: ${s}`)
+            process.exit(1)
+          }
+          seen.add(s)
+        }
+        out.steps = steps
         break
       }
       case '--dangerous': out.dangerous = true; break
-      case '--walk': out.walkDistance = Number(argv[++i]); break
+      case '--walk': {
+        const v = Number(argv[++i])
+        if (!Number.isFinite(v) || v <= 0) {
+          console.error('错误: --walk 必须是正数（如 3）')
+          process.exit(1)
+        }
+        out.walkDistance = v
+        break
+      }
       case '--host': out.host = argv[++i]; break
       case '--port': out.port = Number(argv[++i]); break
     }

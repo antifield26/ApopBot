@@ -7,6 +7,16 @@ import { CombatTask } from './combat.js'
 import { BreedTask } from './breed.js'
 import { createTaskSchedule } from './scheduled.js'
 import { withTimeout } from '../util/promise-timeout.js'
+import { sendChat } from '../core/chat.js'
+
+/** 递归按键名排序（热重载 diff 不因用户重排键序而误判变更）。 */
+function sortKeys (v) {
+  if (Array.isArray(v)) return v.map(sortKeys)
+  if (v && typeof v === 'object') {
+    return Object.fromEntries(Object.keys(v).sort().map(k => [k, sortKeys(v[k])]))
+  }
+  return v
+}
 
 const TASK_TYPES = {
   mine: (id, options, ctx) => new MineTask(id, 'mine', options, ctx),
@@ -37,6 +47,7 @@ export class TaskManager {
     this.log = logger.child({ module: 'tasks' })
     this.ctx = ctx
     this.tasks = new Map() // id → { entry, task, cron }
+    this._pendingExclusive = [] // 被 exclusive 互斥拒绝的任务（冲突任务终态后按序补启动）
   }
 
   _makeTaskCtx () {
@@ -110,7 +121,7 @@ export class TaskManager {
     for (const id of newIds) {
       const entry = newMap.get(id)
       const old = this.tasks.get(id)
-      if (!old || JSON.stringify(old.entry) !== JSON.stringify(entry)) {
+      if (!old || JSON.stringify(sortKeys(old.entry)) !== JSON.stringify(sortKeys(entry))) {
         await this.stopTask(id)
         this.tasks.get(id)?.cron?.stop() // F5
         try {
@@ -144,14 +155,29 @@ export class TaskManager {
       const busy = [...this.tasks.values()].find(r =>
         r !== rec && r.task.exclusive && RUNNING_STATES.includes(r.task.state))
       if (busy) {
-        this.log.warn({ task: id, conflict: busy.entry.id }, 'exclusive 任务运行中，拒绝启动')
+        // 排队而非静默拒绝：冲突任务终态后自动补启动（此前被拒任务永远停在 created）
+        this.log.warn({ task: id, conflict: busy.entry.id }, 'exclusive 任务运行中，排队等待')
+        this._pendingExclusive.push(rec)
         return null
       }
     }
 
     this.log.info({ task: id, type: rec.entry.type }, 'starting task')
     const p = rec.task.start()
+    Promise.resolve(p).then(() => this._drainExclusive(), () => this._drainExclusive())
     return p
+  }
+
+  /** 冲突任务终态后补启动排队的 exclusive 任务（FIFO，一次放行一个）。 */
+  _drainExclusive () {
+    while (this._pendingExclusive.length > 0) {
+      const rec = this._pendingExclusive.shift()
+      if (rec.task.state === 'created') {
+        this.startTask(rec.entry.id, rec).catch(err =>
+          this.log.error({ task: rec.entry.id, err: err.message }, '排队的 exclusive 任务启动失败'))
+        return // 若仍冲突，startTask 会重新排队
+      }
+    }
   }
 
   /**
@@ -191,11 +217,9 @@ export class TaskManager {
     const counters = Object.keys(rec.task.counters).length
       ? ` ${JSON.stringify(rec.task.counters)}`
       : ''
-    try {
-      this.ctx.bot?.chat(`[任务 ${rec.entry.id}] ${state}${counters}`)
-    } catch (err) {
-      this.log.warn({ err: err.message }, '完成通知发送失败')
-    }
+    // 统一走 sendChat：剥 § 颜色码 + 256 分片（裸 bot.chat 超长会被服务端截断/拒绝）
+    sendChat(this.ctx.bot, `[任务 ${rec.entry.id}] ${state}${counters}`, this.cfg.chat?.maxLength)
+      .catch(err => this.log.warn({ err: err.message }, '完成通知发送失败'))
   }
 
   /**
@@ -219,11 +243,13 @@ export class TaskManager {
   }
 
   async stopAll () {
-    for (const rec of this.tasks.values()) {
+    // 并行停止（各任务 stop 上限 10s——串行 N×10s 会让重连后功能层空窗过长）
+    await Promise.all([...this.tasks.values()].map(async (rec) => {
       rec.cron?.stop()
       await rec.task.stop()
-    }
+    }))
     this.tasks.clear()
+    this._pendingExclusive = []
   }
 
   /**
@@ -250,6 +276,7 @@ export class TaskManager {
     rec.cron?.stop()
     await rec.task.stop()
     this.tasks.delete(id)
+    this._pendingExclusive = this._pendingExclusive.filter(r => r !== rec)
     this.log.info({ task: id }, 'ad-hoc task removed')
   }
 

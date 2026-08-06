@@ -50,6 +50,10 @@ export function registerBuiltinCommands (registry, ctx) {
       }
       if (action === 'new') {
         const [type, newId, ...rest] = args.slice(1)
+        if (!type || !newId) {
+          await sendChat(c.bot, '§c用法: !task new <type> <id> [jsonOptions]（type 与 id 不能为空）', c.cfg.chat?.maxLength)
+          return
+        }
         const optionsJson = rest.join(' ')
         let options = {}
         if (optionsJson) {

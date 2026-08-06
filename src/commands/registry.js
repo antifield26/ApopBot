@@ -65,6 +65,8 @@ export class CommandRegistry {
       const last = this._lastDispatch.get(sender) ?? 0
       if (now - last < cooldownMs) {
         this.log.warn({ sender, cmd: name }, 'command rate limited')
+        const remain = Math.ceil((cooldownMs - (now - last)) / 1000)
+        await sendChat(ctx.bot, `§c命令冷却中（${remain}s 后可再试）`, ctx.cfg.chat?.maxLength)
         return true
       }
       this._lastDispatch.set(sender, now)

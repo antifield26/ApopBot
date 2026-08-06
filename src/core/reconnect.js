@@ -11,8 +11,11 @@ const CLASSIFIERS = [
   { type: 'behavior', fatal: false, keywords: ['flying', 'spam', 'speed'] },
   { type: 'server_full', fatal: false, keywords: ['server is full', 'full server'] },
   { type: 'maintenance', fatal: false, keywords: ['maintenance', 'updating', 'closed', 'restarting'] },
-  // 同时覆盖 Node.js 原生网络错误码（etimedout / socket hang up / econnreset 等）
-  { type: 'network_error', fatal: false, keywords: ['timeout', 'timed out', 'etimedout', 'connection lost', 'hang up', 'reset', 'econnreset', 'refused', 'keepalive', 'ehostunreach', 'enetunreach', 'eai_again', 'network', 'socketclosed', 'socket closed', 'closed'] }
+  // 消息违规（§ 颜色码/非法字符踢出）：Bot 自身 bug 或误操作，无限重连无意义 → fatal 等人工
+  { type: 'illegal_message', fatal: true, keywords: ['illegal_characters', 'multiplayer.disconnect.illegal'] },
+  // 同时覆盖 Node.js 原生网络错误码（etimedout / socket hang up / econnreset 等）；
+  // enotfound = DNS 解析失败（域名连接场景），归 network_error 非 fatal 退避重连
+  { type: 'network_error', fatal: false, keywords: ['timeout', 'timed out', 'etimedout', 'enotfound', 'connection lost', 'hang up', 'reset', 'econnreset', 'refused', 'keepalive', 'ehostunreach', 'enetunreach', 'eai_again', 'network', 'socketclosed', 'socket closed', 'closed'] }
 ]
 
 /**

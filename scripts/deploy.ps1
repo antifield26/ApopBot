@@ -138,7 +138,8 @@ $hashInput = @('package-lock.json', 'package.json', '.npmrc') | Where-Object { T
 $hash = ((Get-FileHash $hashInput -Algorithm SHA256 | ForEach-Object { $_.Hash }) -join '')
 $lockFile = 'logs\.lockhash'
 $needInstall = $true
-if ((Test-Path $lockFile) -and ((Get-Content $lockFile -Raw) -eq $hash)) { $needInstall = $false }
+# 哈希一致 + node_modules 实际存在才算可跳过（手工删除 node_modules 后必须重装）
+if ((Test-Path $lockFile) -and ((Get-Content $lockFile -Raw) -eq $hash) -and (Test-Path 'node_modules\.package-lock.json')) { $needInstall = $false }
 
 if ($needInstall) {
   Write-Host '依赖文件有变化，执行 npm ci --omit=dev ...'
@@ -212,8 +213,12 @@ if ($Smoke) {
   Write-Host '=== 冒烟（快速档: connect,spawn,chat）==='
   $cfg = Get-Content 'config\config.json' -Raw | ConvertFrom-Json
   $targetHost = $cfg.host
+  $targetPort = $cfg.port
   if ($targetHost -eq 'localhost') { Write-Warning 'host 为 localhost——确认服务端跑在本机；生产场景应指向服务端域名（如 mc.antifield.work）' }
-  & node scripts\smoke.mjs --config config\smoke.json --host $targetHost --steps connect,spawn,chat
+  # host 与 port 都从 config.json 转发（非 25565 端口时冒烟连错端口会误判失败）
+  $smokeArgs = @('scripts\smoke.mjs', '--config', 'config\smoke.json', '--host', $targetHost, '--steps', 'connect,spawn,chat')
+  if ($targetPort) { $smokeArgs += '--port'; $smokeArgs += [string]$targetPort }
+  & node @smokeArgs
   if ($LASTEXITCODE -ne 0) { Write-Error '冒烟失败（确认服务端在线、smokebot 已加入服务端白名单）'; exit 1 }
 }
 

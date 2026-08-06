@@ -18,26 +18,30 @@ export function parseCommand (line) {
   let inQuotes = false
   let tokenStarted = false
   let escaped = false
+  let braceDepth = 0 // 以 { 开头的 JSON token：括号内空格不分割（支持 !task new 带空格的 JSON）
 
   for (const ch of trimmed.slice(1)) {
     if (escaped) {
       current += ch
       tokenStarted = true
       escaped = false
-    } else if (ch === '\\' && tokenStarted) {
+    } else if (ch === '\\' && inQuotes) {
+      // 转义仅在引号内生效（\" 与 \\）：裸 \ 按字面（Windows 路径不被破坏）
       escaped = true
     } else if (ch === '"' && !tokenStarted) {
       inQuotes = true
       tokenStarted = true
     } else if (ch === '"' && inQuotes) {
       inQuotes = false
-    } else if (ch === ' ' && !inQuotes) {
+    } else if (ch === ' ' && !inQuotes && braceDepth === 0) {
       if (tokenStarted) {
         tokens.push(current)
         current = ''
         tokenStarted = false
       }
     } else {
+      if (ch === '{') braceDepth++
+      else if (ch === '}') braceDepth = Math.max(0, braceDepth - 1)
       current += ch
       tokenStarted = true
     }
