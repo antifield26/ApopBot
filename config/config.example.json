@@ -5,18 +5,36 @@
   "port": 25565,
   "username": "mcbot",
   "auth": "offline",
-  "ops": ["steve"],
+  "ops": [
+    "steve"
+  ],
   "tasks": [
     {
       "id": "mine-iron",
       "type": "mine",
       "enabled": true,
       "options": {
-        "blockTypes": ["iron_ore", "deepslate_iron_ore"],
+        "blockTypes": [
+          "iron_ore",
+          "deepslate_iron_ore"
+        ],
         "radius": 32,
         "maxBlocks": 64,
-        "chestLocations": [{ "x": 0, "y": 0, "z": 0 }],
-        "area": { "x1": -50, "y1": -60, "z1": -50, "x2": 50, "y2": 0, "z2": 50 }
+        "chestLocations": [
+          {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        ],
+        "area": {
+          "x1": -50,
+          "y1": -60,
+          "z1": -50,
+          "x2": 50,
+          "y2": 0,
+          "z2": 50
+        }
       }
     },
     {
@@ -24,42 +42,92 @@
       "type": "fish",
       "enabled": true,
       "schedule": "0 20 * * *",
-      "options": { "durationMinutes": 60, "stopWhenInventoryFull": true }
+      "options": {
+        "durationMinutes": 60,
+        "stopWhenInventoryFull": true
+      }
     },
     {
       "id": "afk-main",
       "type": "afk",
       "enabled": true,
-      "options": { "intervalMinutes": 5 }
+      "options": {
+        "intervalMinutes": 5
+      }
     },
     {
       "id": "wheat-farm",
       "type": "farm",
       "enabled": false,
       "options": {
-        "area": { "x1": -10, "y1": 64, "z1": -10, "x2": 10, "y2": 64, "z2": 10 },
-        "cropTypes": ["wheat"],
+        "area": {
+          "x1": -10,
+          "y1": 64,
+          "z1": -10,
+          "x2": 10,
+          "y2": 64,
+          "z2": 10
+        },
+        "cropTypes": [
+          "wheat"
+        ],
         "maxCycles": 3
-      }
+      },
+      "_comment": "默认巡逻：区域空闲等待（stopWhenIdle: true 才完成）"
     },
     {
       "id": "wood-chop",
       "type": "chop",
       "enabled": false,
-      "options": { "area": { "x1": -30, "y1": 60, "z1": -30, "x2": 30, "y2": 90, "z2": 30 } }
+      "options": {
+        "area": {
+          "x1": -30,
+          "y1": 60,
+          "z1": -30,
+          "x2": 30,
+          "y2": 90,
+          "z2": 30
+        }
+      },
+      "_comment": "默认巡逻：无树等待（stopWhenDone: true 才完成）"
     },
     {
       "id": "guard-base",
       "type": "combat",
       "enabled": false,
-      "options": { "area": { "x1": -50, "y1": -64, "z1": -50, "x2": 50, "y2": 100, "z2": 50 }, "maxTargets": 5 },
+      "options": {
+        "area": {
+          "x1": -50,
+          "y1": -64,
+          "z1": -50,
+          "x2": 50,
+          "y2": 100,
+          "z2": 50
+        },
+        "maxTargets": 5
+      },
       "_comment": "combat 默认巡逻：无怪时持续等待（stopWhenNoTargets 默认 false）；一次性清理配 stopWhenNoTargets: true"
     },
     {
       "id": "breed-cows",
       "type": "breed",
       "enabled": false,
-      "options": { "area": { "x1": -15, "y1": 60, "z1": -15, "x2": 15, "y2": 70, "z2": 15 }, "animalTypes": ["cow"], "foodItem": "wheat", "maxBreedings": 2 }
+      "options": {
+        "area": {
+          "x1": -15,
+          "y1": 60,
+          "z1": -15,
+          "x2": 15,
+          "y2": 70,
+          "z2": 15
+        },
+        "animalTypes": [
+          "cow"
+        ],
+        "foodItem": "wheat",
+        "maxBreedings": 2
+      },
+      "_comment": "默认巡逻：无动物等待（stopWhenNoAnimals: true 才完成）"
     }
   ],
   "mineflayerPlugins": {

@@ -69,14 +69,26 @@ export function createFeatureLayerManager (ctx, logger) {
     ctx.agent = createL2(ctx.cfg, ctx)
 
     // chat 监听挂在当前 bot 上；旧 bot 的监听随旧对象消亡
-    ctx.chatHandler = (sender, msg) => {
+    ctx.chatHandler = async (sender, msg) => {
       if (!msg || !msg.startsWith('!')) return
-      ctx.commands?.dispatch(msg, { sender, ctx }).catch((err) => {
+      const hit = await ctx.commands?.dispatch(msg, { sender, ctx }).catch((err) => {
         log().error({ err: err.message }, 'dispatch error')
+        return true // 出错不算未知命令
       })
+      // 未知命令静默是"指令无效"体验的一部分——明确反馈（含可用命令提示）
+      if (hit === false) {
+        const names = (ctx.commands?.list() ?? []).map(c => `!${c.name}`).join(' ')
+        try { bot.chat(`§c未知命令（可用: ${names}）`) } catch { /* 聊天通道可能未就绪 */ }
+      }
     }
     bot.on('chat', ctx.chatHandler)
     log().info({ bot: ctx.cfg.username }, 'feature layer ready')
+
+    // 重连恢复通知：玩家可感知 Bot 已回来（首连安静上线，仅重连提示）
+    const s = ctx.conn?.getStatus?.()
+    if (s && s.reconnectCount > 0) {
+      try { bot.chat(`§a[bot] 已重新连接（累计重连 ${s.reconnectCount} 次）`) } catch { /* 忽略 */ }
+    }
   }
 
   /**

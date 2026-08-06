@@ -23,7 +23,7 @@ function makeCtx (overrides = {}) {
     addTask: (e) => { calls.addTask.push(e) },
     removeTask: async (id) => { calls.removeTask.push(id) },
     startTask: async (id) => { calls.startTask.push(id); return true }, // 非 null = 启动成功（async 下 return Promise 会被解包）
-    stopTask: async (id) => { calls.stopTask.push(id) },
+    stopTask: async (id) => { calls.stopTask.push(id); return true },
     pauseTask: async () => {},
     resumeTask: async () => {}
   }
@@ -211,4 +211,70 @@ test('!task start 任务不存在 → 明确报错', async () => {
   })
   await dispatch(ctx, '!task start ghost')
   assert.ok(lastMsg(bot).includes('任务不存在'), '不存在 id 应明确报错而非静默')
+})
+
+test('!task stop/pause 存在 → 操作反馈', async () => {
+  const { ctx, bot } = makeCtx()
+  await dispatch(ctx, '!task stop m1')
+  assert.ok(lastMsg(bot).includes('已停止任务 m1'))
+  await dispatch(ctx, '!task pause m1')
+  assert.ok(lastMsg(bot).includes('已暂停任务 m1'))
+})
+
+test('!task resume 暂停中任务 → 恢复反馈', async () => {
+  const { ctx, bot } = makeCtx({
+    tasks: {
+      getStatus: () => [{ id: 'm1', state: 'paused' }],
+      startTask: async () => true, stopTask: async () => true,
+      addTask: () => {}, removeTask: async () => {},
+      pauseTask: async () => true, resumeTask: async () => true
+    }
+  })
+  await dispatch(ctx, '!task resume m1')
+  assert.ok(lastMsg(bot).includes('已恢复任务 m1'))
+})
+
+test('!task stop 不存在 → 明确报错', async () => {
+  const { ctx, bot } = makeCtx({
+    tasks: {
+      getStatus: () => [],
+      startTask: async () => null, stopTask: async () => false, // 生产语义：不存在 → false
+      addTask: () => {}, removeTask: async () => {},
+      pauseTask: async () => false, resumeTask: async () => false
+    }
+  })
+  await dispatch(ctx, '!task stop ghost')
+  assert.ok(lastMsg(bot).includes('任务不存在'))
+})
+
+test('!task pause 未运行任务（created 排队）→ 明确提示', async () => {
+  const { ctx, bot } = makeCtx({
+    tasks: {
+      getStatus: () => [{ id: 'g1', state: 'created' }],
+      startTask: async () => true, stopTask: async () => true,
+      addTask: () => {}, removeTask: async () => {},
+      pauseTask: async () => true, resumeTask: async () => true
+    }
+  })
+  await dispatch(ctx, '!task pause g1')
+  assert.ok(lastMsg(bot).includes('未在运行'), '排队任务 pause 应明确提示而非静默 no-op')
+})
+
+test('!task resume 非暂停任务 → 明确提示', async () => {
+  const { ctx, bot } = makeCtx()
+  await dispatch(ctx, '!task resume m1') // m1 是 running
+  assert.ok(lastMsg(bot).includes('未在暂停状态'))
+})
+
+test('!reload 失败 → 如实反馈（配置无效保留旧配置）', async () => {
+  const { ctx, bot } = makeCtx({ onReload: async () => false })
+  await dispatch(ctx, '!reload')
+  assert.ok(lastMsg(bot).includes('重载失败'))
+})
+
+test('dispatch 层：未知命令返回 false（chatHandler 负责反馈，见 feature-layer.test）', async () => {
+  const { ctx } = makeCtx()
+  const registry = createCommandRegistry(ctx)
+  const hit = await registry.dispatch('!fly-away', { sender: 'op1', ctx })
+  assert.equal(hit, false)
 })

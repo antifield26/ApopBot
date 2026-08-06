@@ -14,6 +14,9 @@ export class ChopTask extends BaseTask {
     if (!this._isArea(o.area)) throw new Error('chop 任务需要 options.area（完整 x1..z2 六坐标）')
     this._batchMax = o.maxBlocks ?? 64
     this._radius = o.radius ?? 48
+    // 默认巡逻：无树时等待（树会重新长）而非秒完成——与 combat 同款防"指令无效"误判；
+    // 一次性伐光显式配 stopWhenDone: true
+    this._stopWhenDone = o.stopWhenDone === true
     const registry = this.bot.registry
     if (!registry?.blocksByName) throw new Error('chop 任务需要 bot.registry（minecraft-data 数据）')
 
@@ -55,8 +58,13 @@ export class ChopTask extends BaseTask {
       }
 
       if (targets.length === 0) {
-        this.log.info('区域内没有可伐的树，任务完成')
-        break // 自然完成 → completed
+        if (this._stopWhenDone) {
+          this.log.info('区域内没有可伐的树，任务完成')
+          break // 自然完成 → completed
+        }
+        this.log.warn('区域内没有找到可伐的树，等待重试')
+        await this._internalWait(5 * 60 * 1000, 'no-target')
+        continue
       }
 
       // collectblock 需要 Block/Entity（target.position），findBlocks 返回 Vec3[]——先转 Block

@@ -137,9 +137,13 @@ export function createSkillRegistry (ctx) {
     },
     handler: async (c, { type, id, options }) => {
       c.tasks.addTask({ id, type, options: options ?? {}, notifyChat: true })
-      // addTask 不保证立即运行：exclusive 冲突会排队——返回真实状态防 LLM 假成功
+      // 等一个事件循环轮：init 抛错在 fire-and-forget 微任务内置 failed——立即查会误判
+      await new Promise(r => setImmediate(r))
       const st = c.tasks.getStatus().find(t => t.id === id)
-      if (st && st.state === 'created' && c.tasks.isPendingExclusive?.(id)) {
+      if (!st) return `任务 ${id} 创建失败`
+      if (st.state === 'failed') return `任务 ${id} (${type}) 启动失败: ${st.lastError ?? '未知原因'}`
+      if (st.state === 'completed') return `任务 ${id} (${type}) 已自然完成（无事可做）`
+      if (st.state === 'created' && c.tasks.isPendingExclusive?.(id)) {
         return `任务 ${id} (${type}) 已创建但排队中（exclusive 任务冲突，等待自动启动）`
       }
       return `任务 ${id} (${type}) 已启动`

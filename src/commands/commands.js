@@ -96,9 +96,34 @@ export function registerBuiltinCommands (registry, ctx) {
           }
           break
         }
-        case 'stop': await c.tasks.stopTask(id); break
-        case 'pause': await c.tasks.pauseTask(id); break
-        case 'resume': await c.tasks.resumeTask(id); break
+        case 'stop': {
+          const ok = await c.tasks.stopTask(id)
+          await sendChat(c.bot, ok ? `§a已停止任务 ${id}` : `§c任务不存在: ${id}`, c.cfg.chat?.maxLength)
+          break
+        }
+        case 'pause': {
+          // 状态校验：created（exclusive 排队）/已停/已完任务 pause 是静默 no-op——明确反馈
+          const st = c.tasks.getStatus().find(t => t.id === id)
+          if (!st) { await sendChat(c.bot, `§c任务不存在: ${id}`, c.cfg.chat?.maxLength); break }
+          if (!['init', 'running'].includes(st.state)) {
+            await sendChat(c.bot, `§e任务 ${id} 未在运行（${st.state}），无法暂停`, c.cfg.chat?.maxLength)
+            break
+          }
+          await c.tasks.pauseTask(id)
+          await sendChat(c.bot, `§a已暂停任务 ${id}`, c.cfg.chat?.maxLength)
+          break
+        }
+        case 'resume': {
+          const st = c.tasks.getStatus().find(t => t.id === id)
+          if (!st) { await sendChat(c.bot, `§c任务不存在: ${id}`, c.cfg.chat?.maxLength); break }
+          if (st.state !== 'paused') {
+            await sendChat(c.bot, `§e任务 ${id} 未在暂停状态（${st.state}），无法恢复`, c.cfg.chat?.maxLength)
+            break
+          }
+          await c.tasks.resumeTask(id)
+          await sendChat(c.bot, `§a已恢复任务 ${id}`, c.cfg.chat?.maxLength)
+          break
+        }
         default: await sendChat(c.bot, `§c未知操作: ${action}（可用 list/new/remove/start/stop/pause/resume）`, c.cfg.chat?.maxLength)
       }
     }
@@ -108,9 +133,10 @@ export function registerBuiltinCommands (registry, ctx) {
     name: 'reload',
     description: '热重载配置与任务（与改配置文件等效）',
     handler: async (c) => {
-      // 与 SIGHUP/配置监视走同一条队列（校验 → updateCfg → tasks diff 重载）
-      await c.onReload?.()
-      await sendChat(c.bot, '§a配置已重载', c.cfg.chat?.maxLength)
+      // 与 SIGHUP/配置监视走同一条队列（校验 → updateCfg → tasks diff 重载）。
+      // reload 失败（读取/校验）时如实反馈——配置写坏时不再假成功
+      const ok = (await c.onReload?.()) !== false
+      await sendChat(c.bot, ok ? '§a配置已重载' : '§c重载失败（配置无效，保留旧配置，详见日志）', c.cfg.chat?.maxLength)
     }
   })
 

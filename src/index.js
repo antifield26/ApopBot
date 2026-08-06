@@ -92,12 +92,12 @@ async function reload () {
     newCfg = loadConfig()
   } catch (err) {
     logger.warn({ err: err.message }, 'reload 配置读取失败，保留旧配置')
-    return
+    return false
   }
   const { ok: valid, errors: errs } = validateConfig(newCfg)
   if (!valid) {
     logger.warn({ errors: errs }, 'reload 配置校验失败，保留旧配置')
-    return
+    return false
   }
 
   const logChanged = JSON.stringify(newCfg.log) !== JSON.stringify(ctx.cfg.log)
@@ -129,6 +129,7 @@ async function reload () {
 
   if (ctx.tasks) await ctx.tasks.reload(newCfg)
   logger.info('config reloaded')
+  return true // 成功标志（!reload 命令反馈用）
 }
 const reloadQueued = () => layer.queue(reload)
 ctx.onReload = reloadQueued

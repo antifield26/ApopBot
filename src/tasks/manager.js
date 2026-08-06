@@ -174,12 +174,24 @@ export class TaskManager {
 
     this.log.info({ task: id, type: rec.entry.type }, 'starting task')
     const p = rec.task.start()
-    // 任务终态（完成/失败/停止）时快照计数器（U1：遥测跨重启保留）
+    // 任务终态（完成/失败/停止）时快照计数器（U1：遥测跨重启保留）；
+    // 常驻任务完成/失败发聊天通知（scheduled 由 runScheduled 通知，跳过）
     Promise.resolve(p).then(
-      () => { this._drainExclusive(); this._snapshotCounters() },
-      () => { this._drainExclusive(); this._snapshotCounters() }
+      () => { this._drainExclusive(); this._snapshotCounters(); this._notifyCompletion(rec) },
+      () => { this._drainExclusive(); this._snapshotCounters(); this._notifyCompletion(rec) }
     )
     return p
+  }
+
+  /** 常驻任务终态通知：秒完成/失败不再静默（用户可感知"指令已生效/已结束"）。 */
+  _notifyCompletion (rec) {
+    if (rec.cron) return // scheduled 任务由 runScheduled 通知
+    if (rec.entry.notifyChat === false) return
+    if (rec.task.state === 'completed') {
+      this._notify(rec, 'completed')
+    } else if (rec.task.state === 'failed') {
+      this._notify(rec, `failed: ${rec.task.lastError ?? '未知原因'}`)
+    }
   }
 
   /** 指定任务是否在 exclusive 排队中（命令反馈用）。 */
@@ -243,22 +255,30 @@ export class TaskManager {
 
   /**
    * 停止任务。注：!task stop 只停当前运行，cron 调度保持（下次触发重新启动）。
+   * @returns {Promise<boolean>} 任务是否存在（命令层反馈用）
    */
   async stopTask (id) {
     const rec = this.tasks.get(id)
-    if (!rec) return
+    if (!rec) return false
     this.log.info({ task: id }, 'stopping task')
     await rec.task.stop()
+    return true
   }
 
+  /** @returns {Promise<boolean>} 任务是否存在 */
   async pauseTask (id) {
     const rec = this.tasks.get(id)
-    await rec?.task.pause()
+    if (!rec) return false
+    await rec.task.pause()
+    return true
   }
 
+  /** @returns {Promise<boolean>} 任务是否存在 */
   async resumeTask (id) {
     const rec = this.tasks.get(id)
-    await rec?.task.resume()
+    if (!rec) return false
+    await rec.task.resume()
+    return true
   }
 
   async stopAll () {

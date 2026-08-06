@@ -39,10 +39,10 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 | `mine` | `blockTypes` | 区域内挖掘（collectblock），背包满（NoChests）自动暂停等待 | `stopWhenDone: true` 时区域挖空即完成 |
 | `fish` | `durationMinutes` | 钓鱼循环（60s 超时兜底防挂起） | 到时 / 背包满 |
 | `afk` | `intervalMinutes` | 周期视角转动防踢 | 无（scheduled 时必须配 `durationMinutes`） |
-| `farm` | `area` + `cropTypes` | 种植→等待成熟→收割循环（wheat/carrots/potatoes/beetroots/nether_wart） | 区域无作物可做 |
-| `chop` | `area` | 区域伐木（默认匹配 `/_log$|_wood$/`） | 区域无树 |
-| `combat` | — | 区域内敌对实体巡逻（低血进食/远离、击杀计数、`maxTargets` 上限） | 无目标 / 达上限 |
-| `breed` | — | 区域内白名单动物喂养繁殖（`maxBreedings` 上限） | 无动物 / 达上限 |
+| `farm` | `area` + `cropTypes` | 种植→等待成熟→收割循环（wheat/carrots/potatoes/beetroots/nether_wart） | 默认巡逻（`stopWhenIdle: true` 时区域空闲即完成） |
+| `chop` | `area` | 区域伐木（默认匹配 `/_log$|_wood$/`） | 默认巡逻（`stopWhenDone: true` 时无树即完成） |
+| `combat` | — | 区域内敌对实体巡逻（低血进食/远离、击杀计数、`maxTargets` 上限） | 默认巡逻（`stopWhenNoTargets: true` 时无怪即完成）/ 达上限 |
+| `breed` | — | 区域内白名单动物喂养繁殖（`maxBreedings` 上限） | 默认巡逻（`stopWhenNoAnimals: true` 时无动物即完成）/ 达上限 |
 
 - 调度：`schedule`（cron 表达式，时区 `scheduleTimezone`）触发后运行到完成，防重叠、`durationMinutes` 时长上限、完成/失败聊天通知（`notifyChat: false` 关闭）
 - 仅 farm/chop 强制 area（mine 可选、combat/breed 可省略=无区域约束；afk/fish 无区域）；farm/chop/combat/breed 为 exclusive（互斥，避免争抢寻路/采集）

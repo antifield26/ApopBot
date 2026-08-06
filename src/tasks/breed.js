@@ -25,6 +25,9 @@ export class BreedTask extends BaseTask {
     this._foodItem = typeof o.foodItem === 'string' ? o.foodItem : 'wheat'
     this._maxBreedings = o.maxBreedings ?? 4
     this._useCooldownMs = o.useCooldownMs ?? 3000
+    // 默认巡逻：无动物时等待（动物可能未加载/未刷新）而非秒完成——同款防误判；
+    // 一次性配 stopWhenNoAnimals: true
+    this._stopWhenNoAnimals = o.stopWhenNoAnimals === true
     this._currentAnimal = null
     this._onEntityGone = (entity) => {
       if (entity === this._currentAnimal) {
@@ -59,8 +62,12 @@ export class BreedTask extends BaseTask {
       if (!animal) {
         this._currentAnimal = null
         try { this.bot.pathfinder.setGoal(null) } catch { /* 未在移动 */ }
-        this.log.info('区域内没有可繁殖的动物，任务完成')
-        break
+        if (this._stopWhenNoAnimals) {
+          this.log.info('区域内没有可繁殖的动物，任务完成')
+          break
+        }
+        await this._internalWait(30 * 1000, 'no-animal')
+        continue
       }
       this._currentAnimal = animal
 
@@ -114,7 +121,8 @@ export class BreedTask extends BaseTask {
   async _feed (animal) {
     const food = this.bot.inventory?.items()?.find(it => it.name === this._foodItem)
     if (!food) {
-      this.log.warn(`背包里没有食物 ${this._foodItem}，任务完成`)
+      // 文案修正：任务保持运行（外层 30s no-food 等待），不是"完成"——误导排障
+      this.log.warn(`背包里没有食物 ${this._foodItem}，等待补货（任务保持运行）`)
       this._currentAnimal = null
       return false
     }

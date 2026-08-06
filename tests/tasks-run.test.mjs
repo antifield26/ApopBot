@@ -116,7 +116,7 @@ test('fish run: 抛竿失败 → 计数不变，stop 打断重试等待', async 
 
 // ---- FarmTask ----
 
-test('farm run: 区域空 → 自然完成', async () => {
+test('farm run: 区域空 + stopWhenIdle:true → 自然完成', async () => {
   const bot = {
     registry: { blocksByName: { wheat: { id: 1 } } },
     collectBlock: {},
@@ -124,10 +124,28 @@ test('farm run: 区域空 → 自然完成', async () => {
     findBlocks: () => [],
     blockAt: (p) => ({ position: p, name: 'air', type: 0 })
   }
-  const task = new FarmTask('fm', 'farm', { area: AREA1, cropTypes: ['wheat'] }, makeCtx(bot))
+  const task = new FarmTask('fm', 'farm', { area: AREA1, cropTypes: ['wheat'], stopWhenIdle: true }, makeCtx(bot))
   await task.start()
   assert.equal(task.state, 'completed')
   assert.equal(task.counters.harvested ?? 0, 0)
+})
+
+test('farm run: 默认巡逻——区域空时等待不完成（stop 打断）', async () => {
+  const bot = {
+    registry: { blocksByName: { wheat: { id: 1 } } },
+    collectBlock: {},
+    pathfinder: {},
+    findBlocks: () => [],
+    blockAt: (p) => ({ position: p, name: 'air', type: 0 })
+  }
+  const task = new FarmTask('fm', 'farm', { area: AREA1, cropTypes: ['wheat'], growthCheckSeconds: 1 }, makeCtx(bot))
+  const p = task.start()
+  await new Promise(r => setTimeout(r, 1500)) // 跨过 idle 等待（1s）
+  assert.equal(task.state, 'running', '区域空闲默认应巡逻等待而非秒完成')
+  assert.equal(task.waitingReason, 'idle')
+  await task.stop()
+  await p
+  assert.equal(task.state, 'stopped')
 })
 
 test('farm run: 收割成熟作物 → 计数 → 完成后停止', async () => {
@@ -254,7 +272,19 @@ test('combat run: 攻击 → entityGone 击杀 → maxTargets 完成', async () 
 
 // ---- BreedTask ----
 
-test('breed run: 区域内无动物 → 自然完成', async () => {
+test('breed run: 无动物 + stopWhenNoAnimals:true → 自然完成', async () => {
+  const bot = new EventEmitter()
+  Object.assign(bot, {
+    pathfinder: { setGoal: () => {}, stop () {} },
+    entity: { position: new Vec3(0, 64, 0) },
+    nearestEntity: () => null
+  })
+  const task = new BreedTask('br', 'breed', { stopWhenNoAnimals: true }, makeCtx(bot))
+  await task.start()
+  assert.equal(task.state, 'completed')
+})
+
+test('breed run: 默认巡逻——无动物时等待不完成（stop 打断）', async () => {
   const bot = new EventEmitter()
   Object.assign(bot, {
     pathfinder: { setGoal: () => {}, stop () {} },
@@ -262,8 +292,13 @@ test('breed run: 区域内无动物 → 自然完成', async () => {
     nearestEntity: () => null
   })
   const task = new BreedTask('br', 'breed', {}, makeCtx(bot))
-  await task.start()
-  assert.equal(task.state, 'completed')
+  const p = task.start()
+  await new Promise(r => setTimeout(r, 100))
+  assert.equal(task.state, 'running', '无动物默认应巡逻等待而非秒完成')
+  assert.equal(task.waitingReason, 'no-animal')
+  await task.stop()
+  await p
+  assert.equal(task.state, 'stopped')
 })
 
 test('breed run: 喂食两次（equip + useOn×2）→ fed 计数，stop 打断幼崽等待', async () => {
@@ -289,4 +324,35 @@ test('breed run: 喂食两次（equip + useOn×2）→ fed 计数，stop 打断�
   await task.stop() // 打断 5s 等待
   await p
   assert.equal(task.state, 'stopped')
+})
+
+test('chop run: 默认巡逻——无树时等待不完成（stop 打断）', async () => {
+  const bot = {
+    registry: { blocksByName: { oak_log: { id: 10 } } },
+    collectBlock: {},
+    pathfinder: {},
+    findBlocks: () => [],
+    blockAt: (p) => ({ position: p, type: 10 })
+  }
+  const task = new ChopTask('c', 'chop', { area: AREA1 }, makeCtx(bot))
+  const p = task.start()
+  await new Promise(r => setTimeout(r, 50))
+  assert.equal(task.state, 'running', '无树默认应巡逻等待（树会重新长）而非秒完成')
+  assert.equal(task.waitingReason, 'no-target')
+  await task.stop()
+  await p
+  assert.equal(task.state, 'stopped')
+})
+
+test('chop run: stopWhenDone:true → 无树自然完成', async () => {
+  const bot = {
+    registry: { blocksByName: { oak_log: { id: 10 } } },
+    collectBlock: {},
+    pathfinder: {},
+    findBlocks: () => [],
+    blockAt: (p) => ({ position: p, type: 10 })
+  }
+  const task = new ChopTask('c', 'chop', { area: AREA1, stopWhenDone: true }, makeCtx(bot))
+  await task.start()
+  assert.equal(task.state, 'completed')
 })

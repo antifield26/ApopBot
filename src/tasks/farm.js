@@ -28,6 +28,9 @@ export class FarmTask extends BaseTask {
     this._replant = o.replant !== false
     this._maxCycles = o.maxCycles ?? 1
     this._growthCheckMs = (o.growthCheckSeconds ?? 30) * 1000
+    // 默认巡逻：区域空闲（无作物/无种子/无耕地）时等待而非秒完成——同款防误判；
+    // 一次性配 stopWhenIdle: true
+    this._stopWhenIdle = o.stopWhenIdle === true
   }
 
   _isArea (a) {
@@ -81,8 +84,13 @@ export class FarmTask extends BaseTask {
         continue
       }
 
-      this.log.info('区域内没有可做的工作，任务完成')
-      break // 自然完成 → completed
+      if (this._stopWhenIdle) {
+        this.log.info('区域内没有可做的工作，任务完成')
+        break // 自然完成 → completed
+      }
+      // 巡逻等待：玩家放种子/种下作物/成熟后下一轮继续
+      await this._internalWait(this._growthCheckMs, 'idle')
+      continue
     }
     this.log.info({ counters: this.counters }, 'farm task finished')
   }

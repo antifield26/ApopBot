@@ -118,7 +118,12 @@ export function followPlugin (bot) {
   bot.follow = follow
 
   bot.on('entityGone', (entity) => {
-    if (target && entity.id === target.id) follow.stop()
+    if (target && entity.id === target.id) {
+      const name = target.username ?? target.name ?? `实体#${target.id}`
+      follow.stop()
+      // 目标掉线/死亡/传送——静默停止会让玩家以为还在跟随，聊天提示（P3）
+      try { bot.chat(`§e已停止跟随 ${name}（目标消失）`) } catch { /* 聊天通道未就绪 */ }
+    }
   })
 
   bot.on('end', () => {

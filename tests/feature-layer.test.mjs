@@ -80,6 +80,18 @@ test('B1 修复：chatHandler 读取实时 ctx（bot 重建后仍工作）', asy
   await layer.teardown()
 })
 
+test('chatHandler：未知命令明确反馈（含可用命令列表，不再静默）', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  bot.emit('chat', 'steve', '!fly-away')
+  await new Promise(r => setTimeout(r, 10))
+  assert.ok(bot.messages.some(m => m.includes('未知命令')), `应反馈未知命令: ${bot.messages}`)
+  assert.ok(bot.messages.some(m => m.includes('!ping')), `应列出可用命令: ${bot.messages}`)
+  await layer.teardown()
+})
+
 test('queue 串行化：重叠操作按序执行', async () => {
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)

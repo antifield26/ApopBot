@@ -193,7 +193,8 @@ test('ChopTask run: collect 收到 blockAt 转换后的 Block', async () => {
     findBlocks: () => (findCalls++ < 1 ? [new Vec3(2, 3, 4)] : []),
     blockAt: (p) => ({ position: p, type: 10 })
   }
-  const task = new ChopTask('c2', 'chop', { area: AREA }, makeCtx(bot))
+  // stopWhenDone: true——否则无树时默认巡逻等待（不自然完成），测试挂起
+  const task = new ChopTask('c2', 'chop', { area: AREA, stopWhenDone: true }, makeCtx(bot))
   await task.start()
   assert.equal(task.state, 'completed')
   assert.equal(collectArgs.length, 1)
