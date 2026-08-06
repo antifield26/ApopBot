@@ -1,6 +1,11 @@
 import { CommandRegistry } from './registry.js'
 import { isOp } from './permissions.js'
 import { sendChat } from '../core/chat.js'
+import { findSurfaceBlocks, createMovement, REASON_TEXT } from '../core/movement.js'
+
+// !find 防重入：行走期间重复 find 拒绝（单 bot 架构，模块级标志）。
+// 重连重建功能层时若残留 true，由 120s 墙钟超时自愈（goto 必然结束）
+let findBusy = false
 
 /**
  * 注册内置命令。
@@ -176,6 +181,69 @@ export function registerBuiltinCommands (registry, ctx) {
       if (!player?.entity) { await sendChat(c.bot, `§c找不到玩家 ${name}`, c.cfg.chat?.maxLength); return }
       c.plugins.follow.setTarget(player.entity)
       await sendChat(c.bot, `§a开始跟随 ${name}`, c.cfg.chat?.maxLength)
+    }
+  })
+
+  registry.register({
+    name: 'find',
+    usage: '!find <方块名> [maxDistance]',
+    description: '找到指定方块的地表暴露位置（上方 2 格为天空）并走过去（3 格内）',
+    handler: async (c, args) => {
+      const [blockName, maxDistanceStr] = args
+      if (!blockName) {
+        await sendChat(c.bot, '§c用法: !find <方块名> [maxDistance]（如 !find iron_ore）', c.cfg.chat?.maxLength)
+        return
+      }
+      let maxDistance = 64
+      if (maxDistanceStr !== undefined) {
+        maxDistance = Number(maxDistanceStr)
+        if (!Number.isInteger(maxDistance) || maxDistance < 16 || maxDistance > 256) {
+          await sendChat(c.bot, '§cmaxDistance 须为 16-256 的整数（受客户端 viewDistance 限制）', c.cfg.chat?.maxLength)
+          return
+        }
+      }
+      if (findBusy) {
+        await sendChat(c.bot, '§e上一个 find 仍在进行中，请稍候', c.cfg.chat?.maxLength)
+        return
+      }
+      findBusy = true
+      try {
+        // 地表候选查询（palette 快路径 + 上方 2 格空/透明验证）
+        let result
+        try {
+          result = findSurfaceBlocks(c.bot, blockName, { maxDistance })
+        } catch (err) {
+          await sendChat(c.bot, `§c未知方块类型: ${blockName}（!find 帮助查看示例）`, c.cfg.chat?.maxLength)
+          return
+        }
+        const { candidates } = result
+        if (candidates.length === 0) {
+          await sendChat(c.bot, `§c范围内（${maxDistance} 格）没有暴露在地表的 ${blockName}`, c.cfg.chat?.maxLength)
+          return
+        }
+        // exclusive 任务运行中：collect 会收到 GoalChanged 中断——警告后放行（玩家自行权衡）
+        const busyExclusive = (c.tasks?.getStatus?.() ?? [])
+          .filter(t => ['init', 'running'].includes(t.state))
+          .map(t => t.id)
+        if (busyExclusive.length > 0) {
+          await sendChat(c.bot, `§e注意: 任务 ${busyExclusive.join(', ')} 运行中——寻路会与其移动冲突`, c.cfg.chat?.maxLength)
+        }
+        // 走到最近地表候选 3 格内（GoalCompositeAny 多候选点选最近可达）
+        const t0 = Date.now()
+        const r = await createMovement(c.bot, c.logger).gotoNearest(candidates, 3, { timeoutMs: 120000 })
+        const nearest = candidates.reduce((a, b) =>
+          (a.x - c.bot.entity.position.x) ** 2 + (a.z - c.bot.entity.position.z) ** 2 <=
+          (b.x - c.bot.entity.position.x) ** 2 + (b.z - c.bot.entity.position.z) ** 2 ? a : b)
+        const dist = Math.round(Math.hypot(nearest.x - c.bot.entity.position.x, nearest.z - c.bot.entity.position.z))
+        if (r.ok) {
+          const el = Math.round((Date.now() - t0) / 1000)
+          await sendChat(c.bot, `§a找到 ${blockName}: ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}（水平距离 ${dist}m，耗时 ${el}s）`, c.cfg.chat?.maxLength)
+        } else {
+          await sendChat(c.bot, `§e找到 ${blockName} 但${REASON_TEXT[r.reason] ?? '移动失败'}：最近候选 ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}（水平距离 ${dist}m）`, c.cfg.chat?.maxLength)
+        }
+      } finally {
+        findBusy = false
+      }
     }
   })
 
