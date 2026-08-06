@@ -19,9 +19,9 @@ function makeBot (pos = new Vec3(0, 64, 0)) {
   return bot
 }
 
-/** 启用 mock timers；返回 t.after 清理句柄。 */
-function useMockTimers (t) {
-  mock.timers.enable({ apis: ['setInterval'] })
+/** 启用 mock timers（默认 setInterval；Date 需显式——冷却判断用模拟时钟）。 */
+function useMockTimers (t, apis = ['setInterval']) {
+  mock.timers.enable({ apis })
   t.after(() => mock.timers.reset())
 }
 
@@ -173,4 +173,54 @@ test('follow: 到达后停止跳跃并清除爬升模式（跳上高台不再继
   mock.timers.tick(500)
   assert.equal(bot.controls.jump, false, '到达后不应持续跳跃')
   assert.equal(bot.controls.forward, false)
+})
+
+// ---- 寻路模式 A* 重置风暴与双控制器（实测"移动一段距离后原地不动"）----
+
+test('follow: 寻路模式目标持续移动 → 重建受冷却限制（防 A* 重置风暴）', (t) => {
+  useMockTimers(t, ['setInterval', 'Date']) // Date 也 mock：冷却判断用模拟时钟
+  const bot = makeBot(new Vec3(0, 64, 0))
+  const player = { id: 7, position: new Vec3(10, 64, 0) } // dist 10 ≥ DIRECT_RANGE → pathing
+  bot.follow.setTarget(player)
+  mock.timers.tick(500) // 首次（!lastGoalPos 无条件重建）
+  const firstGoalCount = bot.setGoalCalls.filter(g => g !== null).length
+  assert.ok(firstGoalCount >= 1, '首次应建立寻路目标')
+  // 目标持续移动（每 tick 3 格 > PATH_UPDATE_DIST）但 1.5s 冷却内 → 不得重建
+  for (let i = 0; i < 2; i++) {
+    player.position.x += 3
+    mock.timers.tick(500)
+  }
+  const after = bot.setGoalCalls.filter(g => g !== null).length
+  assert.equal(after, firstGoalCount, '冷却内目标移动不应重建 goal（setGoal 会重置 A* → 原地不动）')
+  // 冷却过后目标继续移动 → 允许重建追目标
+  player.position.x += 3
+  mock.timers.tick(1000) // 累计 2.5s > 1.5s 冷却
+  const final = bot.setGoalCalls.filter(g => g !== null).length
+  assert.ok(final > after, '冷却过后应重建 goal 追目标')
+})
+
+test('follow: 寻路模式接近（REACH 与回直接控制之间）→ 清除寻路目标（防双控制器冲突）', (t) => {
+  useMockTimers(t, ['setInterval', 'Date'])
+  const bot = makeBot(new Vec3(0, 64, 0))
+  const player = { id: 7, position: new Vec3(10, 64, 0) }
+  bot.follow.setTarget(player)
+  mock.timers.tick(500) // pathing + setGoal
+  assert.ok(bot.setGoalCalls.at(-1) !== null, '远距应建立寻路目标')
+  player.position.x = 2.8 // dist 2.8：> REACH 2.5（不停下）、< DIRECT_RANGE*0.5 3（回直接控制）
+  mock.timers.tick(500)
+  assert.equal(bot.setGoalCalls.at(-1), null, '回直接控制前应 setGoal(null) 停 pathfinder')
+  mock.timers.tick(500) // 下一 tick 走 direct 分支 → forward
+  assert.equal(bot.controls.forward, true, '应回到直接控制前进')
+})
+
+test('follow: 已跟上（dist ≤ REACH）→ 清除残留寻路 goal（防 pathfinder 继续驱动移动）', (t) => {
+  useMockTimers(t, ['setInterval', 'Date'])
+  const bot = makeBot(new Vec3(0, 64, 0))
+  const player = { id: 7, position: new Vec3(10, 64, 0) }
+  bot.follow.setTarget(player)
+  mock.timers.tick(500) // pathing + setGoal
+  player.position.x = 2 // dist 2 ≤ REACH 2.5
+  mock.timers.tick(500)
+  assert.equal(bot.setGoalCalls.at(-1), null, '已跟上时必须清寻路 goal')
+  assert.equal(bot.controls.forward, false, '已跟上应停下')
 })

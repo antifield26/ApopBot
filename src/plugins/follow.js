@@ -23,6 +23,10 @@ const DIRECT_RANGE = 6 // 此距离内用直接控制（跳跃可用）；更远
 const JUMP_Y_DIFF = 0.6 // 目标高于 Bot 超过此值 → 持续跳跃（跳上台阶/矮墙）
 const STUCK_TICKS = 6 // 直接控制 N 轮（3s）无位移 → 切寻路绕行
 const PATH_UPDATE_DIST = 2 // 寻路模式下目标位移超过此值才重建 goal（低配机避免每 tick 重算 A*）
+// 重建冷却：pathfinder 的 setGoal 会 resetPath（清路径 + 丢进行中 A* 分片 + 停控制）——
+// 目标持续移动时每 2 格就重建会让 A* 永远算不完 → 原地不动（实测回归）。
+// 位移 2 格 + 冷却 1.5s 双条件：A* 有 1.5s 计算窗口（40ms/tick ≈ 37 分片）
+const GOAL_RECALC_COOLDOWN_MS = 1500
 
 /**
  * mineflayer 插件工厂。装载后产生 bot.follow = { setTarget(player|null), stop(), getTarget() }。
@@ -34,6 +38,7 @@ export function followPlugin (bot) {
   let stuckCount = 0
   let pathing = false
   let lastGoalPos = null
+  let lastGoalTime = 0 // 上次重建寻路目标的时间戳（冷却防 A* 重置风暴）
   let jumpHeld = false // 爬升模式（sticky jump）：目标高于阈值时持续按住跳跃键
 
   function stopMoving () {
@@ -53,9 +58,12 @@ export function followPlugin (bot) {
     const yDiff = tp.y - p.y
 
     if (dist <= REACH) {
-      // 已跟上：停下；目标在 Bot 上方（高台上）时补一次跳跃对齐
+      // 已跟上：停下；目标在 Bot 上方（高台上）时补一次跳跃对齐。
+      // 必须清残留寻路 goal——否则 pathfinder 的 monitorMovement 每 physicsTick
+      // 覆盖控制状态继续走向旧目标（双控制器冲突 → 跟随失效/原地不动）
       stopMoving()
       pathing = false
+      clearGoal()
       lastPos = p.clone()
       stuckCount = 0
       jumpHeld = false
@@ -93,16 +101,27 @@ export function followPlugin (bot) {
         jumpHeld = false
       }
     } else {
-      // 寻路绕行：目标位移超阈值才重建 goal
+      // 寻路绕行：目标位移超阈值 + 冷却双条件才重建 goal——setGoal 会 resetPath
+      //（清路径 + 丢进行中 A* 分片 + 停控制），目标持续移动时无冷却地重建会让
+      // A* 永远算不完 → 原地不动（实测回归）
       stopMoving()
       pathing = true
       jumpHeld = false
       const moved = lastGoalPos && tp.distanceTo(lastGoalPos) > PATH_UPDATE_DIST
-      if (!lastGoalPos || moved) {
-        try { bot.pathfinder.setGoal(new goals.GoalNear(tp, 1)) } catch { /* 未在移动 */ }
+      const cooled = Date.now() - lastGoalTime > GOAL_RECALC_COOLDOWN_MS
+      if (!lastGoalPos || (moved && cooled)) {
+        // GoalNear 构造签名 (x, y, z, range)——传 Vec3 单参会得到 NaN goal
+        //（Math.floor(Vec3)=NaN → A* 行为异常 → 原地不动，实测回归）
+        try { bot.pathfinder.setGoal(new goals.GoalNear(tp.x, tp.y, tp.z, 1)) } catch { /* 未在移动 */ }
         lastGoalPos = tp.clone()
+        lastGoalTime = Date.now()
       }
-      if (dist < DIRECT_RANGE * 0.5) pathing = false // 足够近后回到直接控制
+      if (dist < DIRECT_RANGE * 0.5) {
+        // 回到直接控制前必须停 pathfinder——否则其 monitorMovement 每 physicsTick
+        // 覆盖 setControlState（双控制器打架 → 跟随失效/原地不动）
+        pathing = false
+        clearGoal()
+      }
     }
   }
 
