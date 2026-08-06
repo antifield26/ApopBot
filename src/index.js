@@ -67,6 +67,11 @@ const conn = new ConnectionManager(cfg, logger, {
   },
   onStateChange: (state) => {
     logger.info({ state }, 'connection state changed')
+    // 断线期（最长退避 5 分钟）任务/agent 不得继续在死 bot 上空转失败重试——
+    // 拆除功能层（teardown 幂等 + 与 rebuild 串行）；重连成功后 onSpawn → rebuild 重建
+    if (state !== 'connected') {
+      layer.queue(() => layer.teardown())
+    }
   }
 })
 ctx.conn = conn

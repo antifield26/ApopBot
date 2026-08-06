@@ -195,3 +195,86 @@ test('addTask/removeTask 运行时增删', async () => {
   assert.throws(() => mgr.addTask({ id: 'ad2', type: 'afk', options: { intervalMinutes: 1 } }))
   await mgr.removeTask('ad2')
 })
+
+// ---- P1-3 / P1-6：exclusive 互斥与排队清理（load/reload 路径）----
+
+import { EventEmitter } from 'node:events'
+import { Vec3 } from 'vec3'
+import { CombatTask } from '../src/tasks/combat.js'
+
+function makeCombatBot () {
+  const bot = new EventEmitter()
+  Object.assign(bot, {
+    pathfinder: { setGoal: () => {}, stop () {} },
+    entity: { position: new Vec3(0, 64, 0) },
+    health: 20,
+    nearestEntity: () => null
+  })
+  return bot
+}
+
+async function settle (n = 3) {
+  for (let i = 0; i < n; i++) await new Promise(r => setImmediate(r))
+}
+
+test('P1-3 修复：load 两个常驻 exclusive 任务不并发（先入表后启动）', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  await manager.load({
+    tasks: [
+      { id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } },
+      { id: 'g2', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }
+    ]
+  })
+  await settle(5) // 让 g1 进入循环（无目标 → 3s 内部等待挂起）
+  const s1 = manager.getStatus().find(t => t.id === 'g1')
+  const s2 = manager.getStatus().find(t => t.id === 'g2')
+  assert.equal(s1.state, 'running')
+  assert.equal(s2.state, 'created', '第二个 exclusive 应排队而非同时运行（互斥判定需看到已登记任务）')
+  assert.equal(manager._pendingExclusive.length, 1)
+  await manager.stopAll()
+  assert.equal(manager._pendingExclusive.length, 0)
+})
+
+test('P1-6 修复：reload 移除排队的 exclusive 任务 → 队列不残留陈旧 rec', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  await manager.load({
+    tasks: [
+      { id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } },
+      { id: 'g2', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }
+    ]
+  })
+  await settle(5)
+  assert.equal(manager._pendingExclusive.length, 1, 'g2 应已排队')
+  // reload 移除 g2：陈旧排队项必须被过滤（removeTask 有此清理，reload 此前漏了）
+  await manager.reload({ tasks: [{ id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }] })
+  assert.equal(manager._pendingExclusive.length, 0, 'reload 移除后排队队列应为空')
+  assert.equal(manager.tasks.has('g2'), false)
+  await manager.stopAll()
+})
+
+test('P1-6 修复：reload 后排队的 exclusive 任务重新入队并保持互斥', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  await manager.load({
+    tasks: [
+      { id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } },
+      { id: 'g2', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }
+    ]
+  })
+  await settle(5)
+  assert.equal(manager._pendingExclusive.length, 1)
+  // reload 变更 g2 的 options（stopWhenNoTargets 打开 → 无目标自然完成）
+  await manager.reload({
+    tasks: [
+      { id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } },
+      { id: 'g2', type: 'combat', enabled: true, options: { stopWhenNoTargets: true } }
+    ]
+  })
+  await settle(5)
+  assert.equal(manager._pendingExclusive.length, 1, '变更后的 g2 应重新排队（新 rec）')
+  const s2 = manager.getStatus().find(t => t.id === 'g2')
+  assert.equal(s2.state, 'created')
+  await manager.stopAll()
+})

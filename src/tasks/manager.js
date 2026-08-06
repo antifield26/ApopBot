@@ -87,13 +87,15 @@ export class TaskManager {
       seen.add(entry.id)
       try {
         const rec = this._createEntry(entry)
+        // 必须先入表再启动：exclusive 互斥判定遍历 this.tasks.values()，
+        // 批次内尚未登记的任务不参与判定 → 两个常驻 exclusive 任务会同时启动（P1-3 实测）
+        this.tasks.set(entry.id, rec)
         if (entry.schedule) {
           this._createSchedule(rec)
         } else if (entry.enabled !== false) {
           // 常驻任务 fire-and-forget：startTask 返回 run 完成 promise，不能 await（任务常驻）
           this.startTask(entry.id, rec).catch(err => this.log.error({ task: entry.id, err: err.message }, '任务启动失败'))
         }
-        this.tasks.set(entry.id, rec)
       } catch (err) {
         this.log.error({ task: entry.id, err: err.message }, '任务装载失败')
       }
@@ -126,17 +128,20 @@ export class TaskManager {
         this.tasks.get(id)?.cron?.stop() // F5
         try {
           const rec = this._createEntry(entry)
+          this.tasks.set(id, rec) // 同 load：先入表再启动（exclusive 互斥判定依赖登记）
           if (entry.schedule) {
             this._createSchedule(rec)
           } else if (entry.enabled !== false) {
             this.startTask(id, rec).catch(err => this.log.error({ task: id, err: err.message }, '任务启动失败'))
           }
-          this.tasks.set(id, rec)
         } catch (err) {
           this.log.error({ task: id, err: err.message }, '任务装载失败')
         }
       }
     }
+    // 移除/变更的任务其排队 rec 已陈旧——过滤（removeTask 有此清理，reload 漏了，
+    // 否则队列项泄漏且 reload 后排队任务永不重新入队，永久停在 created）（P1-6）
+    this._pendingExclusive = this._pendingExclusive.filter(r => this.tasks.get(r.entry.id) === r)
     this.cfg = cfg
   }
 

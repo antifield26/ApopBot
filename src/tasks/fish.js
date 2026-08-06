@@ -24,8 +24,15 @@ export class FishTask extends BaseTask {
         break
       }
 
+      // 抛竿与取消信号 race：stop() 时 _cancel 解析取消信号 → run 协程立即退出，
+      // 不再等 10s stop 上限（mineflayer 的 fish() 无超时，会一直挂到收杆）。
+      // 悬空 fish promise 的 rejection 挂 noop catch 防 unhandledRejection 误杀进程。
       try {
-        await withTimeout(this.bot.fish(), 60 * 1000, 'fish attempt timeout')
+        const fishP = withTimeout(this.bot.fish(), 60 * 1000, 'fish attempt timeout')
+        fishP.catch(() => { /* race 丢弃分支的 rejection 已有 handler（成功路径由 race 消费） */ })
+        const cancel = new Promise((resolve) => { this._cancelFish = resolve })
+        const winner = await Promise.race([fishP, cancel])
+        if (winner === 'cancel') break
         this.incr('caught')
         this.log.debug({ total: this.counters.caught }, 'fish caught')
       } catch (err) {
@@ -34,6 +41,15 @@ export class FishTask extends BaseTask {
       }
     }
     this.log.info({ caught: this.counters.caught ?? 0 }, 'fish task finished')
+  }
+
+  /** F1：stop 时解析取消信号打断挂起的 bot.fish()（底层鱼竿由 fishing 插件下次抛竿自愈）。 */
+  async _cancel () {
+    if (this._cancelFish) {
+      const r = this._cancelFish
+      this._cancelFish = null
+      r('cancel')
+    }
   }
 
   _inventoryFull () {

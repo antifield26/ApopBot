@@ -78,7 +78,7 @@ export class ConnectionManager {
     const bot = this._deps.createBot(this.cfg)
     this.bot = bot
     this.log = this.log.child({ bot: this.cfg.username })
-    this._wireEvents(seq)
+    this._wireEvents(seq) // 内部同步注册 spawn 监听与超时兜底（必须先于插件装载，见 _wireEvents 注释）
 
     // 2. 异步插件装载（动态 import 可能较慢，设超时；失败为非致命网络类问题，重连重试）
     try {
@@ -96,8 +96,22 @@ export class ConnectionManager {
       this._scheduleReconnect()
       return
     }
+  }
 
-    // 3. spawn 超时兜底：超时则主动断开，由 end 事件走重连路径
+  /**
+   * 更新配置（热重载：host/port/reconnect 参数在下次连接时生效）。
+   * @param {object} cfg
+   */
+  updateCfg (cfg) {
+    this.cfg = cfg
+  }
+
+  _wireEvents (seq) {
+    const bot = this.bot
+
+    // spawn 超时兜底必须在插件装载（await 动态 import）之前注册——否则 spawn 在装载
+    // 期间已触发（本机/快速握手），后注册的监听器永远等不到事件 → 60s 后误杀正常 bot
+    // 并触发重连循环（P0，实测复现）。两处 bot.once('spawn') 按注册顺序先后触发，无冲突。
     this._spawnPromise = new Promise((resolve) => {
       bot.once('spawn', resolve)
     })
@@ -113,18 +127,6 @@ export class ConnectionManager {
         this._timeoutQuit = true
         try { bot.quit() } catch { /* socket 可能已死 */ }
       })
-  }
-
-  /**
-   * 更新配置（热重载：host/port/reconnect 参数在下次连接时生效）。
-   * @param {object} cfg
-   */
-  updateCfg (cfg) {
-    this.cfg = cfg
-  }
-
-  _wireEvents (seq) {
-    const bot = this.bot
 
     bot.once('spawn', () => {
       if (seq !== this._connectSeq) return // 陈旧代际（已换代）的 spawn 不生效
@@ -230,6 +232,12 @@ export class ConnectionManager {
         this.bot.quit()
       } catch { /* 已断开 */ }
     }
+    // 清理残留状态：代际递增使陈旧回调（spawn 超时/end/error）全退——
+    // 否则手动断开后残留的 spawn 超时定时器仍对已 quit 的 bot 二次 quit（P1-8）
+    this._connectSeq++
+    this._spawnPromise = null
+    this._timeoutQuit = false
+    this.bot = null
     this._setState(STATE_DISCONNECTED)
   }
 }

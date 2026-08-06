@@ -217,3 +217,9 @@ test('assertLogDirWritable：空路径报错（mkdirSync recursive 对已存在�
     () => assertLogDirWritable({ ...cfg, log: { ...cfg.log, dir: '' } }),
     /日志目录不可写/)
 })
+
+test('P1-4 修复：顶层 _comment 放行（config.example.json 复制为 config.json 即可用）', () => {
+  const cfg = { ...loadConfig({ argv: [], env: {} }), _comment: '生产配置示例' }
+  const { ok, errors } = validateConfig(cfg)
+  assert.equal(ok, true, `含顶层 _comment 的配置应通过校验: ${errors.join('; ')}`)
+})

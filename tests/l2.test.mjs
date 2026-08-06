@@ -218,3 +218,11 @@ test('chat: 非 op 调用者身份注入（标注受限）', async () => {
   assert.ok(provider.calls[0].system.includes('普通玩家'), '非 op 应标注危险操作受限')
   assert.ok(!provider.calls[0].system.includes('op 白名单成员'))
 })
+
+test('P1-7 修复：follow_player 插件未启用 → ok:false（不再假成功误导 LLM）', async () => {
+  const ctx = makeCtx({}, { ops: ['op1'] }) // makeCtx 默认 plugins: {}（follow 未启用）
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('op1', 'follow_player', { name: 'steve' })
+  assert.equal(r.ok, false)
+  assert.ok(r.result.includes('插件未启用'), `应明确报插件未启用: ${r.result}`)
+})

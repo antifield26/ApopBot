@@ -81,6 +81,22 @@ test('fish run: 背包满停止（不再抛竿）', async () => {
   assert.equal(fishCalls, 0, '背包满时不应抛竿')
 })
 
+test('fish run: stop 立即打断挂起的 bot.fish()（不再等 10s stop 上限）', async () => {
+  let resolveFish
+  const bot = { fish: () => new Promise(r => { resolveFish = r }), inventory: { slots: [] } }
+  const task = new FishTask('f', 'fish', { durationMinutes: 1 }, makeCtx(bot))
+  const p = task.start()
+  await settle(6)
+  assert.equal(task.state, 'running', 'fish() 挂起时任务应保持 running')
+  const t0 = Date.now()
+  await task.stop()
+  assert.ok(Date.now() - t0 < 5000, '取消信号应让 run 立即退出（修复前 stop 等 10s 上限）')
+  await p
+  assert.equal(task.state, 'stopped')
+  resolveFish() // 清理悬空 promise（race 丢弃分支的 rejection 已挂 noop catch）
+  await settle(2)
+})
+
 test('fish run: 抛竿失败 → 计数不变，stop 打断重试等待', async () => {
   let fishCalls = 0
   const bot = {

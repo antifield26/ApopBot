@@ -178,6 +178,35 @@ test('断线分类：致命原因 → 不调度重连并 exit(2)', async () => {
   }
 })
 
+test('P0 修复：spawn 在插件装载期间已触发 → 超时兜底不得误杀（监听先于装载注册）', async () => {
+  // 场景：插件装载慢（300ms），spawn 在装载期间已触发（本机/快速握手）。
+  // 修复前 spawn 超时 Promise 在装载完成后才注册 bot.once('spawn')——事件已过，
+  // 超时（300+150ms）后误杀正常 bot 并触发重连循环。
+  const { conn, bots } = makeConn({ pluginDelayMs: 300, cfg: makeCfg({ spawnTimeoutMs: 150 }) })
+  const spawnSpy = { count: 0 }
+  conn.hooks.onSpawn = () => spawnSpy.count++
+  const p = conn.connect()
+  await new Promise(r => setTimeout(r, 50)) // 装载中
+  bots[0].emit('spawn') // 装载期间正常 spawn
+  await new Promise(r => setTimeout(r, 550)) // 覆盖装载完成（t≈300）+ 超时窗口（t≈450）
+  assert.equal(bots[0].quitCalls, 0, 'spawn 已触发则超时兜底不得 quit 正常 bot')
+  assert.equal(spawnSpy.count, 1)
+  await p
+  await conn.disconnect()
+})
+
+test('P1-8 修复：disconnect 清理残留 spawn 超时（不产生虚假二次 quit）', async () => {
+  const { conn, bots } = makeConn({ cfg: makeCfg({ spawnTimeoutMs: 80 }) })
+  await conn.connect()
+  await conn.disconnect()
+  assert.equal(conn.bot, null, 'disconnect 后 bot 应清空')
+  assert.equal(conn._spawnPromise, null)
+  assert.equal(bots[0].quitCalls, 1, 'disconnect 主动 quit 恰好一次')
+  // 残留超时窗口（80ms）过去：代际已换代，不得再 quit 已断开的 bot
+  await new Promise(r => setTimeout(r, 150))
+  assert.equal(bots[0].quitCalls, 1, '残留 spawn 超时不得对已 quit 的 bot 二次 quit')
+})
+
 test('致命原因后 end 事件不触发重连（_fatalExit 守卫）', async () => {
   const exitCodes = []
   const origExit = process.exit

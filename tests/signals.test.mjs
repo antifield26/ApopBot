@@ -33,6 +33,18 @@ test('SIGHUP 触发 onReload（重载队列）', async () => {
   assert.equal(reloaded, true)
 })
 
+test('P1-5 修复：SIGHUP 日志走 ctx.logger（热重载后新实例，而非初始 logger）', async () => {
+  const calls = []
+  const oldLogger = makeLogger()
+  const ctxLogger = makeLogger()
+  ctxLogger.info = () => { calls.push('ctx-logger') }
+  oldLogger.info = () => { calls.push('old-logger') }
+  setupSignals({ logger: oldLogger, conn: {}, ctx: { logger: ctxLogger }, onReload: async () => {} })
+  process.emit('SIGHUP')
+  await settle()
+  assert.deepEqual(calls, ['ctx-logger'], 'SIGHUP 日志应写当前 logger 实例（修复前写旧 transport）')
+})
+
 test('gracefulShutdown: 完整顺序 tasks → agent → conn → flush → exit(0)', async () => {
   const order = []
   const flushed = []

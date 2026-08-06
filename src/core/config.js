@@ -335,7 +335,8 @@ export function validateConfig (cfg) {
   // 未知顶层键（拼写错误会被静默忽略——明确报出）
   const KNOWN_TOP_KEYS = new Set([
     'mcVersion', 'host', 'port', 'username', 'auth', 'spawnTimeoutMs',
-    'reconnect', 'ops', 'log', 'tasks', 'mineflayerPlugins', 'l2', 'chat', 'scheduleTimezone'
+    'reconnect', 'ops', 'log', 'tasks', 'mineflayerPlugins', 'l2', 'chat', 'scheduleTimezone',
+    '_comment' // JSON 注释惯例（config.example.json 顶层使用；复制为 config.json 必须放行）
   ])
   for (const k of Object.keys(cfg)) {
     if (!KNOWN_TOP_KEYS.has(k)) errors.push(`未知配置键: ${k}（拼写错误会被静默忽略，请检查）`)

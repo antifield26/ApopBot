@@ -14,6 +14,9 @@ import { createL2 } from '../l2/index.js'
 
 export function createFeatureLayerManager (ctx, logger) {
   let pending = Promise.resolve()
+  // 热重载会重建 logger——所有日志/组件构造一律运行时取 ctx.logger（P1-5：
+  // 构造时捕获的初始 logger 会在重连后把任务日志写旧 transport）
+  const log = () => ctx.logger ?? logger
 
   /** 拆除当前功能层（幂等，逐项容错：旧 bot 可能已死）。 */
   async function teardown () {
@@ -21,7 +24,7 @@ export function createFeatureLayerManager (ctx, logger) {
       try {
         await ctx.tasks.stopAll() // 含 cron.stop + task.stop
       } catch (err) {
-        logger.warn({ err: err.message }, 'teardown: tasks 停止失败')
+        log().warn({ err: err.message }, 'teardown: tasks 停止失败')
       }
       ctx.tasks = null
     }
@@ -29,7 +32,7 @@ export function createFeatureLayerManager (ctx, logger) {
       try {
         await ctx.agent.stop()
       } catch (err) {
-        logger.warn({ err: err.message }, 'teardown: agent 停止失败')
+        log().warn({ err: err.message }, 'teardown: agent 停止失败')
       }
       ctx.agent = null
     }
@@ -43,9 +46,9 @@ export function createFeatureLayerManager (ctx, logger) {
     ctx.bot = bot
     // 兜底同步插件句柄（正常路径 index.js onSpawn 已赋值；重建路径也保持可用）
     if (!ctx.plugins) ctx.plugins = ctx.conn?.plugins ?? null
-    logger.info('rebuilding feature layer (tasks/commands/agent)')
+    log().info('rebuilding feature layer (tasks/commands/agent)')
 
-    ctx.tasks = new TaskManager(ctx.cfg, logger, { bot })
+    ctx.tasks = new TaskManager(ctx.cfg, log(), { bot })
     await ctx.tasks.load(ctx.cfg) // load 内部按条目容错，不抛
 
     // 命令处理器闭包读取可变 ctx，dispatch 时总能拿到当前 bot
@@ -57,11 +60,11 @@ export function createFeatureLayerManager (ctx, logger) {
     ctx.chatHandler = (sender, msg) => {
       if (!msg || !msg.startsWith('!')) return
       ctx.commands?.dispatch(msg, { sender, ctx }).catch((err) => {
-        logger.error({ err: err.message }, 'dispatch error')
+        log().error({ err: err.message }, 'dispatch error')
       })
     }
     bot.on('chat', ctx.chatHandler)
-    logger.info({ bot: ctx.cfg.username }, 'feature layer ready')
+    log().info({ bot: ctx.cfg.username }, 'feature layer ready')
   }
 
   /**
@@ -72,7 +75,7 @@ export function createFeatureLayerManager (ctx, logger) {
   function rebuild (bot) {
     pending = pending
       .then(() => doRebuild(bot))
-      .catch((err) => logger.error({ err: err.message }, 'feature layer rebuild failed'))
+      .catch((err) => log().error({ err: err.message }, 'feature layer rebuild failed'))
     return pending
   }
 
@@ -82,7 +85,7 @@ export function createFeatureLayerManager (ctx, logger) {
    * @returns {Promise<void>}
    */
   function queue (fn) {
-    pending = pending.then(fn).catch((err) => logger.error({ err: err.message }, 'queued task failed'))
+    pending = pending.then(fn).catch((err) => log().error({ err: err.message }, 'queued task failed'))
     return pending
   }
 

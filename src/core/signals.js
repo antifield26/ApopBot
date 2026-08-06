@@ -39,11 +39,14 @@ export function setupSignals (deps) {
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
 
   process.on('SIGHUP', async () => {
-    deps.logger.info('SIGHUP received, reloading config and tasks')
+    // 热重载会重建 logger——日志一律走当前实例（ctx.logger），否则 SIGHUP 日志
+    // 仍写旧 transport（P1-5：与 shutdown 路径同款修复）
+    const log = deps.ctx?.logger ?? deps.logger
+    log.info('SIGHUP received, reloading config and tasks')
     try {
       await deps.onReload()
     } catch (err) {
-      deps.logger.error({ err: err.message }, 'reload failed')
+      log.error({ err: err.message }, 'reload failed')
     }
   })
 

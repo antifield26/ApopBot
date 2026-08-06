@@ -160,14 +160,17 @@ export function createSkillRegistry (ctx) {
       properties: { name: { type: 'string', description: '玩家名，或 off 停止跟随' } }
     },
     handler: async (c, { name }) => {
+      // 插件未启用时不得静默吞掉返回假成功——LLM 会据此继续编造跟随行为（P1-7）。
+      // execute 约定：handler 抛错 = 失败（catch → { ok:false }），返回值 = 成功结果
+      if (!c.plugins?.follow) throw new Error('follow 插件未启用（配置 mineflayerPlugins.follow=true 并重启）')
       if (name === 'off') {
-        c.plugins?.follow?.stop()
+        c.plugins.follow.stop()
         return '已停止跟随'
       }
       const lower = name.toLowerCase()
       const player = Object.values(c.bot.players ?? {}).find(p => p.username.toLowerCase() === lower)
       if (!player?.entity) return `找不到玩家 ${name}`
-      c.plugins?.follow?.setTarget(player.entity)
+      c.plugins.follow.setTarget(player.entity)
       return `开始跟随 ${name}`
     }
   })
