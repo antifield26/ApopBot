@@ -2,7 +2,13 @@
 
 第二轮评估（3 Explore + 1 Plan + 逐项复核）产出的三档路线图。完善档（P0/P1/高价值 P2）与升级档（U1/U2/U3/U4+U5）已于 2026-08-06 全部实施；本文档记录已完成项、缓做项与明确不做项。
 
-## 已完成（2026-08-06，commit 9de9070..5423cb8）
+## 已完成（2026-08-06，commit 9de9070..3c4255d）
+
+### 统一移动层重构 + !find（commit f57ff75..3c4255d）
+- **src/core/movement.js**：统一寻路封装——createMovements（统一 Movements 配置）、stopPathfinding/clearGoal（统一清理）、goto（事件驱动到达 + 谓词中断 + 墙钟超时 + 失败分类 + A* 预算超时重试）、gotoPoint/gotoNearest（GoalCompositeAny 多候选选最近可达）、approachEntity（轮询接近 + noPath 立即放弃）、findSurfaceBlocks（地表候选查询）
+- **collectBlock Movements 覆盖修复**：collect() 自建 Movements 覆盖全局配置——注入共享实例后仅 resetPath
+- **任务迁移**：combat/breed 接近与撤退、五任务 _cancel、move_to 阻塞式反馈（消除"接近目标"4 份复制与 3 种清理写法）
+- **!find 命令**：地表方块定位 + 行走报告 + 防重入 + exclusive 警告
 
 ### 测试安全网（阶段 0）
 - 6 类任务 run 主循环 stub 测试（此前只测 init）、signals、plugins-loader、内置命令 handler 零覆盖补齐（172→213 项）

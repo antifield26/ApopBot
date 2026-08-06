@@ -8,7 +8,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 - **连接守护**：断线原因分类（LoginGuard 思想）、指数退避重连（5s→300s）、10s 防抖防崩溃循环、spawn 超时兜底；名字冲突/白名单/版本不匹配/消息违规（illegal）算致命，其余退避重连
 - **重连自愈**：每次 spawn 全量重建功能层（任务/命令/LLM 重新绑定新 bot，一次重连后一切照常）
 - **任务系统**：7 种任务——挖矿（区域+背包满暂停）、钓鱼、AFK 防踢、**种植收割、伐木、战斗巡逻、养殖**；cron 调度（run-completion 语义，防重叠+时长上限）、热重载（SIGHUP/改配置/`!reload` 同一队列）
-- **聊天命令**：`!ping` `!status` `!task`（含 `!task new/remove` 临时任务）`!reload` `!say` `!pos` `!follow` `!agent`，op 白名单 + 速率限制 + 256 字符自动分片（见下方指令列表）
+- **聊天命令**：`!ping` `!status` `!task`（含 `!task new/remove` 临时任务）`!reload` `!say` `!pos` `!follow` `!find`（地表方块定位）`!agent`，op 白名单 + 速率限制 + 256 字符自动分片（见下方指令列表）
 - **生产设施**：pino 结构化日志（按天轮转）、NSSM Windows 服务（自启+崩溃重启+fatal 停止等人工）、PowerShell 一键部署（`scripts/deploy.ps1`）、兼容性门禁、冒烟测试
 
 ## 指令列表
@@ -27,6 +27,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 | `!say <text>` | op | 以 Bot 身份说话（超长自动分片） |
 | `!pos` | op | 当前坐标与朝向（调试） |
 | `!follow <player>\|off` | op | 跟随/停止跟随玩家（需 `mineflayerPlugins.follow: true`） |
+| `!find <方块名> [maxDistance]` | op | 找到指定方块的地表暴露位置（上方 2 格为天空，排除洞穴/液体）并走过去（3 格内）；报告坐标/距离/耗时。maxDistance 16-256（默认 64）。已知局限：高洞顶洞穴的 cave_air 也可能被判为地表（pc 版无 heightmap） |
 | `!agent chat <text>` | op | 与 L2 LLM 对话（需 `l2.enabled=true`；LLM 通过技能执行动作） |
 | `!agent act <name> [json]` | op | 直调技能（不经 LLM），如 `!agent act status {}`、`!agent act move_to {"x":10,"y":64,"z":10}` |
 
