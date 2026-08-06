@@ -226,3 +226,60 @@ test('P1-7 修复：follow_player 插件未启用 → ok:false（不再假成功
   assert.equal(r.ok, false)
   assert.ok(r.result.includes('插件未启用'), `应明确报插件未启用: ${r.result}`)
 })
+
+// ---- U2：会话记忆（模块级 Map，跨 agent 实例保留；!agent reset 清空）----
+
+test('U2: 会话记忆——第二轮 chat 携带历史（user+assistant）', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [
+    { text: '第一次回复', toolCalls: [] },
+    { text: '第二次回复', toolCalls: [] }
+  ])
+  agent.reset('mem1')
+  await agent.chat('mem1', '你好')
+  await agent.chat('mem1', '继续')
+  const second = provider.calls[1].messages
+  assert.ok(second.length >= 3, `第二轮应含历史+本轮（实际 ${second.length} 条）`)
+  assert.ok(second.some(m => m.content === '你好'), '历史 user 轮应携带')
+  assert.ok(second.some(m => m.content === '第一次回复'), '历史 assistant 轮应携带')
+  assert.equal(second.at(-1).content, '继续')
+  agent.reset('mem1')
+})
+
+test('U2: 会话裁剪——超过上限只保留最近条数', async () => {
+  const script = Array.from({ length: 7 }, (_, i) => ({ text: `r${i}`, toolCalls: [] }))
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, script)
+  agent.reset('mem2')
+  for (let i = 0; i < 7; i++) await agent.chat('mem2', `q${i}`)
+  const last = provider.calls[6].messages
+  assert.ok(last.length <= 11, `历史上限 10 + 本轮 1（实际 ${last.length}）`)
+  assert.ok(!last.some(m => m.content === 'q0'), '最早一轮应被裁剪')
+  agent.reset('mem2')
+})
+
+test('U2: reset 清空会话；act 直调不污染会话', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [
+    { text: 'a', toolCalls: [] },
+    { text: 'b', toolCalls: [] }
+  ])
+  agent.reset('mem3')
+  await agent.chat('mem3', 'hi')
+  await agent.act('mem3', 'status', {})
+  agent.reset('mem3')
+  await agent.chat('mem3', 'again')
+  assert.equal(provider.calls[1].messages.length, 1, 'reset 后第二轮应只有本轮（act 不写入会话）')
+  agent.reset('mem3')
+})
+
+test('U2: 会话跨 agent 实例保留（重连/热重载重建后记忆不丢）', async () => {
+  const ctx = makeCtx()
+  const a1 = makeAgent(ctx, [{ text: 'reply', toolCalls: [] }])
+  a1.agent.reset('mem4')
+  await a1.agent.chat('mem4', '记得这个')
+  const a2 = makeAgent(ctx, [{ text: 'reply2', toolCalls: [] }]) // 模拟 rebuild：新实例
+  await a2.agent.chat('mem4', '还记得吗')
+  assert.ok(a2.provider.calls[0].messages.some(m => m.content === '记得这个'), '新实例应继承模块级会话')
+  a2.agent.reset('mem4')
+})

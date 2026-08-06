@@ -15,6 +15,13 @@ const INPUT_MAX_CHARS = 1000 // 用户消息截断
 const REPLY_MAX_CHARS = 250 // 回复截断（与 chat.maxLength 默认一致）
 const TOOL_RESULT_MAX_CHARS = 2000 // 工具结果回填截断（大 JSON 撑爆 4B 上下文）
 
+// 会话记忆（U2）：按玩家名的多轮上下文，模块级 Map——agent 实例在重连/热重载时
+// 被 feature-layer 重建，模块级存储保证记忆跨代际保留（会话是玩家维度的，不是 bot 维度的）。
+// 上限 MAX_HISTORY_MESSAGES 条（含本轮），先出后入裁剪；只存 user/assistant 纯文本轮，
+// 不存工具调用中间轮（长且不必要）。act 直调不污染会话。
+const MAX_HISTORY_MESSAGES = 10
+const SESSIONS = new Map()
+
 const SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（minecraft-bot）。
 规则：
 1. 回答保持简短（≤250 字符），用 reply 技能说话。
@@ -73,7 +80,10 @@ export class AgentInterface {
     const ac = new AbortController()
     this._abort = ac
     try {
-      const messages = [{ role: 'user', content: String(text).slice(0, INPUT_MAX_CHARS) }]
+      // 会话注入：历史（裁剪后）+ 本轮用户消息（history 是副本，工具循环内 push 不污染存储）
+      const history = (SESSIONS.get(user) ?? []).slice(-MAX_HISTORY_MESSAGES)
+      const userMsg = String(text).slice(0, INPUT_MAX_CHARS)
+      const messages = [...history, { role: 'user', content: userMsg }]
       const maxSteps = this.cfg.maxSteps ?? 5
       let reply = '（无回复）'
       for (let step = 0; step < maxSteps; step++) {
@@ -101,6 +111,10 @@ export class AgentInterface {
         messages.push({ role: 'assistant', content: res.text ?? '', toolCalls: calls })
         messages.push({ role: 'user', content: '', toolResults: results })
       }
+      // 回写会话：本轮 user 轮 + 最终 assistant 轮（纯文本，裁剪到上限）
+      history.push({ role: 'user', content: userMsg })
+      history.push({ role: 'assistant', content: reply.slice(0, REPLY_MAX_CHARS) })
+      SESSIONS.set(user, history.slice(-MAX_HISTORY_MESSAGES))
       return { reply: reply.slice(0, REPLY_MAX_CHARS) }
     } catch (err) {
       if (err.name === 'AbortError') return { reply: '请求已中止' }
@@ -123,5 +137,15 @@ export class AgentInterface {
   /** 中止进行中的请求。 */
   stop () {
     this._abort?.abort()
+  }
+
+  /** 清空指定玩家的会话记忆（!agent reset）。 */
+  reset (user) {
+    SESSIONS.delete(user)
+  }
+
+  /** 当前会话数（U3 /metrics 用）。 */
+  sessionCount () {
+    return SESSIONS.size
   }
 }

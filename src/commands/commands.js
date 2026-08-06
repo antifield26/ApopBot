@@ -146,7 +146,7 @@ export function registerBuiltinCommands (registry, ctx) {
 
   registry.register({
     name: 'agent',
-    usage: '!agent chat <text> | !agent act <name> [json]',
+    usage: '!agent chat <text> | !agent act <name> [json] | !agent reset',
     description: 'L2 LLM 层（需配置 l2.enabled=true；act 需 op）',
     handler: async (c, args, sender) => {
       if (!c.agent) { await sendChat(c.bot, '§cL2 未启用（配置 l2.enabled=true 后重启）', c.cfg.chat?.maxLength); return }
@@ -154,6 +154,10 @@ export function registerBuiltinCommands (registry, ctx) {
       if (action === 'chat') {
         const { reply } = await c.agent.chat(sender, rest.join(' '))
         await sendChat(c.bot, reply, c.cfg.chat?.maxLength)
+      } else if (action === 'reset') {
+        // 清空调用者会话记忆（U2：多轮上下文误入歧途时重置）
+        c.agent.reset(sender)
+        await sendChat(c.bot, '§a已清空会话记忆', c.cfg.chat?.maxLength)
       } else if (action === 'act') {
         // act 直调技能（可移动/控制任务），入口即做 op 校验
         if (!isOp(sender, c.cfg)) {
