@@ -59,10 +59,18 @@ export class ChopTask extends BaseTask {
         break // 自然完成 → completed
       }
 
-      this.log.info({ count: targets.length }, 'chopping')
+      // collectblock 需要 Block/Entity（target.position），findBlocks 返回 Vec3[]——先转 Block
+      const blocks = targets.map(p => this.bot.blockAt(p)).filter(Boolean)
+      if (blocks.length === 0) {
+        this.log.warn('区域内原木不在已加载区块，等待重试')
+        await this._internalWait(30 * 1000, 'collect-retry')
+        continue
+      }
+
+      this.log.info({ count: blocks.length }, 'chopping')
       try {
-        await this.bot.collectBlock.collect(targets, {})
-        this.incr('chopped', targets.length)
+        await this.bot.collectBlock.collect(blocks, {})
+        this.incr('chopped', blocks.length)
       } catch (err) {
         if (err?.code === 'NoChests' || /no defined chest locations/i.test(String(err?.message))) {
           this.log.warn('背包已满（伐木），暂停等待清空')

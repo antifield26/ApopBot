@@ -24,12 +24,47 @@ const KNOWN_PINS = {
   'minecraft-protocol': '3fb78a8da17cbce774a6cf8d78dfd889f1fbb8bf'
 }
 
-// 检查 npm 上最新版 mineflayer 的 version.js 是否已含 26.1.2
-async function checkUpstream () {
-  const res = await fetch(`https://unpkg.com/mineflayer@latest/lib/version.js`, { signal: AbortSignal.timeout(15000) })
-  if (!res.ok) throw new Error(`unpkg 返回 ${res.status}`)
+// 各包的版本支持声明文件（均需已支持 26.1.2 才允许迁移）
+const VERSION_FILE = {
+  mineflayer: 'lib/version.js',
+  'minecraft-protocol': 'src/version.js'
+}
+
+async function checkUpstream (pkg) {
+  const res = await fetch(`https://unpkg.com/${pkg}@latest/${VERSION_FILE[pkg]}`, { signal: AbortSignal.timeout(15000) })
+  if (!res.ok) throw new Error(`${pkg} unpkg 返回 ${res.status}`)
   const src = await res.text()
   return { supported: src.includes(TARGET_VERSION), url: res.url }
+}
+
+async function checkAllUpstream () {
+  const results = {}
+  for (const pkg of Object.keys(VERSION_FILE)) {
+    results[pkg] = await checkUpstream(pkg)
+  }
+  return { results, supportedAll: Object.values(results).every(r => r.supported) }
+}
+
+async function latestVersion (pkg) {
+  const res = await fetch(`https://registry.npmjs.org/${pkg}/latest`, { signal: AbortSignal.timeout(15000) })
+  const data = await res.json()
+  return data.version
+}
+
+// 迁移成功后同步 check-compat.mjs 的 EXPECTED：git pin → npm 版本（否则 check:compat 恒 FAIL）
+function updateCheckCompat (newMfVersion, newMpVersion) {
+  const compatPath = path.join(ROOT, 'scripts', 'check-compat.mjs')
+  let src = readFileSync(compatPath, 'utf8')
+  const before = src
+  src = src.replace(
+    /'minecraft-protocol': \{ kind: 'git', sha: '[0-9a-f]{40}' \}/,
+    `'minecraft-protocol': { kind: 'npm', version: '${newMpVersion}' }`)
+  src = src.replace(
+    /'mineflayer': \{ kind: 'git', sha: '[0-9a-f]{40}' \}/,
+    `'mineflayer': { kind: 'npm', version: '${newMfVersion}' }`)
+  if (src === before) throw new Error('check-compat.mjs 的 EXPECTED 未匹配到 git pin 条目（格式已变化？）')
+  writeFileSync(compatPath, src)
+  console.log(`check-compat.mjs EXPECTED 已更新: mineflayer@${newMfVersion} / minecraft-protocol@${newMpVersion}（npm）`)
 }
 
 function applyChanges (pkg, newMineflayerVersion) {
@@ -45,19 +80,22 @@ function applyChanges (pkg, newMineflayerVersion) {
 
 async function main () {
   console.log(`=== 检查上游 26.1.2 (协议 775) 支持 ===`)
-  let result
+  let results
   try {
-    result = await checkUpstream()
+    results = await checkAllUpstream()
   } catch (err) {
     console.error(`检查失败（网络？）: ${err.message}`)
     process.exit(1)
   }
 
-  if (!result.supported) {
-    console.log('上游尚未支持 26.1.2 —— 保持当前 PR pin（无需操作）')
+  if (!results.supportedAll) {
+    for (const [pkg, r] of Object.entries(results.results)) {
+      console.log(`  ${pkg}: ${r.supported ? '已支持' : '尚未支持'} (${r.url})`)
+    }
+    console.log('上游尚未全部支持 26.1.2 —— 保持当前 PR pin（无需操作）')
     process.exit(0)
   }
-  console.log(`上游已支持! (来源: ${result.url})`)
+  console.log('上游已全部支持!（mineflayer + minecraft-protocol）')
 
   if (CHECK_ONLY) {
     console.log('可以执行 node scripts/migrate-upstream.mjs 完成迁移')
@@ -65,7 +103,8 @@ async function main () {
   }
 
   const pkg = JSON.parse(readFileSync(PKG_PATH, 'utf8'))
-  const newVersion = (await (await fetch('https://registry.npmjs.org/mineflayer/latest', { signal: AbortSignal.timeout(15000) })).json()).version
+  const newVersion = await latestVersion('mineflayer')
+  const newMpVersion = await latestVersion('minecraft-protocol')
   const next = applyChanges(pkg, newVersion)
 
   const changes = []
@@ -82,10 +121,12 @@ async function main () {
 
   if (DRY_RUN) {
     console.log('\n（--dry-run：不落盘。人工 review 后运行不带 --dry-run）')
+    console.log('（将同步更新 scripts/check-compat.mjs 的 EXPECTED：git pin → npm 版本）')
     process.exit(0)
   }
 
   writeFileSync(PKG_PATH, JSON.stringify(next, null, 2) + '\n')
+  updateCheckCompat(newVersion, newMpVersion)
   console.log('\npackage.json 已更新，执行 npm install ...')
   execSync('npm install', { cwd: ROOT, stdio: 'inherit' })
 

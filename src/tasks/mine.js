@@ -1,4 +1,5 @@
 import { BaseTask } from './base.js'
+import { Vec3 } from 'vec3'
 
 // 挖矿任务：collectblock + pathfinder 在限定区域内挖掘指定方块。
 // 内部等待全部用 _internalWait（F3：不触碰用户暂停）；背包满（NoChests）单独识别
@@ -22,7 +23,10 @@ export class MineTask extends BaseTask {
     }
     this._batchMax = o.maxBlocks ?? 64
     this._radius = o.radius ?? 32
-    this._chestLocations = Array.isArray(o.chestLocations) ? o.chestLocations : []
+    // collectblock 的 getClosestChest 调 c.distanceTo（Vec3 方法）——配置里的普通对象必须转 Vec3
+    this._chestLocations = Array.isArray(o.chestLocations)
+      ? o.chestLocations.map(c => new Vec3(c.x, c.y, c.z))
+      : []
     this._stopWhenDone = o.stopWhenDone === true // F8：区域内挖空即完成
   }
 
@@ -57,10 +61,19 @@ export class MineTask extends BaseTask {
         continue
       }
 
-      this.log.info({ count: targets.length }, `mining ${this.options.blockTypes.join(',')}`)
+      // collectblock 的 Targets.getClosest() 访问 target.position（Block/Entity 契约），
+      // findBlocks 返回 Vec3[]——先经 blockAt 转 Block（26.1.2 实测修复）
+      const blocks = targets.map(p => this.bot.blockAt(p)).filter(Boolean)
+      if (blocks.length === 0) {
+        this.log.warn('区域内目标方块不在已加载区块，等待重试')
+        await this._internalWait(30 * 1000, 'collect-retry')
+        continue
+      }
+
+      this.log.info({ count: blocks.length }, `mining ${this.options.blockTypes.join(',')}`)
       try {
-        await this.bot.collectBlock.collect(targets, { chestLocations: this._chestLocations })
-        this.incr('mined', targets.length)
+        await this.bot.collectBlock.collect(blocks, { chestLocations: this._chestLocations })
+        this.incr('mined', blocks.length)
       } catch (err) {
         if (err?.code === 'NoChests' || /no defined chest locations/i.test(String(err?.message))) {
           // F2：背包满且未配置箱子 → 暂停等待清空，而非 30s 死循环误报路径不可达

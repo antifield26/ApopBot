@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { Vec3 } from 'vec3'
 import { MineTask } from '../src/tasks/mine.js'
 import { FishTask } from '../src/tasks/fish.js'
 import { AfkTask } from '../src/tasks/afk.js'
@@ -43,10 +44,14 @@ test('MineTask init: 合法配置通过（并解析 block id）', async () => {
   assert.equal(task._chestLocations.length, 0)
 })
 
-test('MineTask init: chestLocations 透传', async () => {
+test('MineTask init: chestLocations 转 Vec3（collectblock getClosestChest 调 distanceTo）', async () => {
   const task = new MineTask('m1', 'mine', { blockTypes: ['iron_ore'], chestLocations: [{ x: 1, y: 2, z: 3 }] }, makeCtx(makeMineBot({ iron_ore: { id: 44 } })))
   await task.init()
-  assert.deepEqual(task._chestLocations, [{ x: 1, y: 2, z: 3 }])
+  assert.equal(task._chestLocations.length, 1)
+  assert.equal(task._chestLocations[0].x, 1)
+  assert.equal(task._chestLocations[0].y, 2)
+  assert.equal(task._chestLocations[0].z, 3)
+  assert.equal(typeof task._chestLocations[0].distanceTo, 'function', '应为 Vec3 实例（普通对象无 distanceTo）')
 })
 
 test('MineTask init: 缺 collectBlock/pathfinder 插件报错', async () => {
@@ -153,4 +158,47 @@ test('BreedTask init: area 校验、默认动物白名单、exclusive', async ()
   assert.equal(task.exclusive, true)
   assert.deepEqual(task._animalTypes, ['cow', 'sheep', 'pig', 'chicken'])
   assert.equal(task._maxBreedings, 2)
+})
+
+// ---- 批次 A 回归：collect 必须收到 Block 形状（collectblock Targets.getClosest 访问 target.position）----
+
+test('MineTask run: collect 收到 blockAt 转换后的 Block（非原始 Vec3）', async () => {
+  const collectArgs = []
+  let findCalls = 0
+  const bot = {
+    registry: { blocksByName: { iron_ore: { id: 44 } } },
+    collectBlock: { collect: async (...args) => { collectArgs.push(args) } },
+    pathfinder: {},
+    findBlocks: () => (findCalls++ < 1 ? [new Vec3(5, 5, 5)] : []),
+    blockAt: (p) => ({ position: p, type: 44 })
+  }
+  const task = new MineTask('m2', 'mine', { blockTypes: ['iron_ore'], stopWhenDone: true }, makeCtx(bot))
+  await task.start()
+  assert.equal(task.state, 'completed')
+  assert.equal(collectArgs.length, 1, '首次 findBlocks 有目标应 collect 一次')
+  const [targets] = collectArgs[0]
+  assert.equal(targets.length, 1)
+  assert.ok(targets[0].position, 'collect 参数必须是 Block 形状（含 .position）；直接传 Vec3 会触发 collectblock TypeError')
+  assert.equal(targets[0].position.x, 5)
+  assert.equal(task.counters.mined, 1)
+})
+
+test('ChopTask run: collect 收到 blockAt 转换后的 Block', async () => {
+  const collectArgs = []
+  let findCalls = 0
+  const bot = {
+    registry: { blocksByName: { oak_log: { id: 10 } } },
+    collectBlock: { collect: async (...args) => { collectArgs.push(args) } },
+    pathfinder: {},
+    findBlocks: () => (findCalls++ < 1 ? [new Vec3(2, 3, 4)] : []),
+    blockAt: (p) => ({ position: p, type: 10 })
+  }
+  const task = new ChopTask('c2', 'chop', { area: AREA }, makeCtx(bot))
+  await task.start()
+  assert.equal(task.state, 'completed')
+  assert.equal(collectArgs.length, 1)
+  const [targets] = collectArgs[0]
+  assert.ok(targets[0].position)
+  assert.equal(targets[0].position.y, 3)
+  assert.equal(task.counters.chopped, 1)
 })

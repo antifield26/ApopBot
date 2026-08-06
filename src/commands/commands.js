@@ -125,7 +125,8 @@ export function registerBuiltinCommands (registry, ctx) {
         await sendChat(c.bot, '§a已停止跟随', c.cfg.chat?.maxLength)
         return
       }
-      const player = Object.values(c.bot.players).find(p => p.username === name)
+      const lower = name.toLowerCase()
+      const player = Object.values(c.bot.players).find(p => p.username.toLowerCase() === lower)
       if (!player?.entity) { await sendChat(c.bot, `§c找不到玩家 ${name}`, c.cfg.chat?.maxLength); return }
       c.plugins.follow.setTarget(player.entity)
       await sendChat(c.bot, `§a开始跟随 ${name}`, c.cfg.chat?.maxLength)

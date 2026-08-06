@@ -43,7 +43,11 @@ const ctx = {
 const layer = createFeatureLayerManager(ctx, logger)
 
 const conn = new ConnectionManager(cfg, logger, {
-  onSpawn: (bot) => { layer.rebuild(bot) },
+  onSpawn: (bot) => {
+    // 插件在 spawn 事件前已装载完成（connection.js 时序），同步到 ctx 供 !follow/技能使用
+    ctx.plugins = conn.plugins
+    layer.rebuild(bot)
+  },
   onStateChange: (state) => {
     logger.info({ state }, 'connection state changed')
   }

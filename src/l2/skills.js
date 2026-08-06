@@ -164,7 +164,8 @@ export function createSkillRegistry (ctx) {
         c.plugins?.follow?.stop()
         return '已停止跟随'
       }
-      const player = Object.values(c.bot.players ?? {}).find(p => p.username === name)
+      const lower = name.toLowerCase()
+      const player = Object.values(c.bot.players ?? {}).find(p => p.username.toLowerCase() === lower)
       if (!player?.entity) return `找不到玩家 ${name}`
       c.plugins?.follow?.setTarget(player.entity)
       return `开始跟随 ${name}`

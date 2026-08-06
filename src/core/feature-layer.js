@@ -41,6 +41,8 @@ export function createFeatureLayerManager (ctx, logger) {
 
     // 必须先更新 ctx.bot，再构建任何消费 bot 的组件
     ctx.bot = bot
+    // 兜底同步插件句柄（正常路径 index.js onSpawn 已赋值；重建路径也保持可用）
+    if (!ctx.plugins) ctx.plugins = ctx.conn?.plugins ?? null
     logger.info('rebuilding feature layer (tasks/commands/agent)')
 
     ctx.tasks = new TaskManager(ctx.cfg, logger, { bot })
