@@ -1,19 +1,84 @@
-// 自定义插件：跟随指定玩家（供 !follow 命令使用）。依赖 pathfinder。
+// 自定义插件：跟随指定玩家（供 !follow 命令使用）。
+//
+// 实现：混合跟随。pathfinder 的 GoalFollow 基于 A*，其动作集不含跳跃——目标跳过
+// 障碍/跳上台阶后 Bot 无法到达（实测丢失跟随）。故近距离用 setControlState 直接
+// 控制（前进 + 按需跳跃），卡住（原地无位移）/目标远离/前方虚空时切 pathfinder
+// 寻路绕行，接近后回到直接控制。
 
 import pathfinderPkg from 'mineflayer-pathfinder' // CJS 包：default 导入后解构（ESM named 互操作不可靠）
 const { goals } = pathfinderPkg
 
+const TICK_MS = 500 // 控制周期
+const REACH = 2.5 // 与目标距离小于此视为已跟上（停下）
+const DIRECT_RANGE = 6 // 此距离内用直接控制（跳跃可用）；更远走寻路
+const JUMP_Y_DIFF = 0.6 // 目标高于 Bot 超过此值 → 持续跳跃（跳上台阶/矮墙）
+const STUCK_TICKS = 6 // 直接控制 N 轮（3s）无位移 → 切寻路绕行
+const PATH_UPDATE_DIST = 2 // 寻路模式下目标位移超过此值才重建 goal（低配机避免每 tick 重算 A*）
+
 /**
- * mineflayer 插件工厂。装载后产生 bot.follow = { setTarget(player|null), stop() }。
+ * mineflayer 插件工厂。装载后产生 bot.follow = { setTarget(player|null), stop(), getTarget() }。
  */
 export function followPlugin (bot) {
   let target = null
-  let goalHandle = null
+  let timer = null
+  let lastPos = null
+  let stuckCount = 0
+  let pathing = false
+  let lastGoalPos = null
 
-  function stopGoal () {
-    if (goalHandle) {
-      bot.pathfinder.setGoal(null)
-      goalHandle = null
+  function stopMoving () {
+    bot.setControlState('forward', false)
+    bot.setControlState('jump', false)
+  }
+
+  function clearGoal () {
+    try { bot.pathfinder?.setGoal(null) } catch { /* 插件可能已卸载 */ }
+  }
+
+  function tick () {
+    if (!target?.position || !bot.entity?.position) { stopMoving(); return }
+    const p = bot.entity.position
+    const tp = target.position
+    const dist = p.distanceTo(tp)
+
+    if (dist <= REACH) {
+      // 已跟上：停下；目标在 Bot 上方（高台上）时补一次跳跃对齐
+      stopMoving()
+      pathing = false
+      lastPos = p.clone()
+      stuckCount = 0
+      bot.setControlState('jump', tp.y - p.y > 1.1)
+      return
+    }
+
+    try { bot.lookAt(tp.offset(0, 0.5, 0)) } catch { /* 位置可能失效 */ }
+
+    if (dist < DIRECT_RANGE && !pathing) {
+      // 直接控制：前进 + 按需跳跃（解决 GoalFollow 不跳导致丢失跟随的问题）
+      bot.setControlState('forward', true)
+      bot.setControlState('jump', tp.y - p.y > JUMP_Y_DIFF)
+      // 前方 2 格是虚空/未加载（直走会掉落）→ 切寻路
+      const dx = (tp.x - p.x) / dist
+      const dz = (tp.z - p.z) / dist
+      const ahead = bot.blockAt(p.offset(dx * 2, -1, dz * 2))
+      const moved = lastPos && p.distanceTo(lastPos) > 0.2
+      lastPos = p.clone()
+      stuckCount = moved ? 0 : stuckCount + 1
+      if (stuckCount >= STUCK_TICKS || !ahead) {
+        stopMoving()
+        pathing = true
+        lastGoalPos = null
+      }
+    } else {
+      // 寻路绕行：目标位移超阈值才重建 goal
+      stopMoving()
+      pathing = true
+      const moved = lastGoalPos && tp.distanceTo(lastGoalPos) > PATH_UPDATE_DIST
+      if (!lastGoalPos || moved) {
+        try { bot.pathfinder.setGoal(new goals.GoalNear(tp, 1)) } catch { /* 未在移动 */ }
+        lastGoalPos = tp.clone()
+      }
+      if (dist < DIRECT_RANGE * 0.5) pathing = false // 足够近后回到直接控制
     }
   }
 
@@ -22,13 +87,20 @@ export function followPlugin (bot) {
     setTarget (player) {
       target = player
       if (!player) {
-        stopGoal()
+        follow.stop()
         return
       }
       if (!bot.pathfinder) throw new Error('follow 插件需要 pathfinder')
-      // 注意：goals 类从包导出获取——bot.pathfinder 是插件注入的普通对象，其上无 goals
-      goalHandle = new goals.GoalFollow(player, 3)
-      bot.pathfinder.setGoal(goalHandle, true)
+      stopMoving()
+      clearGoal()
+      lastPos = null
+      stuckCount = 0
+      pathing = false
+      lastGoalPos = null
+      if (!timer) {
+        timer = setInterval(tick, TICK_MS)
+        timer.unref?.()
+      }
     },
 
     getTarget () {
@@ -37,7 +109,9 @@ export function followPlugin (bot) {
 
     stop () {
       target = null
-      stopGoal()
+      if (timer) { clearInterval(timer); timer = null }
+      stopMoving()
+      clearGoal()
     }
   }
 
@@ -49,6 +123,6 @@ export function followPlugin (bot) {
 
   bot.on('end', () => {
     target = null
-    goalHandle = null
+    if (timer) { clearInterval(timer); timer = null }
   })
 }
