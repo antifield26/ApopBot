@@ -151,20 +151,22 @@ test('approachEntity: 已到位 → 立即 ok（仅清残留 goal，不设新目
   assert.ok(!bot.setGoalCalls.some(g => g instanceof goals.GoalNear), '不应设置接近目标')
 })
 
-test('approachEntity: 范围外 → setGoal 接近 → 拉近后 ok + setGoal(null)', async () => {
-  const bot = makePathBot(() => Promise.resolve())
+test('approachEntity: 范围外 → goto 到达（setGoal 仅一次，A* 不被打断）', async () => {
+  const d = deferredGoto()
+  const bot = makePathBot(d.impl)
   const move = createMovement(bot, makeLogger(), { pollMs: 10 })
-  const entity = { position: new Vec3(5, 64, 0) }
-  const p = move.approachEntity(entity, { range: 2, timeoutMs: 2000 })
-  setTimeout(() => { entity.position = new Vec3(1, 64, 0) }, 30) // 模拟目标被接近
+  const p = move.approachEntity({ position: new Vec3(5, 64, 0) }, { range: 2, timeoutMs: 2000 })
+  await new Promise(r => setTimeout(r, 40)) // 多个 pollMs 周期（A* 挂起中）
+  const nearCalls = bot.setGoalCalls.filter(g => g instanceof goals.GoalNear)
+  assert.equal(nearCalls.length, 1, '回归核心：goto 期间不得重复 setGoal（每 500ms 重建会重置 A* → 原地不动）')
+  d.resolve()
   const r = await p
   assert.equal(r.ok, true)
-  assert.ok(bot.setGoalCalls.some(g => g instanceof goals.GoalNear), '应设置接近 goal')
-  assert.equal(bot.setGoalCalls.at(-1), null, '到达后应 setGoal(null) 同步停')
 })
 
 test('approachEntity: 谓词中断 → interrupted + stop', async () => {
-  const bot = makePathBot(() => Promise.resolve())
+  const d = deferredGoto()
+  const bot = makePathBot(d.impl) // goto 挂起（否则立即成功，谓词来不及触发）
   const move = createMovement(bot, makeLogger(), { pollMs: 10 })
   let interrupted = false
   const p = move.approachEntity(
@@ -177,19 +179,32 @@ test('approachEntity: 谓词中断 → interrupted + stop', async () => {
   assert.ok(bot.stopCalls >= 1)
 })
 
-test('approachEntity: path_update noPath → 立即放弃（不等 500ms 轮询）', async () => {
-  const bot = makePathBot(() => Promise.resolve())
+test('approachEntity: 目标位移超阈值 → interrupted（调用方重扫换目标）', async () => {
+  const d = deferredGoto()
+  const bot = makePathBot(d.impl)
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  const entity = { position: new Vec3(10, 64, 0) }
+  const p = move.approachEntity(entity, { range: 2, timeoutMs: 5000 })
+  setTimeout(() => { entity.position = new Vec3(20, 64, 0) }, 20) // 移动 10 格 > RECALC_DIST 2
+  const r = await p
+  assert.equal(r.reason, 'interrupted', '目标大幅移动应中断让调用方重扫')
+})
+
+test('approachEntity: goto NoPath → no-path（立即，非轮询等待）', async () => {
+  const d = deferredGoto()
+  const bot = makePathBot(d.impl)
   const move = createMovement(bot, makeLogger(), { pollMs: 1000 })
   const t0 = Date.now()
   const p = move.approachEntity({ position: new Vec3(10, 64, 0) }, { range: 2, timeoutMs: 5000 })
-  setTimeout(() => bot.emit('path_update', { status: 'noPath' }), 20)
+  setTimeout(() => d.reject(Object.assign(new Error('NoPath'), { name: 'NoPath' })), 20)
   const r = await p
-  assert.ok(Date.now() - t0 < 500, 'noPath 应立即放弃而非等下一轮询')
+  assert.ok(Date.now() - t0 < 500, 'NoPath 应立即返回而非等下一轮询')
   assert.equal(r.reason, 'no-path')
 })
 
 test('approachEntity: 超时 → timeout + stop', async () => {
-  const bot = makePathBot(() => Promise.resolve())
+  const d = deferredGoto()
+  const bot = makePathBot(d.impl)
   const move = createMovement(bot, makeLogger(), { pollMs: 10 })
   const r = await move.approachEntity({ position: new Vec3(50, 64, 0) }, { range: 2, timeoutMs: 50 })
   assert.equal(r.reason, 'timeout')

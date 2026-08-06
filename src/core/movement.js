@@ -21,6 +21,10 @@
 import pathfinderPkg from 'mineflayer-pathfinder' // CJS 包：default 导入后解构（ESM named 互操作不可靠）
 const { goals } = pathfinderPkg
 
+// approachEntity：目标位移超过此距离视为"目标跑了"→ interrupted 让调用方重扫
+// （goto 只 setGoal 一次，路径不随目标实时重算——目标静止时 A* 不被重置）
+const RECALC_DIST = 2
+
 /** 失败原因文案（move_to 技能/命令反馈用）。 */
 export const REASON_TEXT = {
   'no-path': '无法到达（无路径）',
@@ -152,47 +156,35 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
   }
 
   /**
-   * 接近实体（500ms 轮询，combat/breed 用）。范围内 → setGoal(null) 同步停 + ok；
-   * 每次设 GoalNear 快照 + 监听一次 path_update noPath/timeout 立即放弃
-   * （防不可达目标每 500ms 触发一次全量 A* 空转——8GB 低配机的真实浪费点）。
+   * 接近实体（goto 封装，combat/breed 用）。范围内 → 清残留 goal + ok。
+   * 实现要点：goto(GoalNear 快照) 只 setGoal 一次——此前每 500ms 重建 goal 会触发
+   * pathfinder 的 resetPath（清已算路径 + 丢进行中 A* + clearControlStates）→
+   * 复杂地形 A* 永远算不完 → Bot 原地不动（实测回归）。
+   * 目标位移超 RECALC_DIST 视为"目标跑了"→ interrupted → 调用方重扫（保持追逐，
+   * 且不打断 A* 计算）；不可达由 goto 的 NoPath/Timeout 拒绝。
    * @param {{ position?: { x, y, z } }} entity
    * @param {{ range?: number, isInterrupted?: (() => boolean)|null, timeoutMs?: number, pollMs?: number }} [opts]
    */
   async function approachEntity (entity, { range = 2, isInterrupted = null, timeoutMs = 30000, pollMs = 500 } = {}) {
-    const started = Date.now()
-    while (true) {
-      if (isInterrupted?.()) {
-        stopPathfinding(bot)
-        return { ok: false, reason: 'interrupted' }
-      }
-      if (Date.now() - started > timeoutMs) {
-        stopPathfinding(bot)
-        return { ok: false, reason: 'timeout' }
-      }
-      if (!entity?.position || !bot.entity?.position) return { ok: false, reason: 'error' }
-      if (bot.entity.position.distanceTo(entity.position) <= range) {
-        // 到达：同步清 goal（等价任务旧行为 setGoal(null)）
-        try { bot.pathfinder.setGoal(null) } catch { /* 未在移动 */ }
-        return { ok: true }
-      }
-      // 设 goal + 一次 path_update 监听（noPath/timeout 立即放弃）
-      let resolveAbandon
-      const abandoned = new Promise(r => { resolveAbandon = r })
-      const onUpdate = (update) => {
-        if (update?.status === 'noPath' || update?.status === 'timeout') resolveAbandon(update.status)
-      }
-      bot.on('path_update', onUpdate)
-      try { bot.pathfinder.setGoal(new goals.GoalNear(entity.position, range)) } catch { /* 位置可能失效 */ }
-      const status = await Promise.race([
-        abandoned,
-        new Promise(r => setTimeout(r, pollMs))
-      ])
-      bot.removeListener('path_update', onUpdate)
-      if (status) {
-        stopPathfinding(bot)
-        return { ok: false, reason: status === 'noPath' ? 'no-path' : 'timeout' }
-      }
+    if (!entity?.position || !bot.entity?.position) return { ok: false, reason: 'error' }
+    if (bot.entity.position.distanceTo(entity.position) <= range) {
+      clearGoal(bot) // 到达：清残留 goal（等价任务旧行为 setGoal(null)）
+      return { ok: true }
     }
+    const anchor = entity.position.clone()
+    const guard = isInterrupted ?? (() => false)
+    // 组合谓词：调用方中断（stop/pause/出范围）或目标大幅移动（需重扫换目标）
+    const combined = () => guard() || (
+      entity?.position && entity.position.distanceTo(anchor) > RECALC_DIST
+    )
+    const r = await goto(new goals.GoalNear(entity.position, range), {
+      isInterrupted: combined,
+      timeoutMs,
+      pollMs
+    })
+    if (r.ok) return { ok: true }
+    // interrupted 时若 goal 已设（目标移动触发），统一清理由 goto 失败路径完成
+    return r
   }
 
   return { goto, gotoPoint, gotoNearest, approachEntity }
