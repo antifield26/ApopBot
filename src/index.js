@@ -7,6 +7,7 @@ import { ConnectionManager } from './core/connection.js'
 import { createFeatureLayerManager } from './core/feature-layer.js'
 import { createL2 } from './l2/index.js'
 import { setupSignals } from './core/signals.js'
+import { createStatusServer } from './core/http-status.js'
 
 // 入口：参数 → 配置 → logger → ConnectionManager → 功能层（tasks/命令/L2）→ 信号处理
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -115,6 +116,12 @@ async function reload () {
     logger.info('L2 配置变化，重建 agent')
   }
 
+  // HTTP 状态端点配置变化 → 重启监听（getCfg 闭包取最新配置）
+  if (JSON.stringify(newCfg.http) !== JSON.stringify(ctx.cfg.http)) {
+    statusServer.stop()
+    statusServer.start()
+  }
+
   if (ctx.tasks) await ctx.tasks.reload(newCfg)
   logger.info('config reloaded')
 }
@@ -158,6 +165,14 @@ function watchConfig () {
 }
 const stopWatch = watchConfig()
 
+// 只读 HTTP 状态端点（U3）：/health + /metrics，默认关闭（cfg.http.enabled=true 才监听）
+const statusServer = createStatusServer(() => ctx.cfg, logger, () => ({
+  conn: ctx.conn,
+  tasks: ctx.tasks?.getStatus() ?? [],
+  sessionCount: ctx.agent?.sessionCount?.() ?? 0
+}))
+statusServer.start()
+
 setupSignals({
   logger,
   conn,
@@ -171,4 +186,4 @@ conn.connect().catch((err) => {
 })
 
 // 供 signals.js 与测试引用的生命周期句柄（避免顶层作用域被 GC）
-export { cfg, ctx, conn, layer, stopWatch }
+export { cfg, ctx, conn, layer, stopWatch, statusServer }

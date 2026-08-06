@@ -55,6 +55,11 @@ const BUILTIN_DEFAULTS = {
     maxLength: 250,
     commandCooldownMs: 750
   },
+  // 只读 HTTP 状态端点（U3）：默认关闭；只绑 127.0.0.1（暴露到局域网需自行加防火墙）
+  http: {
+    enabled: false,
+    port: 8123
+  },
   scheduleTimezone: 'Asia/Shanghai'
 }
 
@@ -86,6 +91,8 @@ const ENV_MAP = {
   MCBOT_L2_OLLAMA_TIMEOUT_MS: ['l2', 'ollamaTimeoutMs'],
   MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
   MCBOT_CHAT_COMMAND_COOLDOWN_MS: ['chat', 'commandCooldownMs'],
+  MCBOT_HTTP_ENABLED: ['http', 'enabled'],
+  MCBOT_HTTP_PORT: ['http', 'port'],
   MCBOT_SCHEDULE_TIMEZONE: ['scheduleTimezone'],
   MCBOT_RECONNECT_MAX_MS: ['reconnect', 'maxMs']
 }
@@ -303,6 +310,10 @@ export function validateConfig (cfg) {
   if (!Number.isInteger(cfg.chat?.commandCooldownMs) || cfg.chat.commandCooldownMs < 0) {
     errors.push(`chat.commandCooldownMs 必须是非负整数，当前: ${cfg.chat?.commandCooldownMs}`)
   }
+  if (typeof cfg.http?.enabled !== 'boolean') errors.push('http.enabled 必须是布尔值')
+  if (!Number.isInteger(cfg.http?.port) || cfg.http.port < 1 || cfg.http.port > 65535) {
+    errors.push(`http.port 必须是 1-65535 的整数，当前: ${cfg.http?.port}`)
+  }
   if (!Array.isArray(cfg.tasks)) errors.push('tasks 必须是数组')
 
   // 任务条目校验：id 非空且唯一、类型已知、scheduled 完成语义、options 形状
@@ -344,7 +355,7 @@ export function validateConfig (cfg) {
   // 未知顶层键（拼写错误会被静默忽略——明确报出）
   const KNOWN_TOP_KEYS = new Set([
     'mcVersion', 'host', 'port', 'username', 'auth', 'spawnTimeoutMs',
-    'reconnect', 'ops', 'log', 'tasks', 'mineflayerPlugins', 'l2', 'chat', 'scheduleTimezone',
+    'reconnect', 'ops', 'log', 'tasks', 'mineflayerPlugins', 'l2', 'chat', 'http', 'scheduleTimezone',
     '_comment' // JSON 注释惯例（config.example.json 顶层使用；复制为 config.json 必须放行）
   ])
   for (const k of Object.keys(cfg)) {
