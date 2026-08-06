@@ -1,6 +1,7 @@
 node_modules/
 logs/
 config/config.json
+config/service.env
 *.log
 .DS_Store
 .env*

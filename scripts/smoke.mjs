@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 集成冒烟测试：连真实服务器验证协议 775 全链路。
-// 用法: node scripts/smoke.mjs --config config/smoke.json [--steps connect,spawn,move,chat,quit] [--dangerous]
+// 用法: node scripts/smoke.mjs --config config/smoke.json [--host <ip>] [--port <n>] [--steps connect,spawn,move,chat,quit] [--dangerous]
 // 每步 60s 超时，PASS/FAIL 汇总；所有步骤完成后无条件 quit，exit 0/1。
 // 注意：mine 步骤默认跳过（--dangerous 开启）——但跳过只是不执行该步，
 // 流程继续跑后续步骤并正常退出（O3 修复：早期版本 return 导致进程永不退出）。
@@ -32,6 +32,8 @@ function parseArgs () {
       }
       case '--dangerous': out.dangerous = true; break
       case '--walk': out.walkDistance = Number(argv[++i]); break
+      case '--host': out.host = argv[++i]; break
+      case '--port': out.port = Number(argv[++i]); break
     }
   }
   // 未知步骤名直接报错（早期版本静默丢弃，用户以为在跑实际没跑）
@@ -62,7 +64,11 @@ async function runStep (name, fn) {
 
 async function main () {
   const args = parseArgs()
-  const cfg = loadConfig({ argv: ['--config', args.config] })
+  // --host/--port 覆盖配置（部署机连远程服务端时使用；CLI 优先级最高，走 loadConfig 而非改冻结配置）
+  const cli = ['--config', args.config]
+  if (args.host) cli.push('--host', args.host)
+  if (args.port) cli.push('--port', String(args.port))
+  const cfg = loadConfig({ argv: cli })
   const { ok, errors } = validateConfig(cfg)
   if (!ok) {
     console.error('smoke 配置校验失败:', errors.join('; '))

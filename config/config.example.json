@@ -73,7 +73,7 @@
     "cloudBaseUrl": "https://api.anthropic.com/v1/messages",
     "cloudApiKeyEnv": "ANTHROPIC_API_KEY",
     "ollamaUrl": "http://127.0.0.1:11434",
-    "ollamaModel": "qwen2.5:7b",
+    "ollamaModel": "qwen3.5:4b",
     "maxSteps": 5,
     "cooldownMs": 5000,
     "_comment": "API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（如 ANTHROPIC_API_KEY），绝不写进配置文件"
