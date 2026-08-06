@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { loadConfig, validateConfig } from '../src/core/config.js'
+import { rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { loadConfig, validateConfig, assertLogDirWritable } from '../src/core/config.js'
 
 test('内置默认值：生产基线', () => {
   const cfg = loadConfig({ argv: [], env: {} })
@@ -148,4 +151,69 @@ test('M6: L2 环境变量映射与数值转换', () => {
   assert.equal(cfg.chat.maxLength, 200)
   assert.equal(cfg.scheduleTimezone, 'UTC')
   assert.equal(validateConfig(cfg).ok, true)
+})
+
+test('未知顶层键拒绝（拼写错误不再静默忽略）', () => {
+  const cfg = loadConfig({ argv: [], env: {} })
+  const { ok, errors } = validateConfig({ ...cfg, mcversion: '1.20' })
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => e.includes('未知配置键')), JSON.stringify(errors))
+})
+
+test('log.pretty 非布尔拒绝（MCBOT_LOG_PRETTY=1 场景）', () => {
+  const cfg = loadConfig({ argv: [], env: {} })
+  const { ok, errors } = validateConfig({ ...cfg, log: { ...cfg.log, pretty: '1' } })
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => e.includes('log.pretty')), JSON.stringify(errors))
+})
+
+test('log.dir 非字符串拒绝（config 置 log:null 不抛 TypeError）', () => {
+  const cfg = loadConfig({ argv: [], env: {} })
+  const { ok, errors } = validateConfig({ ...cfg, log: null })
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => e.includes('log.dir')), JSON.stringify(errors))
+})
+
+test('畸形形状配置不抛 TypeError（reconnect:null / chat:null）', () => {
+  const cfg = loadConfig({ argv: [], env: {} })
+  const r1 = validateConfig({ ...cfg, reconnect: null })
+  assert.equal(r1.ok, false)
+  const r2 = validateConfig({ ...cfg, chat: null })
+  assert.equal(r2.ok, false)
+})
+
+test('l2 数值/模型校验（maxSteps/超时/ollamaModel）', () => {
+  const cfg = loadConfig({ argv: [], env: {} })
+  const base = { ...cfg, l2: { ...cfg.l2, enabled: true } }
+  for (const [patch, kw] of [
+    [{ maxSteps: 'abc' }, 'l2.maxSteps'],
+    [{ ollamaTimeoutMs: -1 }, 'ollamaTimeoutMs'],
+    [{ cloudTimeoutMs: 0 }, 'cloudTimeoutMs'],
+    [{ ollamaModel: '' }, 'ollamaModel'],
+    [{ maxTokens: 0 }, 'maxTokens']
+  ]) {
+    const { ok, errors } = validateConfig({ ...base, l2: { ...base.l2, ...patch } })
+    assert.equal(ok, false, JSON.stringify(patch))
+    assert.ok(errors.some(e => e.includes(kw)), `${kw} 未报错: ${JSON.stringify(errors)}`)
+  }
+})
+
+test('MCBOT_TASKS_FILE 任务文件合并（内部键加载后删除）', () => {
+  const tmp = path.join(os.tmpdir(), `mcbot-tasks-${process.pid}-${Date.now()}.json`)
+  writeFileSync(tmp, JSON.stringify([{ id: 't1', type: 'mine', options: { blockTypes: ['iron_ore'] } }]))
+  try {
+    const cfg = loadConfig({ argv: [], env: { MCBOT_TASKS_FILE: tmp } })
+    assert.equal(cfg.tasks.length, 1)
+    assert.equal(cfg.tasks[0].id, 't1')
+    assert.equal(cfg.tasksFile, undefined, 'tasksFile 是内部键，加载后应删除')
+  } finally {
+    rmSync(tmp, { force: true })
+  }
+})
+
+test('assertLogDirWritable：空路径报错（mkdirSync recursive 对已存在文件不抛，需无效路径）', () => {
+  const cfg = loadConfig({ argv: [], env: {} })
+  assert.throws(
+    () => assertLogDirWritable({ ...cfg, log: { ...cfg.log, dir: '' } }),
+    /日志目录不可写/)
 })

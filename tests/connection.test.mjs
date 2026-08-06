@@ -74,6 +74,38 @@ test('M1 修复：插件装载期间的事件不丢失（error → reconnecting�
   await conn.disconnect()
 })
 
+test('代际守卫：陈旧 bot 的 spawn 超时不得 quit/调度重连（防双 bot 并发 → name_conflict fatal）', async () => {
+  // 场景：connect#1（A）断线 → 重连 connect#2（B，换代）；A 的陈旧 spawn 超时随后触发，
+  // 必须被代际守卫拦截——否则 A.quit() → 陈旧 end → 错误调度 connect#3 → 双 bot 并发
+  const { conn, bots } = makeConn({
+    cfg: makeCfg({
+      spawnTimeoutMs: 500, // A 的超时在 B 建立（t≈50）之后才触发（t=500）
+      reconnect: { baseMs: 50, maxMs: 200, factor: 2, jitter: 0, minGapMs: 0 }
+    })
+  })
+  const p1 = conn.connect()
+  bots[0].emit('error', new Error('ECONNRESET'))
+  await p1
+  assert.equal(conn.reconnectCount, 1)
+
+  // t≈50ms：重连建立 connect#2（bot B，换代 seq=2）
+  await new Promise(r => setTimeout(r, 120))
+  assert.equal(bots.length, 2, '应已建立第二个连接')
+
+  // 时序：A 的超时挂于 t≈0+500，B 的超时挂于 t≈50+500。
+  // 等 t≈650（两者都已触发）：A 的陈旧超时被代际守卫拦截（不得 quit A——
+  // 否则陈旧 end 会调度 connect#3 造成双 bot 并发）；B 的超时属当前代际正常 quit。
+  await new Promise(r => setTimeout(r, 530))
+  try {
+    assert.equal(bots[0].quitCalls, 0, '陈旧 spawn 超时不得 quit 旧 bot（拦截点：seq 1 ≠ 2）')
+    assert.equal(bots[1].quitCalls, 1, '当前代际的 spawn 超时正常 quit')
+    assert.ok(conn.reconnectCount >= 2, 'B 超时应计入重连')
+  } finally {
+    // 断言失败也必须清理：否则残留的 reconnect 循环（connect#3+ 每 500ms 超时重连）永不停歇
+    await conn.disconnect()
+  }
+})
+
 test('M1 修复：插件装载失败 → 非致命重连', async () => {
   const { conn } = makeConn({ pluginError: new Error('plugin boom') })
   await conn.connect()
