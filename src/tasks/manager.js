@@ -42,13 +42,15 @@ export class TaskManager {
    * @param {object} cfg
    * @param {import('pino').Logger} logger
    * @param {{ bot: import('mineflayer').Bot }} ctx 运行上下文
+   * @param {object} [stateStore] 运行状态快照（U1）：ad-hoc 条目 + 计数器持久化
    */
-  constructor (cfg, logger, ctx) {
+  constructor (cfg, logger, ctx, stateStore = null) {
     this.cfg = cfg
     this.log = logger.child({ module: 'tasks' })
     this.ctx = ctx
     this.tasks = new Map() // id → { entry, task, cron }
     this._pendingExclusive = [] // 被 exclusive 互斥拒绝的任务（冲突任务终态后按序补启动）
+    this._stateStore = stateStore
   }
 
   _makeTaskCtx () {
@@ -143,6 +145,8 @@ export class TaskManager {
     // 移除/变更的任务其排队 rec 已陈旧——过滤（removeTask 有此清理，reload 漏了，
     // 否则队列项泄漏且 reload 后排队任务永不重新入队，永久停在 created）（P1-6）
     this._pendingExclusive = this._pendingExclusive.filter(r => this.tasks.get(r.entry.id) === r)
+    this._syncStateTasks() // U1：reload 后 ad-hoc 条目集合可能变化
+    this._snapshotCounters()
     this.cfg = cfg
   }
 
@@ -170,7 +174,11 @@ export class TaskManager {
 
     this.log.info({ task: id, type: rec.entry.type }, 'starting task')
     const p = rec.task.start()
-    Promise.resolve(p).then(() => this._drainExclusive(), () => this._drainExclusive())
+    // 任务终态（完成/失败/停止）时快照计数器（U1：遥测跨重启保留）
+    Promise.resolve(p).then(
+      () => { this._drainExclusive(); this._snapshotCounters() },
+      () => { this._drainExclusive(); this._snapshotCounters() }
+    )
     return p
   }
 
@@ -254,17 +262,34 @@ export class TaskManager {
       rec.cron?.stop()
       await rec.task.stop()
     }))
+    this._snapshotCounters() // U1：停止前快照终态计数（tasks 随后清空）
     this.tasks.clear()
     this._pendingExclusive = []
   }
 
+  /** 快照持久化：ad-hoc 条目 + 全量计数器（U1）。 */
+  _syncStateTasks () {
+    this._stateStore?.setTasks(
+      [...this.tasks.values()].filter(r => r.entry.adHoc === true).map(r => r.entry)
+    )
+  }
+
+  /** 快照全量计数器（任务数少，全量写即可）。 */
+  _snapshotCounters () {
+    if (!this._stateStore) return
+    for (const [id, rec] of this.tasks) {
+      this._stateStore.setCounter(id, rec.task.counters)
+    }
+  }
+
   /**
-   * 运行时新增任务（!task new；不持久化到配置）。
+   * 运行时新增任务（!task new；不持久化到配置，U1 起写入状态快照跨重启保留）。
    * @returns {{ entry, task, cron }} 新条目
    */
   addTask (entry) {
     if (this.tasks.has(entry.id)) throw new Error(`任务 id 已存在: ${entry.id}`)
     const rec = this._createEntry(entry)
+    rec.entry.adHoc = true // U1：标记运行时新增（快照持久化用；配置条目不标记）
     this.tasks.set(entry.id, rec)
     if (entry.schedule) {
       this._createSchedule(rec)
@@ -272,6 +297,7 @@ export class TaskManager {
       this.startTask(entry.id, rec).catch(err => this.log.error({ task: entry.id, err: err.message }, '任务启动失败'))
     }
     this.log.info({ task: entry.id, type: entry.type }, 'ad-hoc task added')
+    this._syncStateTasks()
     return rec
   }
 
@@ -284,6 +310,7 @@ export class TaskManager {
     this.tasks.delete(id)
     this._pendingExclusive = this._pendingExclusive.filter(r => r !== rec)
     this.log.info({ task: id }, 'ad-hoc task removed')
+    this._syncStateTasks()
   }
 
   getStatus () {

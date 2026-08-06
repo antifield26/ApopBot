@@ -278,3 +278,37 @@ test('P1-6 修复：reload 后排队的 exclusive 任务重新入队并保持互
   assert.equal(s2.state, 'created')
   await manager.stopAll()
 })
+
+// ---- U1：状态快照挂钩（ad-hoc 条目 + 计数器）----
+
+test('U1: addTask 标记 adHoc 并同步快照（配置任务不写快照）', async () => {
+  const bot = makeCombatBot()
+  const synced = []
+  const store = { setTasks: (tasks) => { synced.push(tasks) }, setCounter: () => {} }
+  const manager = new TaskManager({}, makeLogger(), { bot }, store)
+  await manager.load({
+    tasks: [{ id: 'cfg1', type: 'combat', enabled: true, options: { stopWhenNoTargets: true } }]
+  })
+  assert.equal(synced.length, 0, '配置任务不触发快照同步')
+  manager.addTask({ id: 'adhoc1', type: 'combat', options: { stopWhenNoTargets: true } })
+  assert.equal(synced.length, 1)
+  assert.deepEqual(synced.at(-1).map(e => e.id), ['adhoc1'], '快照只含 ad-hoc 条目')
+  assert.equal(synced.at(-1)[0].adHoc, true)
+  await manager.removeTask('adhoc1')
+  assert.deepEqual(synced.at(-1), [], '移除后快照清空')
+  await manager.stopAll()
+})
+
+test('U1: 任务终态快照计数器', async () => {
+  const bot = makeCombatBot()
+  const counters = []
+  const store = { setTasks: () => {}, setCounter: (id, c) => { counters.push([id, c]) } }
+  const manager = new TaskManager({}, makeLogger(), { bot }, store)
+  // 无目标 + stopWhenNoTargets → 立即自然完成 → startTask 终态钩子快照计数器
+  await manager.load({ tasks: [{ id: 'c1', type: 'combat', enabled: true, options: { stopWhenNoTargets: true } }] })
+  await new Promise(r => setTimeout(r, 50))
+  assert.ok(counters.length >= 1, '任务终态应快照计数器')
+  assert.equal(counters.at(-1)[0], 'c1')
+  assert.deepEqual(counters.at(-1)[1], {}, 'combat 无目标完成 counters 为空对象')
+  await manager.stopAll()
+})

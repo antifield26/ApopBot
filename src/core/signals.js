@@ -24,6 +24,7 @@ export function setupSignals (deps) {
       await withTimeout((async () => {
         await deps.ctx.tasks?.stopAll()
         await deps.ctx.agent?.stop()
+        await deps.ctx.stateStore?.flush() // U1：快照立即落盘（防抖窗口内不强杀丢失）
         await deps.conn?.disconnect?.() // 双可选链：conn 为空对象时 disconnect 是 undefined，直接调用会 TypeError（实测）
         await new Promise((resolve) => { log.flush(resolve) })
       })(), SHUTDOWN_TIMEOUT_MS, 'shutdown timeout')

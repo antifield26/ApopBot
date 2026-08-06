@@ -48,8 +48,20 @@ export function createFeatureLayerManager (ctx, logger) {
     if (!ctx.plugins) ctx.plugins = ctx.conn?.plugins ?? null
     log().info('rebuilding feature layer (tasks/commands/agent)')
 
-    ctx.tasks = new TaskManager(ctx.cfg, log(), { bot })
+    ctx.tasks = new TaskManager(ctx.cfg, log(), { bot }, ctx.stateStore)
     await ctx.tasks.load(ctx.cfg) // load 内部按条目容错，不抛
+
+    // U1 恢复：快照中的 ad-hoc 任务（配置里已存在的以配置文件为准，不重复添加）
+    const configIds = new Set((ctx.cfg.tasks ?? []).map(e => e.id))
+    for (const entry of ctx.stateStore?.tasks ?? []) {
+      if (configIds.has(entry.id)) continue
+      try {
+        ctx.tasks.addTask(entry)
+        log().info({ task: entry.id }, 'restored ad-hoc task from state snapshot')
+      } catch (err) {
+        log().warn({ task: entry.id, err: err.message }, 'ad-hoc 任务恢复失败')
+      }
+    }
 
     // 命令处理器闭包读取可变 ctx，dispatch 时总能拿到当前 bot
     ctx.commands = createCommandRegistry(ctx)

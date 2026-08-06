@@ -8,6 +8,7 @@ import { createFeatureLayerManager } from './core/feature-layer.js'
 import { createL2 } from './l2/index.js'
 import { setupSignals } from './core/signals.js'
 import { createStatusServer } from './core/http-status.js'
+import { createStateStore } from './core/state.js'
 
 // 入口：参数 → 配置 → logger → ConnectionManager → 功能层（tasks/命令/L2）→ 信号处理
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -54,6 +55,7 @@ const ctx = {
   conn: null,
   agent: null,
   commands: null,
+  stateStore: null, // U1：ad-hoc 任务/计数器快照（feature-layer 重建时传 TaskManager）
   onReload: null // !reload 命令走同一 reload 队列（与 SIGHUP/配置监视一致）
 }
 
@@ -76,6 +78,9 @@ const conn = new ConnectionManager(cfg, logger, {
   }
 })
 ctx.conn = conn
+
+// 运行状态快照（U1）：data/state.json，5s 防抖写；优雅退出时 flush
+ctx.stateStore = createStateStore({ logger })
 
 /**
  * 重载配置并热更新：校验 → 更新 ctx.cfg/conn.cfg → 日志配置变化重建 logger →

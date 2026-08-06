@@ -1,0 +1,86 @@
+// 运行状态快照测试（U1）：loadState 容错、createStateStore 防抖写/flush/读写往返。
+// 用 mkdtemp 临时目录，不触碰真实 data/state.json。
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { loadState, createStateStore } from '../src/core/state.js'
+
+function makeTmpDir (t) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'mcbot-state-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  return dir
+}
+
+test('loadState: 文件不存在 → 空态', (t) => {
+  const dir = makeTmpDir(t)
+  assert.deepEqual(loadState(path.join(dir, 'missing.json')), { tasks: [], counters: {} })
+})
+
+test('loadState: 损坏 JSON → 空态（不抛错）', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 'bad.json')
+  writeFileSync(file, '{ not json')
+  assert.deepEqual(loadState(file), { tasks: [], counters: {} })
+})
+
+test('loadState: 形状防御——tasks 非数组/条目缺 id 过滤', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 'shape.json')
+  writeFileSync(file, JSON.stringify({ tasks: ['junk', { id: 'ok', type: 'mine' }], counters: null }))
+  const s = loadState(file)
+  assert.equal(s.tasks.length, 1)
+  assert.equal(s.tasks[0].id, 'ok')
+  assert.deepEqual(s.counters, {})
+})
+
+test('store: setTasks 防抖写（debounce 内不落盘），flush 立即落盘', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 'state.json')
+  const store = createStateStore({ file, debounceMs: 200 })
+  store.setTasks([{ id: 'gold', type: 'mine', options: { blockTypes: ['gold_ore'] } }])
+  assert.equal(store.tasks.length, 1, '内存立即可见')
+  assert.ok(!fileExists(file), '防抖窗口内不应落盘')
+  store.flush()
+  assert.ok(fileExists(file), 'flush 后应落盘')
+  const disk = JSON.parse(readFileSync(file, 'utf8'))
+  assert.equal(disk.tasks[0].id, 'gold')
+  assert.equal(disk.tasks[0].options.blockTypes[0], 'gold_ore')
+})
+
+test('store: 防抖到期自动落盘（不调 flush）', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 'state.json')
+  const store = createStateStore({ file, debounceMs: 50 })
+  store.setTasks([{ id: 'a', type: 'afk', options: {} }])
+  return new Promise((resolve) => setTimeout(() => {
+    try {
+      assert.ok(fileExists(file), '防抖到期应自动落盘')
+      resolve()
+    } catch (err) { resolve(err) }
+  }, 120)).then((err) => { if (err) throw err })
+})
+
+test('store: setCounter 与读写往返', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 'state.json')
+  const store = createStateStore({ file })
+  store.setCounter('m1', { mined: 5 })
+  store.flush()
+  const again = createStateStore({ file })
+  assert.deepEqual(again.counters, { m1: { mined: 5 } }, '重启后（新实例）计数器应可读')
+})
+
+test('store: tasks 读副本——外部修改不污染内存态', (t) => {
+  const dir = makeTmpDir(t)
+  const store = createStateStore({ file: path.join(dir, 's.json') })
+  store.setTasks([{ id: 'a', type: 'mine', options: { x: 1 } }])
+  const copy = store.tasks
+  copy[0].id = 'hacked'
+  assert.equal(store.tasks[0].id, 'a', '读副本应防外部修改')
+})
+
+function fileExists (f) {
+  try { readFileSync(f); return true } catch { return false }
+}
