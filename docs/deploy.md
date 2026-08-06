@@ -10,7 +10,7 @@
 └── white-list=true
 ```
 
-- Bot 不再部署到树莓派（旧 Linux 产物 `deploy.sh` / `minecraft-bot.service` 在 [legacy/](../legacy/README.md)）
+- Bot 不部署到树莓派（原 Linux 部署产物 `deploy.sh` / `minecraft-bot.service` 已随迁移移除）；Pi 上若仍有旧部署残留，清理见下文「移除残留 Bot 部署」
 - PaperMC 服务端仍在树莓派运行（单元文件 `systemd/minecraft-server.service` 未移动）
 
 ## 环境准备（Windows PC，一次性）
@@ -60,7 +60,7 @@ deploy.ps1 流程：预检（node ≥22、非 Store 存根、nssm 存在）→ �
 
 ## NSSM 服务语义（systemd → NSSM 映射）
 
-| systemd（legacy/） | NSSM / Windows |
+| systemd（原 Linux 部署） | NSSM / Windows |
 |---|---|
 | `Restart=on-failure` + `RestartSec=10` | 非 0 退出码默认自动重启 + `AppRestartDelay 10000`（崩溃 10s 后拉起） |
 | `StartLimitBurst=5`（fatal 后停止） | `AppExit 2 Exit`：fatal（exit 2：白名单拒绝/名字冲突/版本不匹配）→ 服务一次即停等人工；修复后 `nssm start minecraft-bot` |
@@ -116,7 +116,20 @@ whitelist add smokebot
 ```
 
 - JVM `-Xms2G -Xmx2G`（Pi 5 8G 上限约 3G 堆）；`white-list=true`；`online-mode=false`
-- Pi 侧无需再装 Node（Bot 已不在 Pi 上跑）；`legacy/minecraft-bot.service` 仅作历史参考
+- Pi 侧无需再装 Node（Bot 已不在 Pi 上跑）；迁移前的旧服务如仍在运行，见下节清理
+
+## 移除残留 Bot 部署（一次性，可选）
+
+若树莓派上仍运行着迁移前的 systemd Bot 服务（`minecraft-bot.service`），停用并删除：
+
+```bash
+# Pi 上执行（勿动 minecraft-server —— 服务端仍需运行）
+sudo systemctl disable --now minecraft-bot
+sudo rm -f /etc/systemd/system/minecraft-bot.service
+sudo rm -rf /opt/minecraft-bot /etc/minecraft-bot /var/lib/minecraft-bot /var/log/minecraft-bot
+sudo systemctl daemon-reload
+systemctl list-unit-files | grep minecraft   # 应只剩 minecraft-server
+```
 
 ## 验证清单
 

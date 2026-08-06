@@ -84,7 +84,6 @@ node scripts/smoke.mjs --config config/smoke.json --host 192.168.3.93 --steps co
 - [部署指南（Windows PC + 树莓派服务端）](docs/deploy.md)
 - [L2 LLM 层设计](docs/l2.md)
 - [上游迁移（PR pin → 正式版）](docs/upstream-migration.md)
-- [legacy/（已退役的 Linux 部署产物）](legacy/README.md)
 
 ## 性能要点（低配 PC + 同机 Ollama）
 

@@ -1,5 +1,5 @@
 # deploy.ps1 — Windows PC 部署脚本（Bot → NSSM Windows 服务）
-# 替代原 scripts/deploy.sh（已移入 legacy/）。本机部署，无 ssh；在目标 Windows PC 上运行。
+# 本机部署，无 ssh；在目标 Windows PC 上运行。
 #
 # 用法（管理员 PowerShell，或 powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1）:
 #   .\scripts\deploy.ps1              部署（依赖 + 服务注册/更新）并启动/重启服务
