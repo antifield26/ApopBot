@@ -146,3 +146,90 @@ test('provider: ollamaTimeoutMs 生效（超时被 abort）', async () => {
   assert.ok(Date.now() - t0 < 3000, '应在超时窗口内失败（而非挂起）')
   restoreFetch()
 })
+
+// ---- U5：重试退避 + token/耗时计量 ----
+
+test('U5: ollama 网络错误重试一次（2s 退避后成功）+ usage 归一化', async () => {
+  let calls = 0
+  const origFetch = globalThis.fetch
+  globalThis.fetch = async () => {
+    calls++
+    if (calls === 1) throw new TypeError('fetch failed')
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '重试成功', tool_calls: [] } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }) }
+  }
+  try {
+    const l2 = { ...l2Base, provider: 'ollama', ollamaUrl: 'http://x', ollamaModel: 'm', ollamaTimeoutMs: 5000 }
+    const p = createProvider({ l2 }, makeLogger())
+    const r = await p.chat([{ role: 'user', content: 'hi' }])
+    assert.equal(calls, 2, '网络错误应重试一次')
+    assert.equal(r.text, '重试成功')
+    assert.deepEqual(r.usage, { inputTokens: 10, outputTokens: 5 }, 'prompt/completion_tokens 应归一化')
+    assert.ok(typeof r.latencyMs === 'number')
+  } finally {
+    restoreFetch()
+  }
+})
+
+test('U5: ollama 4xx 不重试（配置错重试无意义）', async () => {
+  let calls = 0
+  const origFetch = globalThis.fetch
+  globalThis.fetch = async () => { calls++; return { ok: false, status: 404, text: async () => 'model not found' } }
+  try {
+    const l2 = { ...l2Base, provider: 'ollama', ollamaUrl: 'http://x', ollamaModel: 'm', ollamaTimeoutMs: 5000 }
+    const p = createProvider({ l2 }, makeLogger())
+    await assert.rejects(p.chat([{ role: 'user', content: 'hi' }]), /404/)
+    assert.equal(calls, 1, '4xx 不应重试')
+  } finally {
+    restoreFetch()
+  }
+})
+
+test('U5: ollama AbortError 不重试', async () => {
+  let calls = 0
+  const origFetch = globalThis.fetch
+  globalThis.fetch = async () => { calls++; throw Object.assign(new Error('aborted'), { name: 'AbortError' }) }
+  try {
+    const l2 = { ...l2Base, provider: 'ollama', ollamaUrl: 'http://x', ollamaModel: 'm', ollamaTimeoutMs: 5000 }
+    const p = createProvider({ l2 }, makeLogger())
+    await assert.rejects(p.chat([{ role: 'user', content: 'hi' }]), /aborted/)
+    assert.equal(calls, 1, '用户中止不应重试')
+  } finally {
+    restoreFetch()
+  }
+})
+
+test('U5: cloud usage 解析（input_tokens/output_tokens）+ latency', async () => {
+  const origFetch = globalThis.fetch
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ content: [{ type: 'text', text: 'hi' }], usage: { input_tokens: 7, output_tokens: 3 } }) })
+  try {
+    process.env.ANTHROPIC_API_KEY = 'sk-test'
+    const l2 = { ...l2Base, cloudApiKeyEnv: 'ANTHROPIC_API_KEY', cloudBaseUrl: 'http://x', cloudTimeoutMs: 5000 }
+    const p = createProvider({ l2 }, makeLogger())
+    const r = await p.chat([{ role: 'user', content: 'hi' }])
+    assert.deepEqual(r.usage, { inputTokens: 7, outputTokens: 3 })
+    assert.ok(typeof r.latencyMs === 'number')
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY
+    restoreFetch()
+  }
+})
+
+test('U5: agent 计量累计——chat 工具循环多轮 usage 累加（AgentInterface 层）', async () => {
+  const { AgentInterface } = await import('../src/l2/agent-interface.js')
+  const { createSkillRegistry } = await import('../src/l2/skills.js')
+  const ctx = { cfg: { ops: [] }, logger: makeLogger(), bot: {}, tasks: { getStatus: () => [] }, conn: { getStatus: () => ({ state: 'connected' }) }, plugins: {} }
+  const calls = []
+  const provider = {
+    async chat (messages, opts = {}) {
+      calls.push(messages)
+      if (calls.length === 1) return { text: null, toolCalls: [{ id: 't1', name: 'status', arguments: {} }], usage: { inputTokens: 10, outputTokens: 4 }, latencyMs: 100 }
+      return { text: 'done', toolCalls: [], usage: { inputTokens: 8, outputTokens: 2 }, latencyMs: 200 }
+    }
+  }
+  const skills = createSkillRegistry(ctx)
+  const agent = new AgentInterface(ctx, { provider, skills, config: { enabled: true, cooldownMs: 0, maxSteps: 5 } })
+  await agent.chat('steve', 'hi')
+  assert.equal(agent.usage.inputTokens, 18, '两轮 usage 应累加')
+  assert.equal(agent.usage.outputTokens, 6)
+  assert.equal(agent.usage.latencyMs, 200, 'latency 取最后一次')
+})

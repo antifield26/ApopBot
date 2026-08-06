@@ -169,7 +169,12 @@ const stopWatch = watchConfig()
 const statusServer = createStatusServer(() => ctx.cfg, logger, () => ({
   conn: ctx.conn,
   tasks: ctx.tasks?.getStatus() ?? [],
-  sessionCount: ctx.agent?.sessionCount?.() ?? 0
+  sessionCount: ctx.agent?.sessionCount?.() ?? 0,
+  lastLlmLatencyMs: ctx.agent?.usage?.latencyMs ?? null,
+  lastLlmUsage: ctx.agent?.usage ? {
+    inputTokens: ctx.agent.usage.inputTokens,
+    outputTokens: ctx.agent.usage.outputTokens
+  } : null
 }))
 statusServer.start()
 

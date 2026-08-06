@@ -56,6 +56,8 @@ export class AgentInterface {
     this.busy = false
     this.cooldownUntil = 0
     this._abort = null
+    // LLM 计量（U5）：本次对话累计 tokens + 最近一次请求耗时（/metrics 用）
+    this.usage = { inputTokens: 0, outputTokens: 0, latencyMs: null }
   }
 
   static isAvailable () {
@@ -92,6 +94,12 @@ export class AgentInterface {
           system: buildSystem(user, this.ctx.cfg),
           signal: ac.signal
         })
+        // token/耗时计量（U5）：累计本轮全部 provider 调用
+        if (res.usage) {
+          this.usage.inputTokens += res.usage.inputTokens ?? 0
+          this.usage.outputTokens += res.usage.outputTokens ?? 0
+        }
+        this.usage.latencyMs = res.latencyMs ?? null
         const calls = res.toolCalls?.slice(0, 4) ?? []
         if (calls.length === 0) {
           reply = res.text ?? '（无回复）'

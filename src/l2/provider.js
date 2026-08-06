@@ -13,6 +13,24 @@
 // 低配机 Ollama 约 10-30 tok/s，20s 超时会误杀长回复）
 const DEFAULT_TIMEOUT_MS = 60000
 const DEFAULT_MAX_TOKENS = 1024
+// Ollama 网络类错误单次重试退避（U5）：低配机 CPU 抢占导致偶发连接重置是真实场景；
+// 一次重试成本远低于整次对话失败。4xx（配置错）与 AbortError 不重试。
+const RETRY_BACKOFF_MS = 2000
+
+/** HTTP 状态错误（携带 status 供重试判定）。 */
+class HttpError extends Error {
+  constructor (status, message) {
+    super(message)
+    this.status = status
+  }
+}
+
+/** 是否值得重试：非 abort 且非 4xx（网络层 TypeError / 5xx 瞬时）。 */
+function isRetryable (err) {
+  if (err?.name === 'AbortError') return false
+  if (err?.status && err.status < 500) return false
+  return true
+}
 
 /** 组装 provider 实例（auto = cloud 优先，失败回退 ollama 一次）。 */
 export function createProvider (cfg, logger) {
@@ -74,6 +92,27 @@ class CloudProvider {
         input_schema: parameters ?? { type: 'object', properties: {} }
       }))
     }
+    const t0 = Date.now()
+    const data = await this._post(body, signal)
+    const toolCalls = []
+    let text = ''
+    for (const block of data.content ?? []) {
+      if (block.type === 'text') text += block.text
+      else if (block.type === 'tool_use') toolCalls.push({ id: block.id, name: block.name, arguments: block.input })
+    }
+    // token 计量（U5）：usage 结构 input_tokens/output_tokens
+    return {
+      text: text || null,
+      toolCalls,
+      usage: {
+        inputTokens: data.usage?.input_tokens ?? null,
+        outputTokens: data.usage?.output_tokens ?? null
+      },
+      latencyMs: Date.now() - t0
+    }
+  }
+
+  async _post (body, signal) {
     const res = await fetch(this.baseUrl, {
       method: 'POST',
       headers: {
@@ -86,16 +125,9 @@ class CloudProvider {
     })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
-      throw new Error(`cloud API ${res.status}: ${text.slice(0, 200)}`)
+      throw new HttpError(res.status, `cloud API ${res.status}: ${text.slice(0, 200)}`)
     }
-    const data = await res.json()
-    const toolCalls = []
-    let text = ''
-    for (const block of data.content ?? []) {
-      if (block.type === 'text') text += block.text
-      else if (block.type === 'tool_use') toolCalls.push({ id: block.id, name: block.name, arguments: block.input })
-    }
-    return { text: text || null, toolCalls }
+    return res.json()
   }
 }
 
@@ -125,6 +157,39 @@ class OllamaProvider {
         function: { name, description, parameters: parameters ?? { type: 'object', properties: {} } }
       }))
     }
+    // 网络类错误重试一次（2s 退避）：低配机偶发连接重置是真实场景（U5）
+    try {
+      return await this._chatOnce(body, signal)
+    } catch (err) {
+      if (!isRetryable(err)) throw err
+      this.log.warn({ err: err.message }, 'ollama 请求失败，2s 后重试一次')
+      await new Promise(r => setTimeout(r, RETRY_BACKOFF_MS))
+      return this._chatOnce(body, signal)
+    }
+  }
+
+  async _chatOnce (body, signal) {
+    const t0 = Date.now()
+    const data = await this._post(body, signal)
+    const msg = data.choices?.[0]?.message
+    const toolCalls = (msg?.tool_calls ?? []).map((tc, i) => {
+      let args = {}
+      try { args = JSON.parse(tc.function?.arguments ?? '{}') } catch { /* 参数解析失败按空 */ }
+      return { id: tc.id ?? `tc_${i}`, name: tc.function?.name, arguments: args }
+    })
+    // token 计量（U5）：usage 结构 prompt_tokens/completion_tokens
+    return {
+      text: msg?.content ?? null,
+      toolCalls,
+      usage: {
+        inputTokens: data.usage?.prompt_tokens ?? null,
+        outputTokens: data.usage?.completion_tokens ?? null
+      },
+      latencyMs: Date.now() - t0
+    }
+  }
+
+  async _post (body, signal) {
     const res = await fetch(this.baseUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -133,16 +198,9 @@ class OllamaProvider {
     })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
-      throw new Error(`ollama API ${res.status}: ${text.slice(0, 200)}`)
+      throw new HttpError(res.status, `ollama API ${res.status}: ${text.slice(0, 200)}`)
     }
-    const data = await res.json()
-    const msg = data.choices?.[0]?.message
-    const toolCalls = (msg?.tool_calls ?? []).map((tc, i) => {
-      let args = {}
-      try { args = JSON.parse(tc.function?.arguments ?? '{}') } catch { /* 参数解析失败按空 */ }
-      return { id: tc.id ?? `tc_${i}`, name: tc.function?.name, arguments: args }
-    })
-    return { text: msg?.content ?? null, toolCalls }
+    return res.json()
   }
 }
 
