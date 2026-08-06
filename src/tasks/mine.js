@@ -30,11 +30,11 @@ export class MineTask extends BaseTask {
     this._stopWhenDone = o.stopWhenDone === true // F8：区域内挖空即完成
   }
 
-  async run () {
+  async run (gen) {
     await super.run()
     const area = this.options.area
 
-    while (!this._stopRequested) {
+    while (this._alive(gen)) {
       await this._waitIfPaused()
 
       // 区域内查找目标方块（radius 只约束 findBlocks；collect 的 maxDistance 选项

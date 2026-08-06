@@ -45,7 +45,11 @@ const BUILTIN_DEFAULTS = {
     ollamaUrl: 'http://127.0.0.1:11434',
     ollamaModel: 'qwen3.5:4b',
     maxSteps: 5,
-    cooldownMs: 5000
+    cooldownMs: 5000,
+    // 生成超时/长度可配置（低配机 Ollama 仅 10-30 tok/s，默认 60s 防长回复误超时）
+    cloudTimeoutMs: 60000,
+    ollamaTimeoutMs: 60000,
+    maxTokens: 1024
   },
   // 聊天安全层：服务端单条消息上限 256 字符，Bot 分片发送时留冗余
   chat: {
@@ -191,8 +195,10 @@ export function loadConfig ({ argv = process.argv.slice(2), env = process.env } 
   delete cfg.configPath
   delete cfg.dryRun
 
-  // 相对路径基于项目根解析（跨平台：不用 process.cwd()）
-  cfg.log.dir = path.isAbsolute(cfg.log.dir) ? cfg.log.dir : path.join(ROOT, cfg.log.dir)
+  // 相对路径基于项目根解析（跨平台：不用 process.cwd()）；log 被显式置 null/错型时不炸
+  if (typeof cfg.log?.dir === 'string') {
+    cfg.log.dir = path.isAbsolute(cfg.log.dir) ? cfg.log.dir : path.join(ROOT, cfg.log.dir)
+  }
 
   return deepFreeze(cfg)
 }
@@ -245,7 +251,9 @@ export function validateConfig (cfg) {
     const v = cfg.reconnect?.[k]
     if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) errors.push(`reconnect.${k} 必须为非负数: ${v}`)
   }
-  if (cfg.reconnect.maxMs < cfg.reconnect.baseMs) errors.push('reconnect.maxMs 不能小于 baseMs')
+  if (cfg.reconnect?.maxMs != null && cfg.reconnect.maxMs < cfg.reconnect.baseMs) {
+    errors.push('reconnect.maxMs 不能小于 baseMs')
+  }
   if (typeof cfg.reconnect?.jitter === 'number' && (cfg.reconnect.jitter < 0 || cfg.reconnect.jitter > 1)) {
     errors.push(`reconnect.jitter 必须在 0-1 之间，当前: ${cfg.reconnect.jitter}`)
   }
@@ -253,6 +261,8 @@ export function validateConfig (cfg) {
   if (!['trace', 'debug', 'info', 'warn', 'error', 'fatal'].includes(cfg.log?.level)) {
     errors.push(`log.level 非法: ${cfg.log?.level}`)
   }
+  if (typeof cfg.log?.dir !== 'string' || !cfg.log.dir) errors.push('log.dir 必须是非空字符串（可写路径）')
+  if (typeof cfg.log?.pretty !== 'boolean') errors.push('log.pretty 必须是布尔值（MCBOT_LOG_PRETTY 只接受 true/false）')
   if (!ROTATE_FREQUENCIES.includes(cfg.log?.rotate?.frequency)) {
     errors.push(`log.rotate.frequency 必须是 ${ROTATE_FREQUENCIES.join('/')}，当前: ${cfg.log?.rotate?.frequency}`)
   }
@@ -270,8 +280,15 @@ export function validateConfig (cfg) {
       errors.push(`l2.provider 必须是 auto/cloud/ollama，当前: ${cfg.l2.provider}`)
     }
     if (typeof cfg.l2.model !== 'string' || !cfg.l2.model) errors.push('l2.model 必须是非空字符串（启用 L2 时）')
+    if (!Number.isInteger(cfg.l2.maxSteps) || cfg.l2.maxSteps < 1) errors.push('l2.maxSteps 必须为正整数')
+    if (typeof cfg.l2.cooldownMs !== 'number' || cfg.l2.cooldownMs < 0) errors.push('l2.cooldownMs 必须为非负数')
+    for (const k of ['cloudTimeoutMs', 'ollamaTimeoutMs']) {
+      if (typeof cfg.l2[k] !== 'number' || cfg.l2[k] <= 0) errors.push(`l2.${k} 必须为正数（毫秒）`)
+    }
+    if (typeof cfg.l2.maxTokens !== 'number' || cfg.l2.maxTokens <= 0) errors.push('l2.maxTokens 必须为正数')
+    if (typeof cfg.l2.ollamaModel !== 'string' || !cfg.l2.ollamaModel) errors.push('l2.ollamaModel 必须是非空字符串')
   }
-  if (!Number.isInteger(cfg.chat?.maxLength) || cfg.chat.maxLength < 32 || cfg.chat.maxLength > 256) {
+  if (!Number.isInteger(cfg.chat?.maxLength) || cfg.chat?.maxLength < 32 || cfg.chat?.maxLength > 256) {
     errors.push(`chat.maxLength 必须是 32-256 的整数，当前: ${cfg.chat?.maxLength}`)
   }
   if (!Number.isInteger(cfg.chat?.commandCooldownMs) || cfg.chat.commandCooldownMs < 0) {
@@ -314,6 +331,14 @@ export function validateConfig (cfg) {
       if (Number.isInteger(a?.y1) && Number.isInteger(a?.y2) && a.y1 > a.y2) errors.push(`${label} area.y1 不能大于 y2`)
       if (Number.isInteger(a?.z1) && Number.isInteger(a?.z2) && a.z1 > a.z2) errors.push(`${label} area.z1 不能大于 z2`)
     }
+  }
+  // 未知顶层键（拼写错误会被静默忽略——明确报出）
+  const KNOWN_TOP_KEYS = new Set([
+    'mcVersion', 'host', 'port', 'username', 'auth', 'spawnTimeoutMs',
+    'reconnect', 'ops', 'log', 'tasks', 'mineflayerPlugins', 'l2', 'chat', 'scheduleTimezone'
+  ])
+  for (const k of Object.keys(cfg)) {
+    if (!KNOWN_TOP_KEYS.has(k)) errors.push(`未知配置键: ${k}（拼写错误会被静默忽略，请检查）`)
   }
   return { ok: errors.length === 0, errors }
 }

@@ -36,11 +36,11 @@ export class ChopTask extends BaseTask {
     return a && ['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].every(k => Number.isInteger(a[k]))
   }
 
-  async run () {
+  async run (gen) {
     await super.run()
     const area = this.options.area
 
-    while (!this._stopRequested) {
+    while (this._alive(gen)) {
       await this._waitIfPaused()
 
       let targets = this.bot.findBlocks({

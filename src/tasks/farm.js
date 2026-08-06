@@ -34,12 +34,12 @@ export class FarmTask extends BaseTask {
     return a && ['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].every(k => Number.isInteger(a[k]))
   }
 
-  async run () {
+  async run (gen) {
     await super.run()
     const area = this.options.area
     let cycles = 0
 
-    while (!this._stopRequested && (this._maxCycles === 0 || cycles < this._maxCycles)) {
+    while (this._alive(gen) && (this._maxCycles === 0 || cycles < this._maxCycles)) {
       await this._waitIfPaused()
 
       const blocks = this._scanArea(area)

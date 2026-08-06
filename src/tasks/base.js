@@ -44,6 +44,7 @@ export class BaseTask {
     this._stopRequested = false
     this._pauseRequested = false
     this._runPromise = null
+    this._runGen = 0 // run 代际：start 换代后仍存活的旧 run 协程自弃（防 stop 超时后双 run 并发）
     this._resumeNotify = null
     this._pauseWaiters = [] // _waitIfPaused 的挂起 resolve（stop/pause 唤醒）
     this._internalWaitNotify = null
@@ -206,19 +207,27 @@ export class BaseTask {
   async start () {
     if (['init', 'running', 'paused'].includes(this._state)) return this._runPromise ?? null
     this._reset()
+    this._runGen++ // 新代际：stop() 超时强制结束后旧 run 协程在下次循环检查时自弃
+    const gen = this._runGen
     try {
       await this.init()
       if (this._stopRequested) { this._setState('stopped'); return null }
       this.runCount++
-      this._runPromise = this.run()
+      this._runPromise = this.run(gen)
       await this._runPromise
-      if (!this._stopRequested) this._setState('completed') // 自然完成
+      if (!this._stopRequested && this._state === 'running') this._setState('completed') // 自然完成
     } catch (err) {
+      if (gen !== this._runGen) return null // 旧代际的失败不影响新 run 的状态
       this.lastError = err.message
       this._setState('failed')
       this.log.error({ err: err.message }, 'task failed')
     }
     return this._runPromise
+  }
+
+  /** 当前 run 代际仍有效（start 换代后旧协程循环退出）。 */
+  _alive (gen) {
+    return gen === this._runGen && !this._stopRequested
   }
 
   getStatus () {

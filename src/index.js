@@ -5,6 +5,7 @@ import { loadConfig, validateConfig, assertLogDirWritable } from './core/config.
 import { createLogger } from './core/logger.js'
 import { ConnectionManager } from './core/connection.js'
 import { createFeatureLayerManager } from './core/feature-layer.js'
+import { createL2 } from './l2/index.js'
 import { setupSignals } from './core/signals.js'
 
 // 入口：参数 → 配置 → logger → ConnectionManager → 功能层（tasks/命令/L2）→ 信号处理
@@ -25,6 +26,22 @@ try {
 }
 
 let logger = createLogger(cfg)
+
+// 进程级错误兜底：未捕获 rejection/异常不得静默崩溃走 NSSM 无限重启循环——
+// 与连接层 fatal 语义一致 exit(2) 停止等人工（flush 带 1s 兜底防卡死）
+function fatalExit (err, label) {
+  logger.fatal({ err: err?.message ?? String(err) }, `${label} —— 按 fatal 停止等人工`)
+  let exited = false
+  const exitNow = () => { if (!exited) { exited = true; process.exit(2) } }
+  try { logger.flush(exitNow) } catch { exitNow() }
+  setTimeout(exitNow, 1000)
+}
+process.on('unhandledRejection', (err) => fatalExit(err, 'unhandledRejection'))
+process.on('uncaughtException', (err) => fatalExit(err, 'uncaughtException'))
+// pino transport worker 错误（轮转失败/磁盘满）：记录并降级 stdout，不崩进程
+logger.on('error', (err) => {
+  console.error(`[logger-error] ${err?.message ?? String(err)}`)
+})
 
 // 可变运行上下文（!reload / SIGHUP / 配置变化会更新 cfg）
 const ctx = {
@@ -73,6 +90,7 @@ async function reload () {
   }
 
   const logChanged = JSON.stringify(newCfg.log) !== JSON.stringify(ctx.cfg.log)
+  const l2Changed = JSON.stringify(newCfg.l2) !== JSON.stringify(ctx.cfg.l2)
   ctx.cfg = newCfg
   ctx.conn.updateCfg(newCfg)
 
@@ -82,6 +100,14 @@ async function reload () {
     logger = createLogger(newCfg)
     ctx.logger = logger
     ctx.conn.log = logger
+  }
+
+  // L2 配置变化 → 重建 agent（createL2 构造时持有冻结的 cfg.l2 引用；
+  // enabled=false→true 时 ctx.agent 为 null 也必须生效）
+  if (l2Changed || Boolean(newCfg.l2?.enabled) !== Boolean(ctx.agent)) {
+    await ctx.agent?.stop()
+    ctx.agent = createL2(newCfg, ctx)
+    logger.info('L2 配置变化，重建 agent')
   }
 
   if (ctx.tasks) await ctx.tasks.reload(newCfg)

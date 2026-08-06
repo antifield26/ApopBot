@@ -42,22 +42,23 @@ export class CombatTask extends BaseTask {
     return a && ['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].every(k => Number.isInteger(a[k]))
   }
 
-  async run () {
+  async run (gen) {
     await super.run()
     this.bot.on('entityGone', this._onEntityGone)
     try {
-      await this._loop()
+      await this._loop(gen)
     } finally {
       this.bot.removeListener('entityGone', this._onEntityGone)
     }
   }
 
-  async _loop () {
-    while (!this._stopRequested && (this._maxTargets === 0 || this.counters.kills < this._maxTargets)) {
+  async _loop (gen) {
+    while (this._alive(gen) && (this._maxTargets === 0 || this.counters.kills < this._maxTargets)) {
       await this._waitIfPaused()
 
-      // 低血优先处理：进食或撤离
-      if (this.bot.entity.health < this._minHealth) {
+      // 低血优先处理：进食或撤离。注意 bot.entity.health 在协议 775 下恒 undefined
+      // （实测），改走 update_health 通道的 bot.health；未更新前按满血 20 处理
+      if ((this.bot.health ?? 20) < this._minHealth) {
         await this._handleLowHealth()
         continue
       }

@@ -12,11 +12,11 @@ export class FishTask extends BaseTask {
     this._stopWhenInventoryFull = o.stopWhenInventoryFull ?? false
   }
 
-  async run () {
+  async run (gen) {
     await super.run()
     const deadline = Date.now() + this._durationMs
 
-    while (!this._stopRequested && Date.now() < deadline) {
+    while (this._alive(gen) && Date.now() < deadline) {
       await this._waitIfPaused()
 
       if (this._stopWhenInventoryFull && this._inventoryFull()) {

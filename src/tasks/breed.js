@@ -40,18 +40,18 @@ export class BreedTask extends BaseTask {
     return a && ['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].every(k => Number.isInteger(a[k]))
   }
 
-  async run () {
+  async run (gen) {
     await super.run()
     this.bot.on('entityGone', this._onEntityGone)
     try {
-      await this._loop()
+      await this._loop(gen)
     } finally {
       this.bot.removeListener('entityGone', this._onEntityGone)
     }
   }
 
-  async _loop () {
-    while (!this._stopRequested && this.counters.breedings < this._maxBreedings) {
+  async _loop (gen) {
+    while (this._alive(gen) && this.counters.breedings < this._maxBreedings) {
       await this._waitIfPaused()
 
       const animal = this._findAnimal()
@@ -67,8 +67,12 @@ export class BreedTask extends BaseTask {
       await this._approach(animal)
       if (this._stopRequested) break
 
-      // 喂食（两次，间隔冷却）
-      if (!await this._feed(animal)) continue
+      // 喂食（两次，间隔冷却）；失败（无食物/装备失败）等待重试而非忙等——
+      // 修复审计发现：白名单动物在场但背包无食物时每轮微任务空转 + 日志刷屏
+      if (!await this._feed(animal)) {
+        await this._internalWait(30 * 1000, 'no-food')
+        continue
+      }
 
       // 等待幼崽生成/替换（最多 5s）
       await this._internalWait(5 * 1000, 'waiting-baby')

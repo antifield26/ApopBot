@@ -10,10 +10,10 @@ export class AfkTask extends BaseTask {
     this._intervalMs = o.intervalMinutes * 60 * 1000
   }
 
-  async run () {
+  async run (gen) {
     await super.run()
 
-    while (!this._stopRequested) {
+    while (this._alive(gen)) {
       await this._waitIfPaused()
       // 内部等待（stop/pause 可打断），不再需要自定义 _sleep/stop
       await this._internalWait(this._intervalMs, 'afk-sleep')

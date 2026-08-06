@@ -1,6 +1,11 @@
 // 进程信号处理：SIGINT/SIGTERM 优雅退出（Windows 下 NSSM stop 发送 Ctrl+C 事件 → Node 映射 SIGINT，走同一路径）。
 // 热重载：无 SIGHUP 的平台（Windows）用配置监视 + !reload；Linux 下 SIGHUP 仍注册（systemd ExecReload）。
 
+import { withTimeout } from '../util/promise-timeout.js'
+
+// 优雅退出整体上限：必须低于 NSSM AppStopTimeout（默认 30s），否则卡死会被强杀成非干净退出
+const SHUTDOWN_TIMEOUT_MS = 15000
+
 /**
  * 注册信号处理。注意 deps 须包含可变 ctx（tasks/agent 在 spawn 后才初始化，须在
  * 关闭/重载时读取最新值，不能注册时捕获 null）。
@@ -12,17 +17,21 @@ export function setupSignals (deps) {
   async function gracefulShutdown (signal) {
     if (shuttingDown) return
     shuttingDown = true
-    deps.logger.info({ signal }, 'shutting down')
+    // 热重载会重建 logger——flush 用当前实例，避免关闭时丢新 logger 的最后几条日志
+    const log = deps.ctx?.logger ?? deps.logger
+    log.info({ signal }, 'shutting down')
     try {
-      await deps.ctx.tasks?.stopAll()
-      await deps.ctx.agent?.stop()
-      await deps.conn?.disconnect()
+      await withTimeout((async () => {
+        await deps.ctx.tasks?.stopAll()
+        await deps.ctx.agent?.stop()
+        await deps.conn?.disconnect()
+        await new Promise((resolve) => { log.flush(resolve) })
+      })(), SHUTDOWN_TIMEOUT_MS, 'shutdown timeout')
     } catch (err) {
-      deps.logger.error({ err: err.message }, 'shutdown error')
-    } finally {
-      await new Promise((resolve) => { deps.logger.flush(resolve) })
-      process.exit(0)
+      log.error({ err: err.message }, 'shutdown error or timeout——强制退出')
+      process.exit(1)
     }
+    process.exit(0)
   }
 
   process.on('SIGINT', () => gracefulShutdown('SIGINT'))

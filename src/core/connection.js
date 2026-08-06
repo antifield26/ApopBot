@@ -40,6 +40,7 @@ export class ConnectionManager {
     this.lastError = null
 
     this._reconnectTimer = null
+    this._connectSeq = 0 // 连接代际：陈旧异步回调（旧 bot 的 spawn 超时/end）不得影响新连接
     this._manuallyDisconnecting = false
     this._spawnPromise = null
     this._timeoutQuit = false // spawn 超时主动 quit → end 事件应走重连而非 fatal
@@ -67,6 +68,7 @@ export class ConnectionManager {
    * 重复调用前先 disconnect()。
    */
   async connect () {
+    const seq = ++this._connectSeq
     this._manuallyDisconnecting = false
     this._timeoutQuit = false // 每次全新尝试重置陈旧标记（避免误标后续正常断开）
     this._setState(STATE_CONNECTING)
@@ -76,7 +78,7 @@ export class ConnectionManager {
     const bot = this._deps.createBot(this.cfg)
     this.bot = bot
     this.log = this.log.child({ bot: this.cfg.username })
-    this._wireEvents()
+    this._wireEvents(seq)
 
     // 2. 异步插件装载（动态 import 可能较慢，设超时；失败为非致命网络类问题，重连重试）
     try {
@@ -86,6 +88,7 @@ export class ConnectionManager {
         '插件装载超时'
       )
     } catch (err) {
+      if (seq !== this._connectSeq) return // 陈旧连接（已换代）的失败不再调度重连
       this.log.error({ err: err.message }, '插件装载失败，断开后重试')
       this.lastFailMs = Date.now()
       this.lastError = err.message
@@ -100,9 +103,11 @@ export class ConnectionManager {
     })
     withTimeout(this._spawnPromise, this.cfg.spawnTimeoutMs, 'spawn 超时')
       .then(() => {
-        this._spawnPromise = null
+        if (seq === this._connectSeq) this._spawnPromise = null
       })
       .catch((err) => {
+        // 代际守卫：已换代时旧 bot 的 spawn 超时不得再 quit——否则陈旧 end 触发重连 → 双 bot 并发
+        if (seq !== this._connectSeq) return
         this.log.warn({ err: err.message }, 'spawn 超时，断开后重连')
         this.lastError = err.message
         this._timeoutQuit = true
@@ -118,10 +123,11 @@ export class ConnectionManager {
     this.cfg = cfg
   }
 
-  _wireEvents () {
+  _wireEvents (seq) {
     const bot = this.bot
 
     bot.once('spawn', () => {
+      if (seq !== this._connectSeq) return // 陈旧代际（已换代）的 spawn 不生效
       this.connectedAt = Date.now()
       this.attempt = 0
       this.lastError = null
@@ -131,14 +137,17 @@ export class ConnectionManager {
     })
 
     bot.on('kicked', (reason) => {
+      if (seq !== this._connectSeq) return
       this._handleDisconnect(reason, 'kicked')
     })
 
     bot.on('error', (err) => {
+      if (seq !== this._connectSeq) return
       this._handleDisconnect(err, 'error')
     })
 
     bot.on('end', (reason) => {
+      if (seq !== this._connectSeq) return // 陈旧 bot 的 end 不得影响新连接（代际守卫）
       // end 在 kicked/error/quit 后触发；若已手动断开、已在重连调度中或已判致命则跳过
       if (this._manuallyDisconnecting) return
       if (this._fatalExit) return
@@ -166,9 +175,12 @@ export class ConnectionManager {
     if (classified.isFatal) {
       this.log.fatal({ type: classified.type, reason: classified.detail },
         '致命断线原因，退出等待人工介入（服务管理器已配置为 fatal 退出不自动重启）')
-      // 给日志 flush 留时间；后续 end 事件不得再调度重连
       this._fatalExit = true
-      setTimeout(() => process.exit(2), 500)
+      // 退出前 flush pino transport（异步，直接 exit 会丢最后一条 fatal 日志）；300ms 兜底防卡死
+      let exited = false
+      const exitNow = () => { if (!exited) { exited = true; process.exit(2) } }
+      try { this.log.flush(exitNow) } catch { /* logger stub 可能无 flush */ }
+      setTimeout(exitNow, 300)
       return
     }
 

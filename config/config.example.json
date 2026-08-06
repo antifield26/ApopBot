@@ -76,6 +76,9 @@
     "ollamaModel": "qwen3.5:4b",
     "maxSteps": 5,
     "cooldownMs": 5000,
+    "cloudTimeoutMs": 60000,
+    "ollamaTimeoutMs": 60000,
+    "maxTokens": 1024,
     "_comment": "API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（如 ANTHROPIC_API_KEY），绝不写进配置文件"
   }
 }

@@ -9,8 +9,10 @@
 // 安全：API key 只从环境变量读取（l2.cloudApiKeyEnv），绝不进配置文件、绝不写入日志。
 // 实现依赖 Node 22 全局 fetch，零新增依赖。
 
-const FETCH_TIMEOUT_MS = 20000
-const MAX_TOKENS = 1024
+// 超时/长度可配置（l2.cloudTimeoutMs / ollamaTimeoutMs / maxTokens；默认 60s/1024——
+// 低配机 Ollama 约 10-30 tok/s，20s 超时会误杀长回复）
+const DEFAULT_TIMEOUT_MS = 60000
+const DEFAULT_MAX_TOKENS = 1024
 
 /** 组装 provider 实例（auto = cloud 优先，失败回退 ollama 一次）。 */
 export function createProvider (cfg, logger) {
@@ -34,9 +36,9 @@ export function createProvider (cfg, logger) {
   }
 }
 
-function makeSignal (signal) {
+function makeSignal (signal, timeoutMs = DEFAULT_TIMEOUT_MS) {
   // 外部 abort + 超时兜底（Node 22 支持 AbortSignal.any）
-  const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS)
+  const timeout = AbortSignal.timeout(timeoutMs)
   return signal ? AbortSignal.any([signal, timeout]) : timeout
 }
 
@@ -48,8 +50,11 @@ class CloudProvider {
     // baseUrl 兼容两种写法：完整端点（.../v1/messages）或 base URL（如 DeepSeek 的
     // https://api.deepseek.com/anthropic，实测 404，需自动补全路径）
     this.baseUrl = (l2.cloudBaseUrl ?? 'https://api.anthropic.com/v1/messages').replace(/\/+$/, '')
-    if (!this.baseUrl.endsWith('/v1/messages')) this.baseUrl += '/v1/messages'
+    // 只对不含 /messages 结尾的端点自动补全（避免 https://host/v1 → /v1/v1/messages 双路径）
+    if (!/\/messages$/.test(this.baseUrl)) this.baseUrl += '/v1/messages'
     this.model = l2.model ?? 'claude-sonnet-5'
+    this.timeoutMs = l2.cloudTimeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.maxTokens = l2.maxTokens ?? DEFAULT_MAX_TOKENS
   }
 
   async chat (messages, { tools = [], system = '', signal } = {}) {
@@ -58,7 +63,7 @@ class CloudProvider {
     }
     const body = {
       model: this.model,
-      max_tokens: MAX_TOKENS,
+      max_tokens: this.maxTokens,
       system,
       messages: messages.map(toAnthropicMessage)
     }
@@ -77,7 +82,7 @@ class CloudProvider {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify(body),
-      signal: makeSignal(signal)
+      signal: makeSignal(signal, this.timeoutMs)
     })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
@@ -100,12 +105,15 @@ class OllamaProvider {
     this.log = log
     this.baseUrl = (l2.ollamaUrl ?? 'http://127.0.0.1:11434').replace(/\/$/, '') + '/v1/chat/completions'
     this.model = l2.ollamaModel ?? 'qwen3.5:4b'
+    this.timeoutMs = l2.ollamaTimeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.maxTokens = l2.maxTokens ?? DEFAULT_MAX_TOKENS
   }
 
   async chat (messages, { tools = [], system = '', signal } = {}) {
     const body = {
       model: this.model,
       stream: false,
+      max_tokens: this.maxTokens,
       messages: [
         ...(system ? [{ role: 'system', content: system }] : []),
         ...messages.flatMap(toOpenAIMessages)
@@ -121,7 +129,7 @@ class OllamaProvider {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
-      signal: makeSignal(signal)
+      signal: makeSignal(signal, this.timeoutMs)
     })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
