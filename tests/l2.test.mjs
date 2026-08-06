@@ -283,3 +283,13 @@ test('U2: 会话跨 agent 实例保留（重连/热重载重建后记忆不丢�
   assert.ok(a2.provider.calls[0].messages.some(m => m.content === '记得这个'), '新实例应继承模块级会话')
   a2.agent.reset('mem4')
 })
+
+test('skills: run_task exclusive 排队时返回排队信息（不假成功）', async () => {
+  const ctx = makeCtx({}, { ops: ['op1'] })
+  ctx.tasks.getStatus = () => [{ id: 'g', state: 'created' }]
+  ctx.tasks.isPendingExclusive = () => true
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('op1', 'run_task', { type: 'combat', id: 'g' })
+  assert.equal(r.ok, true)
+  assert.ok(r.result.includes('排队中'), `排队时应如实告知 LLM: ${r.result}`)
+})

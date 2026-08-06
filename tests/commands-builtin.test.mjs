@@ -22,7 +22,7 @@ function makeCtx (overrides = {}) {
     getStatus: () => [{ id: 'm1', state: 'running', counters: { mined: 3 }, waitingReason: null, lastError: null }],
     addTask: (e) => { calls.addTask.push(e) },
     removeTask: async (id) => { calls.removeTask.push(id) },
-    startTask: async (id) => { calls.startTask.push(id) },
+    startTask: async (id) => { calls.startTask.push(id); return true }, // 非 null = 启动成功（async 下 return Promise 会被解包）
     stopTask: async (id) => { calls.stopTask.push(id) },
     pauseTask: async () => {},
     resumeTask: async () => {}
@@ -179,4 +179,36 @@ test('!agent act op → 调用 act 并展示结果', async () => {
   const { ctx, bot } = makeCtx()
   await dispatch(ctx, '!agent act status {}')
   assert.ok(lastMsg(bot).includes('done:status'))
+})
+
+test('!task start 成功 → 已启动反馈', async () => {
+  const { ctx, bot } = makeCtx()
+  await dispatch(ctx, '!task start m1')
+  assert.ok(lastMsg(bot).includes('已启动'))
+})
+
+test('!task start 排队（startTask 返回 null 且任务存在）→ 排队反馈', async () => {
+  const { ctx, bot } = makeCtx({
+    tasks: {
+      getStatus: () => [{ id: 'g1', state: 'created' }],
+      startTask: async () => null,
+      addTask: () => {}, removeTask: async () => {},
+      stopTask: async () => {}, pauseTask: async () => {}, resumeTask: async () => {}
+    }
+  })
+  await dispatch(ctx, '!task start g1')
+  assert.ok(lastMsg(bot).includes('已排队'), '排队应明确反馈而非静默')
+})
+
+test('!task start 任务不存在 → 明确报错', async () => {
+  const { ctx, bot } = makeCtx({
+    tasks: {
+      getStatus: () => [],
+      startTask: async () => null, // 生产语义：任务不存在 → null
+      addTask: () => {}, removeTask: async () => {},
+      stopTask: async () => {}, pauseTask: async () => {}, resumeTask: async () => {}
+    }
+  })
+  await dispatch(ctx, '!task start ghost')
+  assert.ok(lastMsg(bot).includes('任务不存在'), '不存在 id 应明确报错而非静默')
 })

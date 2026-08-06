@@ -62,6 +62,11 @@ export function registerBuiltinCommands (registry, ctx) {
         try {
           c.tasks.addTask({ id: newId, type, options, notifyChat: true })
           await sendChat(c.bot, `§a已创建任务 ${newId} (${type})`, c.cfg.chat?.maxLength)
+          // exclusive 排队静默是"指令无效"的主要来源——创建后即查状态给出反馈
+          const st = c.tasks.getStatus().find(t => t.id === newId)
+          if (st && st.state === 'created' && c.tasks.isPendingExclusive?.(newId)) {
+            await sendChat(c.bot, `§e注意: 任务 ${newId} 已排队（exclusive 任务冲突，等待中）`, c.cfg.chat?.maxLength)
+          }
         } catch (err) {
           await sendChat(c.bot, `§c创建失败: ${err.message}`, c.cfg.chat?.maxLength)
         }
@@ -81,9 +86,13 @@ export function registerBuiltinCommands (registry, ctx) {
       switch (action) {
         case 'start': {
           const p = await c.tasks.startTask(id)
-          // exclusive 互斥排队时 startTask 返回 null 且任务存在——明确反馈而非静默（B5）
-          if (!p && c.tasks.getStatus().some(t => t.id === id)) {
+          // 静默是"指令无效"的主要来源——启动/排队/不存在三种情况都给反馈
+          if (p) {
+            await sendChat(c.bot, `§a任务 ${id} 已启动`, c.cfg.chat?.maxLength)
+          } else if (c.tasks.getStatus().some(t => t.id === id)) {
             await sendChat(c.bot, `§a任务 ${id} 已排队（等待冲突的 exclusive 任务结束）`, c.cfg.chat?.maxLength)
+          } else {
+            await sendChat(c.bot, `§c任务不存在: ${id}（!task list 查看）`, c.cfg.chat?.maxLength)
           }
           break
         }

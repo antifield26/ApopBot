@@ -193,17 +193,37 @@ test('chop run: 背包满（NoChests）→ 等待清空，stop 打断', async ()
 
 // ---- CombatTask ----
 
-test('combat run: 区域内无目标 → 自然完成', async () => {
+test('combat run: 无目标 + stopWhenNoTargets:true → 自然完成', async () => {
   const bot = new EventEmitter()
   Object.assign(bot, {
     pathfinder: { setGoal: () => {}, stop () {} },
     entity: { position: new Vec3(0, 64, 0) },
     health: 20,
-    nearestEntity: () => null
+    nearestEntity: () => null,
+    registry: { entitiesArray: [] }
   })
-  const task = new CombatTask('cb', 'combat', {}, makeCtx(bot))
+  const task = new CombatTask('cb', 'combat', { stopWhenNoTargets: true }, makeCtx(bot))
   await task.start()
   assert.equal(task.state, 'completed')
+})
+
+test('combat run: 默认巡逻——无怪时持续等待不完成（stop 打断）', async () => {
+  const bot = new EventEmitter()
+  Object.assign(bot, {
+    pathfinder: { setGoal: () => {}, stop () {} },
+    entity: { position: new Vec3(0, 64, 0) },
+    health: 20,
+    nearestEntity: () => null,
+    registry: { entitiesArray: [] }
+  })
+  const task = new CombatTask('cb', 'combat', {}, makeCtx(bot))
+  const p = task.start()
+  await new Promise(r => setTimeout(r, 3500)) // 跨过一轮 no-target 等待（3s）
+  assert.equal(task.state, 'running', '无怪时默认应巡逻等待而非完成')
+  assert.equal(task.waitingReason, 'no-target')
+  await task.stop()
+  await p
+  assert.equal(task.state, 'stopped')
 })
 
 test('combat run: 攻击 → entityGone 击杀 → maxTargets 完成', async () => {

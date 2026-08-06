@@ -52,7 +52,8 @@
       "id": "guard-base",
       "type": "combat",
       "enabled": false,
-      "options": { "area": { "x1": -50, "y1": -64, "z1": -50, "x2": 50, "y2": 100, "z2": 50 }, "maxTargets": 5 }
+      "options": { "area": { "x1": -50, "y1": -64, "z1": -50, "x2": 50, "y2": 100, "z2": 50 }, "maxTargets": 5 },
+      "_comment": "combat 默认巡逻：无怪时持续等待（stopWhenNoTargets 默认 false）；一次性清理配 stopWhenNoTargets: true"
     },
     {
       "id": "breed-cows",

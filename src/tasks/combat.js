@@ -20,7 +20,9 @@ export class CombatTask extends BaseTask {
     if (!this.bot.pathfinder) throw new Error('combat 任务需要 pathfinder 插件')
     this._area = o.area ?? null
     this._maxTargets = o.maxTargets ?? 0 // 0 = 不限
-    this._stopWhenNoTargets = o.stopWhenNoTargets !== false
+    // 默认巡逻：无怪时持续等待而非立即"完成"（守卫语义——秒完成会被误认为指令无效）；
+    // 一次性清理可显式配 stopWhenNoTargets: true
+    this._stopWhenNoTargets = o.stopWhenNoTargets === true
     this._aggroRange = o.aggroRange ?? 12
     this._minHealth = o.minHealth ?? 8
     this._eatWhenLowHealth = o.eatWhenLowHealth !== false
@@ -28,6 +30,14 @@ export class CombatTask extends BaseTask {
     this._attackCooldownMs = o.attackCooldownMs ?? 400
     this._checkIntervalMs = (o.checkIntervalSeconds ?? 3) * 1000
     this._weaponName = typeof o.weapon === 'string' ? o.weapon : null // null = 自动找剑
+    // 敌对实体判定防御：entity.type 依赖实体数据表 internalId 映射（协议 775 为 PR pin，
+    // 发包值与表不一致时 type 退化为 'other'）——按 entityType（数据表 id，26.1 下 == internalId）
+    // 二次匹配 hostile 集合，保证"找不到怪"不是数据映射问题
+    this._hostileIds = new Set(
+      (this.bot.registry?.entitiesArray ?? [])
+        .filter(e => e.type === 'hostile')
+        .map(e => e.id)
+    )
     this._currentTarget = null
     this._onEntityGone = (entity) => {
       if (entity === this._currentTarget) {
@@ -106,8 +116,9 @@ export class CombatTask extends BaseTask {
 
   _findTarget () {
     const myPos = this.bot.entity.position
-    return this.bot.nearestEntity((e) => {
-      if (!e || e.type !== 'hostile') return false
+    // 无目标时 debug 记录实体类型分布——线上确认"找不到怪"是环境还是数据映射问题
+    const target = this.bot.nearestEntity((e) => {
+      if (!e || !this._isHostile(e)) return false
       if (e === this.bot.entity) return false
       if (this.bot.entity.position.distanceTo(e.position) > this._aggroRange) return false
       if (this._area) {
@@ -116,6 +127,19 @@ export class CombatTask extends BaseTask {
       }
       return true
     }, { kind: 'Hostile mobs' }) ?? null
+    if (!target) {
+      const list = this.bot.entities?.values ? [...this.bot.entities.values()] : null
+      const nearby = list ? list.slice(0, 12)
+        .map(e => `${e.name ?? '?'}:${e.type ?? '?'}:${e.entityType ?? '?'}`).join(', ') : '(无实体表)'
+      this.log.debug({ nearby }, 'combat 未找到目标（实体类型分布）')
+    }
+    return target
+  }
+
+  /** 敌对判定：type === 'hostile'（数据表映射正常）或 entityType 命中 hostile 集合（防御）。 */
+  _isHostile (e) {
+    if (e.type === 'hostile') return true
+    return this._hostileIds.has(e.entityType)
   }
 
   /** 低血处理：autoEat 进食，失败则远离敌人。 */
@@ -129,7 +153,7 @@ export class CombatTask extends BaseTask {
       } catch { /* 没有食物或正在进食 */ }
     }
     // 撤退：往远离最近敌人方向走 15 格
-    const enemy = this.bot.nearestEntity((e) => e?.type === 'hostile' && e !== this.bot.entity)
+    const enemy = this.bot.nearestEntity((e) => e && this._isHostile(e) && e !== this.bot.entity)
     if (enemy) {
       const away = this.bot.entity.position.minus(enemy.position).normalize().scaled(15).plus(this.bot.entity.position)
       try {

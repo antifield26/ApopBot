@@ -137,6 +137,11 @@ export function createSkillRegistry (ctx) {
     },
     handler: async (c, { type, id, options }) => {
       c.tasks.addTask({ id, type, options: options ?? {}, notifyChat: true })
+      // addTask 不保证立即运行：exclusive 冲突会排队——返回真实状态防 LLM 假成功
+      const st = c.tasks.getStatus().find(t => t.id === id)
+      if (st && st.state === 'created' && c.tasks.isPendingExclusive?.(id)) {
+        return `任务 ${id} (${type}) 已创建但排队中（exclusive 任务冲突，等待自动启动）`
+      }
       return `任务 ${id} (${type}) 已启动`
     }
   })

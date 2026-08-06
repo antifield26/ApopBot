@@ -182,6 +182,11 @@ export class TaskManager {
     return p
   }
 
+  /** 指定任务是否在 exclusive 排队中（命令反馈用）。 */
+  isPendingExclusive (id) {
+    return this._pendingExclusive.some(r => r.entry.id === id)
+  }
+
   /** 冲突任务终态后补启动排队的 exclusive 任务（FIFO，一次放行一个）。 */
   _drainExclusive () {
     while (this._pendingExclusive.length > 0) {
