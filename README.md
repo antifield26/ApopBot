@@ -1,6 +1,6 @@
 # Minecraft Bot（PaperMC 26.1.2 / Windows PC + 树莓派服务端）
 
-Minecraft Bot，以 NSSM Windows 服务运行在低配 Windows PC（i7-4720HQ / 8GB）上，连接运行在树莓派 5 8G 上的 PaperMC 26.1.2 服务端（协议 775）。基于 [mineflayer](https://github.com/PrismarineJS/mineflayer)（PR #3902 分支，26.1.2 支持），整合了 mindcraft / Voyager / baritone 的分析结论（见 [docs/architecture.md](docs/architecture.md)）。
+Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC 26.1.2 服务端（协议 775）。基于 [mineflayer](https://github.com/PrismarineJS/mineflayer)（PR #3902 分支，26.1.2 支持），整合了 mindcraft / Voyager / baritone 的分析结论（见 [docs/architecture.md](docs/architecture.md)）。
 
 ## 功能
 

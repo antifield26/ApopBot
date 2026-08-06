@@ -53,7 +53,9 @@ export class CombatTask extends BaseTask {
   }
 
   async _loop (gen) {
-    while (this._alive(gen) && (this._maxTargets === 0 || this.counters.kills < this._maxTargets)) {
+    // 注意：counters.kills 在首次 entityGone 前是 undefined——用 ?? 0 比较，
+    // 否则 `undefined < maxTargets` 为 false → 配置 maxTargets 的任务第一轮即"完成"（测试安全网实测）
+    while (this._alive(gen) && (this._maxTargets === 0 || (this.counters.kills ?? 0) < this._maxTargets)) {
       await this._waitIfPaused()
 
       // 低血优先处理：进食或撤离。注意 bot.entity.health 在协议 775 下恒 undefined

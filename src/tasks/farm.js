@@ -113,7 +113,9 @@ export class FarmTask extends BaseTask {
   }
 
   _hasSeed () {
-    return this.bot.inventory?.items()?.some(it => it.name in this._seedByCrop) ?? false
+    // 注意：映射表 key 是作物名（wheat），库存物品名是种子名（wheat_seeds）——
+    // 必须查 values。`it.name in map` 永远 false，导致 farm 永不种植（测试安全网实测）
+    return this.bot.inventory?.items()?.some(it => Object.values(this._seedByCrop).includes(it.name)) ?? false
   }
 
   /** 在空耕地上种植（逐块：找种子 → 装备 → placeBlock）。返回成功种植数。 */
@@ -121,7 +123,7 @@ export class FarmTask extends BaseTask {
     let planted = 0
     for (const soil of farmland) {
       if (this._stopRequested || planted >= 8) break
-      const seeds = this.bot.inventory?.items()?.find(it => it.name in this._seedByCrop)
+      const seeds = this.bot.inventory?.items()?.find(it => Object.values(this._seedByCrop).includes(it.name))
       if (!seeds) break
       try {
         await this.bot.equip(seeds, 'hand')

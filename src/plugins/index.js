@@ -11,11 +11,14 @@
  * @param {import('mineflayer').Bot} bot
  * @param {object} cfg  完整配置对象
  * @param {object} logger
+ * @param {{ imports?: object }} [deps] 测试注入：deps.imports[key] 覆写动态 import（默认真实包）
  * @returns {Promise<object>} 已装载插件句柄 { pathfinder, collectBlock, autoEat, armorManager, follow }
  */
-export async function loadMineflayerPlugins (bot, cfg, logger) {
+export async function loadMineflayerPlugins (bot, cfg, logger, deps = {}) {
   const enabled = cfg.mineflayerPlugins ?? {}
   const loaded = {}
+  // 动态 import 覆写点（测试注入 fake 插件；生产默认真实包）
+  const imp = (key, fallback) => deps.imports?.[key] ?? fallback
 
   // 包装器：注入时执行插件本体 + 记录句柄
   const wrap = (plugin, name, getHandle) => {
@@ -28,7 +31,7 @@ export async function loadMineflayerPlugins (bot, cfg, logger) {
 
   // 顺序: pathfinder → tool(collectblock 传递依赖自动装载) → collectBlock → autoEat → armorManager
   if (enabled.pathfinder !== false) {
-    const { pathfinder, Movements } = await import('mineflayer-pathfinder')
+    const { pathfinder, Movements } = await imp('pathfinder', () => import('mineflayer-pathfinder'))()
     wrap(pathfinder, 'pathfinder', (b) => {
       b.pathfinder.setMovements(new Movements(b)) // 2.x 必需，否则寻路不可靠
       return b.pathfinder
@@ -36,22 +39,22 @@ export async function loadMineflayerPlugins (bot, cfg, logger) {
   }
 
   if (enabled.collectBlock !== false) {
-    const { plugin } = await import('mineflayer-collectblock')
+    const { plugin } = await imp('collectblock', () => import('mineflayer-collectblock'))()
     wrap(plugin, 'collectBlock')
   }
 
   if (enabled.autoEat !== false) {
-    const { loader } = await import('mineflayer-auto-eat')
+    const { loader } = await imp('autoeat', () => import('mineflayer-auto-eat'))()
     wrap(loader, 'autoEat')
   }
 
   if (enabled.armorManager !== false) {
-    const mod = await import('mineflayer-armor-manager')
+    const mod = await imp('armor', () => import('mineflayer-armor-manager'))()
     wrap(mod.default, 'armorManager')
   }
 
   if (enabled.follow === true) {
-    const { followPlugin } = await import('./follow.js')
+    const { followPlugin } = await imp('follow', () => import('./follow.js'))()
     wrap(followPlugin, 'follow')
   }
 

@@ -51,7 +51,8 @@ export class BreedTask extends BaseTask {
   }
 
   async _loop (gen) {
-    while (this._alive(gen) && this.counters.breedings < this._maxBreedings) {
+    // 同 combat：breedings 首次 entityGone 前是 undefined，?? 0 保证 maxBreedings 配置有效
+    while (this._alive(gen) && (this.counters.breedings ?? 0) < this._maxBreedings) {
       await this._waitIfPaused()
 
       const animal = this._findAnimal()

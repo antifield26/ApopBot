@@ -24,12 +24,13 @@ export function setupSignals (deps) {
       await withTimeout((async () => {
         await deps.ctx.tasks?.stopAll()
         await deps.ctx.agent?.stop()
-        await deps.conn?.disconnect()
+        await deps.conn?.disconnect?.() // 双可选链：conn 为空对象时 disconnect 是 undefined，直接调用会 TypeError（实测）
         await new Promise((resolve) => { log.flush(resolve) })
       })(), SHUTDOWN_TIMEOUT_MS, 'shutdown timeout')
     } catch (err) {
       log.error({ err: err.message }, 'shutdown error or timeout——强制退出')
       process.exit(1)
+      return // exit 后不得继续走正常退出路径（mock 下可见双 exit）
     }
     process.exit(0)
   }
@@ -45,4 +46,7 @@ export function setupSignals (deps) {
       deps.logger.error({ err: err.message }, 'reload failed')
     }
   })
+
+  // 返回句柄供测试直接调用（process.on 注册无法 await）
+  return { gracefulShutdown }
 }
