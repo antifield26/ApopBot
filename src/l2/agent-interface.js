@@ -8,13 +8,27 @@
 //
 // 错误永不向上抛——以友好回复返回（配合 logger.error 留痕）。
 
+import { isOp } from '../commands/permissions.js'
+
 const SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（minecraft-bot）。
 规则：
 1. 回答保持简短（≤250 字符），用 reply 技能说话。
 2. 涉及移动/创建任务/控制行为的操作必须用对应技能完成，不要编造能力。
-3. 危险操作（move_to/run_task/stop_task/follow_player）只有 op 玩家可用，非 op 请求直接说明权限不足。
+3. 危险操作（move_to/run_task/stop_task/follow_player）只有 op 玩家可用——当前调用者是否是 op 见"当前会话"（技能层会强制校验，无需再向调用者要求验证）。
 4. 状态查询（status/task_status/inventory_summary）可自由使用，回答时引用真实数据。
 5. 不要角色扮演，不要输出 Markdown，不要虚构玩家或世界状态。`
+
+/**
+ * 每次对话注入调用者身份：LLM 必须知道"谁在说话、是否有 op 权限"，
+ * 否则面对危险操作请求只会回复"需要验证 op 身份"（实测反馈——身份此前未进上下文）。
+ * @param {string} user 消息来源玩家
+ */
+function buildSystem (user, cfg) {
+  const auth = isOp(user, cfg)
+    ? `${user} 是 op 白名单成员——危险操作可直接执行，无需再要求验证`
+    : `${user} 是普通玩家——危险操作（move_to/run_task/stop_task/follow_player）必须拒绝并说明权限不足`
+  return `${SYSTEM_PROMPT}\n\n当前会话：${auth}`
+}
 
 export class AgentInterface {
   /**
@@ -60,7 +74,7 @@ export class AgentInterface {
       for (let step = 0; step < maxSteps; step++) {
         const res = await this.provider.chat(messages, {
           tools: this.skills.listForTools(),
-          system: SYSTEM_PROMPT,
+          system: buildSystem(user, this.ctx.cfg),
           signal: ac.signal
         })
         const calls = res.toolCalls?.slice(0, 4) ?? []

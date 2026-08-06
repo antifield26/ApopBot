@@ -201,3 +201,20 @@ test('provider: cloud 缺 API key 报错（自动回退路径可感知）', asyn
   const provider = createProvider({ l2 }, makeLogger())
   await assert.rejects(provider.chat([{ role: 'user', content: 'hi' }]), /API key/)
 })
+
+test('chat: system prompt 注入调用者身份（op 判定——修复"需要验证 op 身份"）', async () => {
+  const ctx = makeCtx({}, { ops: ['steve'] })
+  const { agent, provider } = makeAgent(ctx, [])
+  await agent.chat('steve', 'hi')
+  assert.ok(provider.calls[0].system.includes('steve'), 'system 应包含调用者名')
+  assert.ok(provider.calls[0].system.includes('op 白名单成员'), 'op 玩家应标注可执行危险操作')
+})
+
+test('chat: 非 op 调用者身份注入（标注受限）', async () => {
+  const ctx = makeCtx({}, { ops: ['steve'] })
+  const { agent, provider } = makeAgent(ctx, [])
+  await agent.chat('alex', 'hi')
+  assert.ok(provider.calls[0].system.includes('alex'))
+  assert.ok(provider.calls[0].system.includes('普通玩家'), '非 op 应标注危险操作受限')
+  assert.ok(!provider.calls[0].system.includes('op 白名单成员'))
+})
