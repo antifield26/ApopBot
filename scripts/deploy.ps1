@@ -177,7 +177,10 @@ $cfgPath = Join-Path $root 'config\config.json'
 Set-NssmParam 'AppDirectory' $root
 Set-NssmParam 'AppParameters' "src/index.js --config `"$cfgPath`""
 Set-NssmParam 'Start' 'SERVICE_AUTO_START'
-Set-NssmParam 'AppExit 2' 'Exit'          # fatal exit(2) → 停止服务等人工（镜像旧 systemd StartLimitBurst 语义）
+# AppExit 是"参数名 + 退出码 + 动作"三段式（nssm set <svc> AppExit <code> <action>），
+# 不走单 key/value 的 Set-NssmParam（'AppExit 2' 带空格会被 nssm 当作不存在的参数名）
+& nssm set $serviceName AppExit 2 Exit    # fatal exit(2) → 停止服务等人工（镜像旧 systemd StartLimitBurst 语义）
+if ($LASTEXITCODE -ne 0) { throw "nssm set AppExit 失败 (exit=$LASTEXITCODE)" }
 Set-NssmParam 'AppRestartDelay' '10000'   # 其他崩溃（非 0 退出码）10s 后自动重启
 Set-NssmParam 'AppStopMethodConsole' '10000'  # 默认 1500ms 不够优雅退出（低配机 stop 时任务清理可能超时）
 Set-NssmParam 'AppPriority' 'BELOW_NORMAL_PRIORITY_CLASS'  # 低优先级：同机 Ollama/其他程序优先
