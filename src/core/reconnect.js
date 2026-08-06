@@ -3,7 +3,7 @@
 
 // 分类表：关键词（小写匹配）→ { type, isFatal }
 // fatal = 需人工介入，不应无限重试；非 fatal = 重连值得（临时性原因）
-// 语义：未知/空原因默认非 fatal（24/7 headless bot 应退避扛过维护窗口，而非烧 systemd 重启预算）。
+// 语义：未知/空原因默认非 fatal（24/7 headless bot 应退避扛过维护窗口，而非烧服务管理器重启预算）。
 const CLASSIFIERS = [
   { type: 'name_conflict', fatal: true, keywords: ['name_taken', 'duplicate_login', 'already connected', 'already logged in', 'username is already'] },
   { type: 'access_denied', fatal: true, keywords: ['whitelist', 'not white-listed', 'banned', 'suspended', 'verify'] },
@@ -51,7 +51,7 @@ export function classifyDisconnect (reason, { minecraftVersion } = {}) {
   if (minecraftVersion && (lower.includes('protocol') || lower.includes('unsupported'))) {
     return { type: 'version_mismatch', isFatal: true, detail }
   }
-  // 未知/空原因：非 fatal（退避重连，交给 systemd 的重启预算做最终兜底）
+  // 未知/空原因：非 fatal（退避重连，交给服务管理器的重启语义做最终兜底）
   return { type: 'other', isFatal: false, detail }
 }
 

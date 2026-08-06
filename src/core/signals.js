@@ -1,4 +1,5 @@
-// 进程信号处理：SIGINT/SIGTERM 优雅退出；SIGHUP 热重载（systemd ExecReload）。
+// 进程信号处理：SIGINT/SIGTERM 优雅退出（Windows 下 NSSM stop 发送 Ctrl+C 事件 → Node 映射 SIGINT，走同一路径）。
+// 热重载：无 SIGHUP 的平台（Windows）用配置监视 + !reload；Linux 下 SIGHUP 仍注册（systemd ExecReload）。
 
 /**
  * 注册信号处理。注意 deps 须包含可变 ctx（tasks/agent 在 spawn 后才初始化，须在

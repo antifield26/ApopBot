@@ -4,7 +4,7 @@ import path from 'node:path'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
-// 内置默认值（合并基准，面向 Pi 5 生产：offline、localhost、26.1.2）
+// 内置默认值（合并基准：offline、localhost、26.1.2；生产部署经 config.json 覆盖 host 等）
 const BUILTIN_DEFAULTS = {
   mcVersion: '26.1.2',
   host: 'localhost',
@@ -43,7 +43,7 @@ const BUILTIN_DEFAULTS = {
     cloudBaseUrl: 'https://api.anthropic.com/v1/messages',
     cloudApiKeyEnv: 'ANTHROPIC_API_KEY',
     ollamaUrl: 'http://127.0.0.1:11434',
-    ollamaModel: 'qwen2.5:7b',
+    ollamaModel: 'qwen3.5:4b',
     maxSteps: 5,
     cooldownMs: 5000
   },
@@ -207,7 +207,7 @@ function deepFreeze (obj) {
 
 /**
  * 启动前检查日志目录可写（创建 + 写权限探测）。
- * ProtectSystem=strict 下默认路径只读时，这里给出明确错误而非 pino-roll 静默 EROFS。
+ * 目录只读/不可访问时给出明确错误而非 pino-roll 静默失败（原 ProtectSystem=strict 场景，Windows 同理适用）。
  * @param {object} cfg
  * @throws {Error} 目录不可写时抛出
  */
@@ -217,8 +217,8 @@ export function assertLogDirWritable (cfg) {
     accessSync(cfg.log.dir, FS_CONST.W_OK)
   } catch (err) {
     throw new Error(`日志目录不可写: ${cfg.log.dir}（${err.message}）。` +
-      '请将 log.dir 配置到可写路径（如 /var/lib/minecraft-bot/logs），' +
-      '或放宽 systemd 单元的 ProtectSystem/ReadWritePaths')
+      '请将 log.dir 配置到可写路径（如项目内 ./logs），' +
+      '并确认运行账户对该路径有写权限')
   }
 }
 

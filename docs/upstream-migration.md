@@ -36,7 +36,7 @@ npm run migrate-upstream                # 实际执行：
 #      chunk/physics 版本覆盖与 minecraft-data 精确 pin 保留）
 #   2. npm install
 #   3. npm run check:compat + npm test 自动验证
-# 最后人工在树莓派上: node scripts/smoke.mjs --steps connect,spawn,move
+# 最后在部署机上验证（需服务端在线）: node scripts/smoke.mjs --steps connect,spawn,move
 ```
 
 迁移成功后建议清理 `.npmrc`（`legacy-peer-deps` / `allow-git` 如无其他 git 依赖可删）。

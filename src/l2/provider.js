@@ -99,7 +99,7 @@ class OllamaProvider {
     this.l2 = l2
     this.log = log
     this.baseUrl = (l2.ollamaUrl ?? 'http://127.0.0.1:11434').replace(/\/$/, '') + '/v1/chat/completions'
-    this.model = l2.ollamaModel ?? 'qwen2.5:7b'
+    this.model = l2.ollamaModel ?? 'qwen3.5:4b'
   }
 
   async chat (messages, { tools = [], system = '', signal } = {}) {

@@ -165,7 +165,7 @@ export class ConnectionManager {
 
     if (classified.isFatal) {
       this.log.fatal({ type: classified.type, reason: classified.detail },
-        '致命断线原因，退出等待人工介入（systemd 会按 StartLimitBurst 停止服务）')
+        '致命断线原因，退出等待人工介入（服务管理器已配置为 fatal 退出不自动重启）')
       // 给日志 flush 留时间；后续 end 事件不得再调度重连
       this._fatalExit = true
       setTimeout(() => process.exit(2), 500)

@@ -2,7 +2,7 @@ import pino from 'pino'
 import path from 'node:path'
 
 /**
- * 创建结构化日志：pino 双目标 transport（pino-roll 文件按天轮转 + stdout → journald）。
+ * 创建结构化日志：pino 双目标 transport（pino-roll 文件按天轮转 + stdout）。
  */
 export function createLogger (cfg) {
   const targets = [

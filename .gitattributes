@@ -1,7 +1,8 @@
-# 全库 LF 换行：修复 Windows autocrlf 导致 deploy.sh CRLF 在 Unix bash 上崩溃的问题（O1）
+# 全库 LF 换行：修复 Windows autocrlf 导致脚本在 Unix bash 上崩溃的问题（O1 历史；deploy.sh 已移入 legacy/）
 * text=auto eol=lf
 # 明确文本文件（即使无扩展名或特殊扩展）
 *.sh text eol=lf
+*.ps1 text eol=lf
 *.service text eol=lf
 *.mjs text eol=lf
 *.js text eol=lf

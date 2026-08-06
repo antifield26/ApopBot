@@ -86,7 +86,7 @@ export function registerBuiltinCommands (registry, ctx) {
 
   registry.register({
     name: 'reload',
-    description: '热重载配置与任务（等价于 systemctl reload）',
+    description: '热重载配置与任务（与改配置文件等效）',
     handler: async (c) => {
       // 与 SIGHUP/配置监视走同一条队列（校验 → updateCfg → tasks diff 重载）
       await c.onReload?.()

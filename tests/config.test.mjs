@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { loadConfig, validateConfig } from '../src/core/config.js'
 
-test('内置默认值：面向 Pi 5 生产', () => {
+test('内置默认值：生产基线', () => {
   const cfg = loadConfig({ argv: [], env: {} })
   assert.equal(cfg.mcVersion, '26.1.2')
   assert.equal(cfg.host, 'localhost')

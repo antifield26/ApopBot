@@ -92,7 +92,7 @@ async function main () {
   console.log('\n=== 验证 ===')
   exec('npm run check:compat', 'check:compat 失败——迁移不完整')
   exec('npm test', '单元测试失败')
-  console.log('\n迁移完成。最后在树莓派上验证: node scripts/smoke.mjs --steps connect,spawn,move')
+  console.log('\n迁移完成。最后在部署机上验证（需服务端在线）: node scripts/smoke.mjs --steps connect,spawn,move')
   console.log('注意: .npmrc 的 legacy-peer-deps / allow-git 可保留（无害），或手动清理')
 }
 

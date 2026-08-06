@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "0.2.0",
-  "description": "Production Minecraft bot for PaperMC 26.1.2 on Raspberry Pi 5",
+  "description": "Production Minecraft bot for PaperMC 26.1.2",
   "engines": {
     "node": ">=22"
   },
