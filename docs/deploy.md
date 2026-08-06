@@ -36,14 +36,14 @@ git config --global url."https://github.com/".insteadOf "git+ssh://git@github.co
 
 ```json
 {
-  "host": "192.168.3.93",
+  "host": "mc.antifield.work",
   "username": "mcbot",
   "ops": ["steve", "alex"],
   "l2": { "enabled": true, "provider": "ollama", "ollamaModel": "qwen3.5:4b" }
 }
 ```
 
-- `host` 指向树莓派局域网 IP（`localhost` 仅限开发机连本机服务端）
+- `host` 指向服务端域名 `mc.antifield.work`（DNS 指向 Pi 的当前 IP；Pi 换 IP 只改 DNS，Bot 重连时自动解析新地址，DNS 解析失败归类为 network_error 自动退避重连而非 fatal）。`localhost` 仅限开发机连本机服务端
 - `username: mcbot` 已在服务端白名单；smoke 用 `config/smoke.json` 以 smokebot 身份登录（同样需白名单）
 - L2 默认 `ollama` + `qwen3.5:4b`（已是代码默认值）；云端回退/密钥见 [docs/l2.md](l2.md)
 
@@ -118,18 +118,6 @@ whitelist add smokebot
 - JVM `-Xms2G -Xmx2G`（Pi 5 8G 上限约 3G 堆）；`white-list=true`；`online-mode=false`
 - Pi 侧无需再装 Node（Bot 已不在 Pi 上跑）；迁移前的旧服务如仍在运行，见下节清理
 
-## 移除残留 Bot 部署（一次性，可选）
-
-若树莓派上仍运行着迁移前的 systemd Bot 服务（`minecraft-bot.service`），停用并删除：
-
-```bash
-# Pi 上执行（勿动 minecraft-server —— 服务端仍需运行）
-sudo systemctl disable --now minecraft-bot
-sudo rm -f /etc/systemd/system/minecraft-bot.service
-sudo rm -rf /opt/minecraft-bot /etc/minecraft-bot /var/lib/minecraft-bot /var/log/minecraft-bot
-sudo systemctl daemon-reload
-systemctl list-unit-files | grep minecraft   # 应只剩 minecraft-server
-```
 
 ## 验证清单
 
@@ -138,8 +126,8 @@ systemctl list-unit-files | grep minecraft   # 应只剩 minecraft-server
 npm ci && npm test && npm run check:compat
 # Windows PC（需树莓派服务端在线）：
 node scripts/check-compat.mjs --probe
-node scripts/smoke.mjs --config config/smoke.json --host 192.168.3.93          # 全步骤（mine 默认 SKIP，--dangerous 开启）
-node scripts/smoke.mjs --config config/smoke.json --host 192.168.3.93 --steps connect,spawn,chat   # 快速档
+node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work          # 全步骤（mine 默认 SKIP，--dangerous 开启）
+node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --steps connect,spawn,chat   # 快速档
 ```
 
 ## 故障排查
@@ -149,7 +137,7 @@ node scripts/smoke.mjs --config config/smoke.json --host 192.168.3.93 --steps co
 | 服务启动即停止 | `Get-Content logs\nssm-stderr.log -Tail 50` + `logs\bot.log`。fatal（exit 2：白名单拒绝/名字冲突/版本不匹配）触发 `AppExit 2 Exit` 停止——修复后 `nssm start minecraft-bot` |
 | 服务反复重启 | 启动期错误（exit 1，如配置/日志目录问题）每 10s 重试 → 看 `logs\bot.log` 首段报错 |
 | 启动即退出 "日志目录不可写" | `log.dir` 指向不可写路径；改用默认 `./logs` 或确认运行账户写权限 |
-| 连不上服务端 | `Test-NetConnection 192.168.3.93 -Port 25565`；确认服务端在线、`host` 正确、Windows 防火墙放行出站 25565 |
+| 连不上服务端 | `Test-NetConnection mc.antifield.work -Port 25565`（IP 直测可换 `192.168.3.93`）；确认 DNS 解析正确、服务端在线、`host` 正确、Windows 防火墙放行出站 25565 |
 | `unsupported protocol version` | 本地 `npm run check:compat` 未过；overrides 被意外改动 |
 | Ollama 内存不足/无响应 | 任务管理器看内存；`ollama ps` 确认模型已加载；换小量化档或 `ollama stop` 后重试 |
 | 挖矿任务不动 | `!task list` 看 waitingReason（no-target/inventory-full/collect-retry）；背包满需配置 `chestLocations` 或清空背包 |

@@ -74,8 +74,8 @@ powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Smoke
 npm test && npm run check:compat
 # Windows PC（需树莓派服务端在线；--host 指向服务端 IP）
 node scripts/check-compat.mjs --probe
-node scripts/smoke.mjs --config config/smoke.json --host 192.168.3.93          # 全步骤
-node scripts/smoke.mjs --config config/smoke.json --host 192.168.3.93 --steps connect,spawn,chat   # 快速档
+node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work          # 全步骤
+node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --steps connect,spawn,chat   # 快速档
 ```
 
 ## 文档
@@ -102,7 +102,7 @@ node scripts/smoke.mjs --config config/smoke.json --host 192.168.3.93 --steps co
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `mcVersion` | `26.1.2` | 协议 775；降级为 `1.21.11` 需同步更换依赖（见 upstream-migration.md） |
-| `host` / `port` | `localhost` / `25565` | 生产指向树莓派局域网 IP（如 `192.168.3.93`） |
+| `host` / `port` | `localhost` / `25565` | 生产指向服务端域名 `mc.antifield.work`（防 Pi 局域网 IP 变动） |
 | `username` / `auth` | `mcbot` / `offline` | 生产为 LAN 离线服；Microsoft 认证需 `auth: microsoft` |
 | `ops` | `[]` | 命令白名单（offline 模式无法查 OP；大小写不敏感） |
 | `reconnect` | base 5s, max 300s | 指数退避参数 |

@@ -126,7 +126,7 @@ Write-Host "node $nodeVer @ $nodePath"
 Write-Host '=== [2/5] 配置检查 ==='
 if (-not (Test-Path 'config\config.json')) {
   Copy-Item 'config\config.example.json' 'config\config.json'
-  Write-Warning '已生成 config/config.json（复制自 example）—— 请编辑 host（生产指向树莓派 IP）与 ops/tasks 后再启动'
+  Write-Warning '已生成 config/config.json（复制自 example）—— 请编辑 host（生产指向服务端域名 mc.antifield.work）与 ops/tasks 后再启动'
 } else {
   Write-Host 'config/config.json 已存在（不覆盖）'
 }
@@ -212,7 +212,7 @@ if ($Smoke) {
   Write-Host '=== 冒烟（快速档: connect,spawn,chat）==='
   $cfg = Get-Content 'config\config.json' -Raw | ConvertFrom-Json
   $targetHost = $cfg.host
-  if ($targetHost -eq 'localhost') { Write-Warning 'host 为 localhost——确认服务端跑在本机；生产场景应指向树莓派 IP' }
+  if ($targetHost -eq 'localhost') { Write-Warning 'host 为 localhost——确认服务端跑在本机；生产场景应指向服务端域名（如 mc.antifield.work）' }
   & node scripts\smoke.mjs --config config\smoke.json --host $targetHost --steps connect,spawn,chat
   if ($LASTEXITCODE -ne 0) { Write-Error '冒烟失败（确认服务端在线、smokebot 已加入服务端白名单）'; exit 1 }
 }
