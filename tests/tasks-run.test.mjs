@@ -319,7 +319,7 @@ test('combat run: 默认巡逻——无怪时持续等待不完成（stop 打断
 })
 
 test('combat run: 攻击 → entityGone 击杀 → maxTargets 完成', async () => {
-  const attacks = []
+  const packets = []
   const hostile = { id: 1, type: 'hostile', position: new Vec3(1, 64, 0), height: 1.8 } // 距离 1 < attackRange 3.5
   const bot = new EventEmitter()
   Object.assign(bot, {
@@ -329,16 +329,19 @@ test('combat run: 攻击 → entityGone 击杀 → maxTargets 完成', async () 
     autoEat: {},
     inventory: { items: () => [] },
     equip: async () => {},
-    attack: (t) => attacks.push(t),
     lookAt: () => {},
     entities: { 1: hostile }, // 攻击包防御：实体存在检查（combat 断线排查）
-    nearestEntity: (filter) => (filter(hostile) ? hostile : null)
+    nearestEntity: (filter) => (filter(hostile) ? hostile : null),
+    // 项目层写包（26.1 独立 attack 包——bot.attack 门控 bug 断线，部署机实测）
+    _client: { write: (name, params) => packets.push({ name, ...params }) }
   })
   const task = new CombatTask('cb', 'combat', { maxTargets: 1, attackCooldownMs: 0 }, makeCtx(bot))
   const p = task.start()
   // 第 1 轮：找目标 → 攻击 → 循环尾 500ms 扫描等待（真实 timer）
   await new Promise(r => setTimeout(r, 700))
-  assert.ok(attacks.length >= 1, '接近后应发起攻击')
+  const attackPkts = packets.filter(pk => pk.name === 'attack')
+  assert.ok(attackPkts.length >= 1, '接近后应写独立 attack 包（26.1 正式攻击通道）')
+  assert.equal(attackPkts[0].entityId, 1, 'attack 包应带目标 entityId')
   bot.emit('entityGone', hostile) // 击杀 → kills=1 → 下一轮循环条件退出
   await p
   assert.equal(task.state, 'completed')
@@ -347,7 +350,7 @@ test('combat run: 攻击 → entityGone 击杀 → maxTargets 完成', async () 
 })
 
 test('combat 攻击包防御：目标已从实体表消失 → 不得发 attack（无效 entityId 断线面）', async () => {
-  const attacks = []
+  const packets = []
   const hostile = { id: 1, type: 'hostile', position: new Vec3(1, 64, 0), height: 1.8 }
   const bot = new EventEmitter()
   Object.assign(bot, {
@@ -357,15 +360,15 @@ test('combat 攻击包防御：目标已从实体表消失 → 不得发 attack�
     autoEat: {},
     inventory: { items: () => [] },
     equip: async () => {},
-    attack: (t) => attacks.push(t),
     lookAt: () => {},
     entities: {}, // 目标不在实体表（被杀/走远后 _findTarget 竞态）
-    nearestEntity: (filter) => (filter(hostile) ? hostile : null)
+    nearestEntity: (filter) => (filter(hostile) ? hostile : null),
+    _client: { write: (name, params) => packets.push({ name, ...params }) }
   })
   const task = new CombatTask('cb', 'combat', { maxTargets: 1, attackCooldownMs: 0 }, makeCtx(bot))
   const p = task.start()
   await new Promise(r => setTimeout(r, 700))
-  assert.equal(attacks.length, 0, '目标已消失时不得 attack')
+  assert.equal(packets.filter(pk => pk.name === 'attack').length, 0, '目标已消失时不得发 attack')
   await task.stop()
   await p
 })
@@ -422,9 +425,9 @@ test('breed run: 默认巡逻——无动物时等待不完成（stop 打断）'
   assert.equal(task.state, 'stopped')
 })
 
-test('breed run: 喂食两次（equip + useOn×2）→ fed 计数，stop 打断幼崽等待', async () => {
+test('breed run: 喂食两次（equip + use_entity×2）→ fed 计数，stop 打断幼崽等待', async () => {
   const actions = []
-  const cow = { id: 1, name: 'cow', position: new Vec3(2, 64, 0) } // 距离 2 ≤ 3 → approach 立即
+  const cow = { id: 1, name: 'cow', position: new Vec3(2, 64, 0), height: 1.3 } // 距离 2 ≤ 3 → approach 立即
   const bot = new EventEmitter()
   Object.assign(bot, {
     pathfinder: { setGoal: () => {}, stop () {} },
@@ -432,15 +435,18 @@ test('breed run: 喂食两次（equip + useOn×2）→ fed 计数，stop 打断�
     nearestEntity: (filter) => (filter(cow) ? cow : null),
     inventory: { items: () => [{ name: 'wheat' }] },
     equip: async (it) => { actions.push(['equip', it.name]) },
-    useOn: (a) => { actions.push(['useOn', a.id]) }
+    // 项目层写包（26.1 use_entity 新格式——旧 bot.useOn 序列化错误断线，部署机实测）
+    _client: { write: (name, params) => actions.push(['use_entity', name, params.target]) }
   })
   const task = new BreedTask('br', 'breed', { maxBreedings: 4, useCooldownMs: 0 }, makeCtx(bot))
   const p = task.start()
   // useCooldownMs=0 的间隔是真实 setTimeout(0)——setImmediate 不推进 timer 阶段，须真实等几 ms
   await new Promise(r => setTimeout(r, 30))
-  await settle(3) // approach → feed（equip + useOn×2）→ 进入 5s 幼崽等待
+  await settle(3) // approach → feed（equip + use_entity×2）→ 进入 5s 幼崽等待
   assert.equal(task.counters.fed, 2, '应喂食两次')
-  assert.deepEqual(actions.map(a => a[0]), ['equip', 'useOn', 'useOn'])
+  assert.deepEqual(actions.map(a => a[0]), ['equip', 'use_entity', 'use_entity'])
+  assert.equal(actions.filter(a => a[1] === 'use_entity').length, 2, '应写 use_entity 包（26.1 新格式）')
+  assert.ok(actions.filter(a => a[1] === 'use_entity').every(a => a[2] === 1), 'use_entity 应带目标实体 id')
   assert.equal(task.waitingReason, 'waiting-baby')
   await task.stop() // 打断 5s 等待
   await p

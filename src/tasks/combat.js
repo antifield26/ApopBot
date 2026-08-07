@@ -1,5 +1,6 @@
 import { BaseTask } from './base.js'
 import { createMovement, stopPathfinding, clearGoal } from '../core/movement.js'
+import { attackEntity } from '../core/entity-actions.js'
 
 // 战斗任务：区域内对敌对实体（entity.type === 'hostile'）进行巡逻战斗。
 // 行为边界：区域限定（每轮重查 inArea）、低血自动进食/远离、攻击冷却、
@@ -136,7 +137,9 @@ export class CombatTask extends BaseTask {
         } catch { /* 位置可能失效——仍尝试攻击 */ }
         await this._equipWeapon()
         try {
-          this.bot.attack(target)
+          // 项目层写包：mineflayer 的 bot.attack 在 26.1 门控 bug 下回退损坏的
+          // 旧式 use_entity → 序列化错误断线（部署机实测）——见 entity-actions.js
+          attackEntity(this.bot, target)
           this.incr('attacks')
           await new Promise(r => setTimeout(r, this._attackCooldownMs))
         } catch (err) {

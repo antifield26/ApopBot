@@ -1,5 +1,6 @@
 import { BaseTask } from './base.js'
 import { createMovement, stopPathfinding, clearGoal } from '../core/movement.js'
+import { useEntityOn } from '../core/entity-actions.js'
 
 // 养殖任务：区域内对白名单动物喂食繁殖（useOn 两次触发繁殖，等待幼崽生成）。
 // 行为边界：区域限定、maxBreedings 上限（默认 4，退化安全）、useCooldown 防刷。
@@ -123,7 +124,9 @@ export class BreedTask extends BaseTask {
       for (let i = 0; i < 2; i++) {
         if (this._stopRequested) return false
         try {
-          this.bot.useOn(animal)
+          // 项目层写包：bot.useOn 在 26.1 门控 bug 下回退损坏的旧式 use_entity
+          //（缺 location）→ 序列化错误断线（与 combat 攻击同源）——见 entity-actions.js
+          useEntityOn(this.bot, animal)
           this.incr('fed')
         } catch (err) {
           this.log.warn({ err: err.message }, 'useOn 失败')
