@@ -7,7 +7,8 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 - **分层架构**：L1 精简生产核心（默认）+ L2 LLM 智能体层（可选启用，双 Provider：云端 API + 本地 Ollama）
 - **连接守护**：断线原因分类（LoginGuard 思想）、指数退避重连（5s→300s）、10s 防抖防崩溃循环、spawn 超时兜底；名字冲突/白名单/版本不匹配/消息违规（illegal）算致命，其余退避重连
 - **重连自愈**：每次 spawn 全量重建功能层（任务/命令/LLM 重新绑定新 bot，一次重连后一切照常）
-- **任务系统**：7 种任务——挖矿（区域+背包满暂停）、钓鱼、AFK 防踢、**种植收割、伐木、战斗巡逻、养殖**；cron 调度（run-completion 语义，防重叠+时长上限）、热重载（SIGHUP/改配置/`!reload` 同一队列）
+- **任务系统**：8 种任务——挖矿（区域+背包满暂停）、钓鱼、AFK 防踢、**种植收割、伐木、战斗巡逻、养殖、螺旋探索**（后台游荡 + 资源记录，LLM 可查）；cron 调度（run-completion 语义，防重叠+时长上限）、热重载（SIGHUP/改配置/`!reload` 同一队列）
+- **L2 环境感知与探索**：环境自动注入（每次对话附带坐标/昼夜/天气/维度/朝向）+ 环境快照技能；`explore` 单步探索技能与 `explore` 探索任务（方形螺旋覆盖 + 23 种资源采样）；**探索记忆**（DiscoveryMap 持久化——`query_map` 查已知资源坐标不重扫）；Ollama 上下文窗口与预算裁剪（超窗不再静默截断）
 - **聊天命令**：`!ping` `!status` `!task`（含 `!task new/remove` 临时任务）`!reload` `!say` `!pos` `!follow` `!find`（地表方块定位）`!agent`（chat/doctor/reset 全员可用，act 需 op），op 白名单 + 速率限制 + 256 字符自动分片（见下方指令列表）
 - **生产设施**：pino 结构化日志（按天轮转）、NSSM Windows 服务（自启+崩溃重启+fatal 停止等人工）、PowerShell 一键部署/一键更新（`scripts/deploy.ps1 -Update`）、兼容性门禁、冒烟测试、webhook 运维通知（企业微信/Server酱）、只读 HTTP 状态端点（/health /metrics，含坐标/等待原因）
 
@@ -48,6 +49,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 | `chop` | `area` | 区域伐木（默认匹配 `/_log$|_wood$/`） | 默认巡逻（`stopWhenDone: true` 时无树即完成） |
 | `combat` | — | 区域内敌对实体巡逻（低血进食/远离、击杀计数、`maxTargets` 上限） | 默认巡逻（`stopWhenNoTargets: true` 时无怪即完成）/ 达上限 |
 | `breed` | — | 区域内白名单动物喂养繁殖（`maxBreedings` 上限） | 默认巡逻（`stopWhenNoAnimals: true` 时无动物即完成）/ 达上限 |
+| `explore` | — | 方形螺旋游荡覆盖（每站采样记录 23 种资源与实体到探索记忆，LLM 经 `query_map` 查询）；`maxDistance` 半径上限（16-256）、`area` 可限定 | `stopWhenDone: true` 时环满即完成 / 无则到边界后以当前位置重启（有界漫游）；scheduled 由 durationMinutes 到时停止 |
 
 - 调度：`schedule`（cron 表达式，时区 `scheduleTimezone`）触发后运行到完成，防重叠、`durationMinutes` 时长上限、完成/失败聊天通知（`notifyChat: false` 关闭）
 - 仅 farm/chop 强制 area（mine 可选、combat/breed 可省略=无区域约束；afk/fish 无区域）；farm/chop/combat/breed 为 exclusive（互斥，避免争抢寻路/采集）

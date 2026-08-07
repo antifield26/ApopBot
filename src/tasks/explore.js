@@ -1,6 +1,6 @@
 import { BaseTask } from './base.js'
 import { createMovement, stopPathfinding } from '../core/movement.js'
-import { spiralWaypoints, sampleResources, scanEntities, SPIRAL_STEP } from '../core/explore.js'
+import { spiralWaypoints, sampleResources, scanEntities, SPIRAL_STEP, notifyValuableFound } from '../core/explore.js'
 import * as discovery from '../core/discovery.js'
 
 // 探索任务（L2 进化 C2）：后台持续探索——从中心方形螺旋向外游荡，每站采样记录
@@ -94,6 +94,8 @@ export class ExploreTask extends BaseTask {
       if (found.length) {
         this.incr('discovered', found.length)
         for (const f of found) this.incr(`res:${f.name}`)
+        // D：重要资源 webhook 推送（节流 10 分钟/类型；失败静默）
+        notifyValuableFound(this.ctx.config, this.log, found)
       }
       const ents = scanEntities(this.bot)
       if (ents.counts.hostile > 0) this.log.info({ hostile: ents.hostile }, '站点附近有敌对实体（只记录不接触）')

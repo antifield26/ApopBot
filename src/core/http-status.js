@@ -71,6 +71,7 @@ function healthPayload (s) {
 function metricsPayload (s) {
   const mem = process.memoryUsage()
   const e = s.bot?.entity?.position
+  const disc = s.discoveryStats ?? null
   return {
     process: {
       uptimeSec: Math.round(process.uptime()),
@@ -102,6 +103,12 @@ function metricsPayload (s) {
       sessions: s.sessionCount ?? 0,
       lastLatencyMs: s.lastLlmLatencyMs ?? null, // U5 计量接入
       lastUsageTokens: s.lastLlmUsage ?? null
-    }
+    },
+    // D（L2 进化）：探索记忆统计（anchors/资源记录/覆盖范围）
+    discovery: disc ? {
+      anchors: disc.anchors ?? 0,
+      resources: disc.resources ?? 0,
+      covered: disc.covered ?? '无'
+    } : null
   }
 }

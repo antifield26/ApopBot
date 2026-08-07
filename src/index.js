@@ -191,6 +191,7 @@ const stopWatch = watchConfig()
 const statusServer = createStatusServer(() => ctx.cfg, logger, () => ({
   conn: ctx.conn,
   bot: ctx.bot, // U12：/metrics 坐标/血量/饱食度（运维看"卡在哪"）
+  discoveryStats: discovery.stats(), // D：探索记忆统计
   tasks: ctx.tasks?.getStatus() ?? [],
   sessionCount: ctx.agent?.sessionCount?.() ?? 0,
   lastLlmLatencyMs: ctx.agent?.usage?.latencyMs ?? null,

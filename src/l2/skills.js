@@ -7,7 +7,7 @@ import { validateTaskOptions } from '../core/task-schemas.js'
 import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
 import { environmentSnapshot, nearbyEntities } from './environment.js'
 import * as discovery from '../core/discovery.js'
-import { exploreStep } from '../core/explore.js'
+import { exploreStep, notifyValuableFound } from '../core/explore.js'
 
 export function createSkillRegistry (ctx) {
   const skills = new Map()
@@ -265,6 +265,8 @@ export function createSkillRegistry (ctx) {
       }
       const r = await exploreStep(c.bot, c.logger, { maxDistance, direction })
       if (!r.ok) return `探索失败: ${r.reason}`
+      // D：重要资源 webhook 推送（节流 10 分钟/类型；失败静默）
+      notifyValuableFound(c.cfg, c.logger, r.found)
       const found = r.found.length ? `，发现: ${r.found.map(f => `${f.name}@${f.x},${f.y},${f.z}`).slice(0, 5).join(' ')}` : ''
       const hostile = r.entities.hostile?.length ? `，敌对: ${r.entities.hostile.join(' ')}` : ''
       return `探索完成 ${r.from.x},${r.from.y},${r.from.z} → ${r.to.x},${r.to.y},${r.to.z}${found}${hostile}`

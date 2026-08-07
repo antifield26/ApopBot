@@ -1,6 +1,19 @@
-# 项目路线图（2026-08-06 第二轮 / 2026-08-07 第三轮 / 2026-08-07 第四轮评估）
+# 项目路线图（2026-08-06 第二轮 / 2026-08-07 第三轮 / 2026-08-07 第四轮 / L2 进化）
 
-第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施。本文档记录已完成项、缓做项与明确不做项。
+第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施；L2 进化（环境感知 + 自由探索）2026-08-07 实施。本文档记录已完成项、缓做项与明确不做项。
+
+## L2 进化已完成（2026-08-07，A1-A3 + B1/B2 + C1/C2 + D）
+
+用户需求：让 LLM 获取更多信息、提高环境感知、像玩家一样自由探索。两路 Explore 审计现状 + Plan 逐项验证（biome/Ollama num_ctx/螺旋算法/记忆容量/token 预算均读源码核实）：
+
+- **A1 provider 改 native `/api/chat`**：compat 端点不处理 num_ctx（官方 wont-fix，超窗静默截断）→ native options.num_ctx/num_predict；`l2.ollamaNumCtx`（默认 4096）；contextWindow() 供预算裁剪
+- **A2 上下文预算裁剪**：estimateTokens（CJK×1.0+ASCII×0.25）+ 三级裁剪（历史整轮 → 工具结果动态截短 → 用户消息）——环境注入的前置硬前提
+- **A3 环境感知**：environment/nearby_entities 技能 + 环境自动注入（每次对话 system 尾部环境行，`l2.envInjection`）；数据源 26.1 核实（bot.isRaining 非 bot.weather、blockAt().biome、实体 health 不可读）
+- **B1 空间记忆**：DiscoveryMap（anchors 256 + resources 512 条 chunk 去重）+ state.json memory 键持久化 + 重建回灌
+- **B2 查询技能**：query_map（已知资源坐标，不重扫）/ map_status
+- **C1 explore 技能**：单步游走（8 向/random）+ 采样记录 + 报告；exclusive 运行中拒绝
+- **C2 ExploreTask**：方形螺旋（step 32、第 r 环 8r 站、256 → 288 站），stopWhenDone 环满完成/有界漫游重启，area 裁剪；四件套联动（TASK_TYPES/schema/一致性断言）
+- **D 收尾**：重要资源 webhook 推送（10 分钟/类型节流）、/metrics discovery 统计、文档
 
 ## 第四轮已完成（2026-08-07，commit 93812b8..c1b4cb0）
 

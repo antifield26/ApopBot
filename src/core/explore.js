@@ -6,12 +6,32 @@
 // movement.js:228 的 16-256 通道，那是给用户输入限幅的；此处是内部常量）。
 
 import * as discovery from './discovery.js'
-import { RESOURCE_WHITELIST, nearbyEntities } from '../l2/environment.js'
+import { RESOURCE_WHITELIST, VALUABLE_RESOURCES, nearbyEntities } from '../l2/environment.js'
+import { createNotifier } from './notify.js'
 
 export const SAMPLE_RADIUS = 64 // 采样半径（主控旋钮）
 export const SAMPLE_COUNT = 2 // 每资源最多记录条数
 export const EXPLORE_STEP = 48 // 单步探索默认距离（技能）
 export const SPIRAL_STEP = 32 // 螺旋站点间距（2 个区块）
+// D（L2 进化）：重要资源 webhook 推送节流——1 条/10 分钟/类型（防刷屏）
+const VALUABLE_COOLDOWN_MS = 10 * 60 * 1000
+const lastValuableNotify = new Map()
+
+/**
+ * 重要资源发现推送（D）：钻石/绿宝石/远古残骸 → webhook（notify.webhook 配置时）。
+ * 失败静默（notify.js 内部兜底）；节流按资源类型。调用方：explore 技能与 ExploreTask。
+ */
+export function notifyValuableFound (cfg, logger, found) {
+  if (!found?.length || !cfg?.notify?.webhook) return
+  const notifier = createNotifier(cfg, logger)
+  const now = Date.now()
+  for (const f of found) {
+    if (!VALUABLE_RESOURCES.includes(f.name)) continue
+    if (now - (lastValuableNotify.get(f.name) ?? 0) < VALUABLE_COOLDOWN_MS) continue
+    lastValuableNotify.set(f.name, now)
+    notifier.send('explore', `发现重要资源 ${f.name}`, `坐标 ${f.x},${f.y},${f.z}`)
+  }
+}
 
 /**
  * 采样记录资源（findBlocks 64 半径 × count 2；chunk 去重由 discovery 负责）。
