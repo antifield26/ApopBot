@@ -43,11 +43,17 @@ export function createSkillRegistry (ctx) {
     }
     const v = validateParams(skill.parameters, params)
     if (!v.ok) return { ok: false, result: v.error }
+    // 调用者注入（follow_player 的"跟随我"指代消解用）——ctx 单例共享但 execute
+    // 串行（busy 门 + cooldown），临时注入 + finally 还原，防跨调用污染
+    const prevCaller = ctx._caller
+    ctx._caller = user
     try {
       const result = await skill.handler(ctx, params ?? {})
       return { ok: true, result }
     } catch (err) {
       return { ok: false, result: err.message }
+    } finally {
+      ctx._caller = prevCaller
     }
   }
 
@@ -495,11 +501,12 @@ export function createSkillRegistry (ctx) {
 
   register({
     name: 'follow_player',
-    description: '让 Bot 跟随（或停止跟随，参数 off）指定玩家。',
+    description: '让 Bot 跟随（或停止跟随，参数 off）指定玩家。玩家说"跟随我/跟着我"时 name 填当前会话的玩家名（或省略/用 me）——绝不能填 Bot 自己的名字。',
     parameters: {
       type: 'object',
-      required: ['name'],
-      properties: { name: { type: 'string', description: '玩家名，或 off 停止跟随' } }
+      properties: {
+        name: { type: 'string', description: '玩家名（大小写不敏感），off 停止跟随；"跟随我"时可不填或填 me', example: 'Antifield' }
+      }
     },
     handler: async (c, { name }) => {
       // 插件未启用时不得静默吞掉返回假成功——LLM 会据此继续编造跟随行为（P1-7）。
@@ -515,11 +522,26 @@ export function createSkillRegistry (ctx) {
       if (hasExclusiveActive()) {
         throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法跟随（任务结束后可试）`)
       }
-      const lower = name.toLowerCase()
+      // "跟随我"指代消解（本地测试实测：9B 模型常把"我"误解为 Bot 自己 →
+      // follow_player(name=mcbot-test) → 跟随自己原地打转 = 目标选择错误）。
+      // 空/me/self/我 → 映射 execute 注入的调用者（当前对话玩家）
+      let targetName = name
+      if (!name || ['me', 'self', '我', '自己'].includes(String(name).toLowerCase())) {
+        targetName = c._caller
+        if (!targetName) return '无法确定要跟随谁（对话上下文缺失）'
+      }
+      const lower = targetName.toLowerCase()
       const player = Object.values(c.bot.players ?? {}).find(p => p.username.toLowerCase() === lower)
-      if (!player?.entity) return `找不到玩家 ${name}`
+      if (!player) return `找不到玩家 ${targetName}`
+      // 目标防御：bot.players 含 Bot 自己——跟随自己 = 原地打转（"目标选择错误"根因）
+      if (targetName.toLowerCase() === String(c.bot.username ?? '').toLowerCase()) {
+        return `不能跟随 Bot 自己——请指定其他玩家（如"跟随我"）`
+      }
+      if (!player?.entity || player.entity === c.bot.entity) {
+        return `玩家 ${targetName} 不可跟随（实体未加载或指向 Bot 自己）`
+      }
       c.plugins.follow.setTarget(player.entity)
-      return `开始跟随 ${name}`
+      return `开始跟随 ${targetName}`
     }
   })
 

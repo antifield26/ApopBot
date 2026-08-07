@@ -471,6 +471,46 @@ test('A3 修复: follow_player 在 exclusive 任务运行中被拒（与 !follow
   }
 })
 
+test('修复: follow_player 目标选择——跟随 Bot 自己被拒 + "跟随我"映射调用者', async () => {
+  // 本地测试实测：9B 模型把"跟随我"的"我"误解为 Bot 自己 →
+  // follow_player(name=mcbot-test) → 跟随自己原地打转（目标选择错误）
+  const targets = []
+  const follow = { setTarget: (e) => { targets.push(e) }, stop: () => {} }
+  const bot = {
+    ...makeCtx().bot,
+    username: 'mcbot-test',
+    players: {
+      // bot.players 含 Bot 自己（mineflayer 行为）——技能层必须排除
+      'mcbot-test': { username: 'mcbot-test', entity: { id: 99 } },
+      Antifield: { username: 'Antifield', entity: { id: 1 } }
+    }
+  }
+  const ctx = makeCtx({ bot, plugins: { follow } }, { ops: ['op1', 'Antifield'] }) // Antifield 需 op 才能调 follow_player
+  const { agent } = makeAgent(ctx, [])
+  // ① 显式传 Bot 自己的名字 → 拒绝（此前会 setTarget 自己）
+  const self = await agent.act('op1', 'follow_player', { name: 'mcbot-test' })
+  assert.equal(self.ok, true)
+  assert.ok(self.result.includes('不能跟随 Bot 自己'), self.result)
+  assert.equal(targets.length, 0, '跟随自己必须被拒')
+  // ② "跟随我" → name=me → 映射到调用者 op1 找不到（players 无 op1）→ 明确反馈
+  const meMissing = await agent.act('op1', 'follow_player', { name: 'me' })
+  assert.equal(meMissing.ok, true)
+  assert.ok(meMissing.result.includes('找不到玩家 op1'), meMissing.result)
+  // ③ 调用者是 Antifield（players 有）→ 映射成功
+  const me = await agent.act('Antifield', 'follow_player', { name: 'me' })
+  assert.equal(me.ok, true)
+  assert.ok(me.result.includes('开始跟随 Antifield'), me.result)
+  assert.deepEqual(targets, [{ id: 1 }], '应跟随调用者实体（非 Bot 自己）')
+  // ④ 省略 name（跟随我语义）→ 同样映射调用者
+  const noName = await agent.act('Antifield', 'follow_player', {})
+  assert.equal(noName.ok, true)
+  assert.ok(noName.result.includes('开始跟随 Antifield'), noName.result)
+  // ⑤ 不存在的玩家 → 明确反馈
+  const missing = await agent.act('op1', 'follow_player', { name: 'alex' })
+  assert.equal(missing.ok, true)
+  assert.ok(missing.result.includes('找不到玩家 alex'), missing.result)
+})
+
 test('A3 修复: find_block 到达时附加 exclusive 冲突告警（与 !find 命令同款）', async () => {
   const arb = await import('../src/core/arbiter.js')
   try {
