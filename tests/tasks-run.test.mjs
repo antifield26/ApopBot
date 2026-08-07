@@ -454,6 +454,7 @@ test('breed run: 喂食两次（equip + use_entity×2）→ fed 计数，stop �
     nearestEntity: (filter) => (filter(cow) ? cow : null),
     inventory: { items: () => [{ name: 'wheat' }] },
     equip: async (it) => { actions.push(['equip', it.name]) },
+    entities: { 1: cow }, // A4：存在检查用（目标仍在世界中）
     // 项目层写包（26.1 use_entity 新格式——旧 bot.useOn 序列化错误断线，部署机实测）
     _client: { write: (name, params) => actions.push(['use_entity', name, params.target]) }
   })
@@ -470,6 +471,28 @@ test('breed run: 喂食两次（equip + use_entity×2）→ fed 计数，stop �
   await task.stop() // 打断 5s 等待
   await p
   assert.equal(task.state, 'stopped')
+})
+
+test('A4 修复: 喂食前目标已消失（entities 无该 id）→ 不发无效 use_entity 包（与 combat 攻击前同款检查）', async () => {
+  const actions = []
+  const cow = { id: 1, name: 'cow', position: new Vec3(2, 64, 0), height: 1.3 }
+  const bot = new EventEmitter()
+  Object.assign(bot, {
+    pathfinder: { setGoal: () => {}, stop () {} },
+    entity: { position: new Vec3(0, 64, 0) },
+    nearestEntity: (filter) => (filter(cow) ? cow : null),
+    inventory: { items: () => [{ name: 'wheat' }] },
+    equip: async (it) => { actions.push(['equip', it.name]) },
+    entities: {}, // 目标已从世界移除（approach/equip 期间死亡或被繁殖掉）
+    _client: { write: (name, params) => actions.push(['use_entity', name, params.target]) }
+  })
+  const task = new BreedTask('br', 'breed', { maxBreedings: 4, useCooldownMs: 0 }, makeCtx(bot))
+  const p = task.start()
+  await new Promise(r => setTimeout(r, 30))
+  assert.equal(task.counters.fed ?? 0, 0, '目标消失不得计数喂食')
+  assert.ok(!actions.some(a => a[0] === 'use_entity'), '不得写无效 entityId 的 use_entity 包')
+  await task.stop()
+  await p
 })
 
 test('chop run: 默认巡逻——无树时等待不完成（stop 打断）', async () => {

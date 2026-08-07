@@ -116,6 +116,23 @@ test('!task new 合法 → addTask + 成功消息', async () => {
   assert.ok(lastMsg(bot).includes('已创建任务 gold-mine'))
 })
 
+test('A4 修复：!task new 后任务 init 抛错（failed）→ 如实反馈（不再只报"已创建"误导排障）', async () => {
+  const { ctx, bot, calls } = makeCtx({
+    tasks: {
+      getStatus: () => [{
+        id: 'bad1', type: 'mine', state: 'failed', counters: {},
+        waitingReason: null, lastError: '未知方块类型: nope_ore'
+      }],
+      addTask: (e) => { calls.addTask.push(e) }
+    }
+  })
+  await dispatch(ctx, '!task new mine bad1 {"blockTypes":["nope_ore"]}')
+  assert.equal(calls.addTask.length, 1, '任务应被创建（失败发生在启动阶段）')
+  assert.ok(bot.messages.some(m => m.includes('已创建任务 bad1')), bot.messages.join('|'))
+  assert.ok(bot.messages.some(m => m.includes('启动失败')), `应反馈启动失败: ${bot.messages.join('|')}`)
+  assert.ok(bot.messages.some(m => m.includes('未知方块类型')), bot.messages.join('|'))
+})
+
 test('!task start/stop/remove → 对应 manager 调用', async () => {
   const { ctx, calls } = makeCtx()
   await dispatch(ctx, '!task start m1')

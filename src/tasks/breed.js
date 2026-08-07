@@ -1,6 +1,7 @@
 import { BaseTask } from './base.js'
 import { createMovement, stopPathfinding, clearGoal } from '../core/movement.js'
 import { useEntityOn } from '../core/entity-actions.js'
+import { withTimeout } from '../util/promise-timeout.js'
 
 // 养殖任务：区域内对白名单动物喂食繁殖（useOn 两次触发繁殖，等待幼崽生成）。
 // 行为边界：区域限定、maxBreedings 上限（默认 4，退化安全）、useCooldown 防刷。
@@ -120,9 +121,18 @@ export class BreedTask extends BaseTask {
       return false
     }
     try {
-      await this.bot.equip(food, 'hand')
+      // A4（第四轮）：equip 是事件驱动等待（PR 分支 simple_inventory 等包触发，
+      // 断线后永不 settle）——10s 超时保护（同 combat 低血进食路径）
+      await withTimeout(this.bot.equip(food, 'hand'), 10000, 'equip timeout')
       for (let i = 0; i < 2; i++) {
         if (this._stopRequested) return false
+        // A4（第四轮）：喂食前目标存在检查（与 combat.js:128 攻击前同款）——
+        // approach/equip 期间动物可死亡或被其他玩家繁殖掉，写无效 entityId 的
+        // use_entity 包在部分服务端按协议违规处理（combat 断线排查同类）
+        if (!this.bot.entities?.[animal.id]) {
+          this._currentAnimal = null
+          return false // 外层走 30s no-animal 重扫
+        }
         try {
           // 项目层写包：bot.useOn 在 26.1 门控 bug 下回退损坏的旧式 use_entity
           //（缺 location）→ 序列化错误断线（与 combat 攻击同源）——见 entity-actions.js
@@ -131,7 +141,11 @@ export class BreedTask extends BaseTask {
         } catch (err) {
           this.log.warn({ err: err.message }, 'useOn 失败')
         }
-        if (i === 0) await new Promise(r => setTimeout(r, this._useCooldownMs))
+        if (i === 0) {
+          // A4：裸 setTimeout 换 _internalWait——stop/pause 期间也能提前退出
+          //（原实现只查 _stopRequested，pause 不响应）
+          await this._internalWait(this._useCooldownMs, 'use-cooldown')
+        }
       }
       return true
     } catch (err) {

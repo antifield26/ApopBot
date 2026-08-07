@@ -87,9 +87,15 @@ export function registerBuiltinCommands (registry, ctx) {
         try {
           c.tasks.addTask({ id: newId, type, options, notifyChat: true })
           await sendChat(c.bot, `§a已创建任务 ${newId} (${type})`, c.cfg.chat?.maxLength)
-          // exclusive 排队静默是"指令无效"的主要来源——创建后即查状态给出反馈
+          // 等一个事件循环轮：init 抛错在 fire-and-forget 微任务内置 failed——立即查会误判
+          //（skills.js run_task 同款模式）
+          await new Promise(r => setImmediate(r))
+          // A4：failed 状态如实反馈（此前只查排队——init 抛错（非法 options/缺插件）
+          // 时玩家收到"已创建"但任务已失败，误导排障）
           const st = c.tasks.getStatus().find(t => t.id === newId)
-          if (st && st.state === 'created' && c.tasks.isPendingExclusive?.(newId)) {
+          if (st?.state === 'failed') {
+            await sendChat(c.bot, `§c任务 ${newId} (${type}) 启动失败: ${st.lastError ?? '未知原因'}`, c.cfg.chat?.maxLength)
+          } else if (st && st.state === 'created' && c.tasks.isPendingExclusive?.(newId)) {
             await sendChat(c.bot, `§e注意: 任务 ${newId} 已排队（exclusive 任务冲突，等待中）`, c.cfg.chat?.maxLength)
           }
         } catch (err) {

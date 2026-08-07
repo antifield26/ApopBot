@@ -45,3 +45,8 @@ test('攻击包：target 无 height 时 use_entity location 用默认 1.8 中心
   useEntityOn(bot, { id: 1, position: { x: 0, y: 64, z: 0 } })
   // 未抛错即通过
 })
+
+test('A4: useEntityOn 目标 position 缺失 → 明确报错（不发无效包）', () => {
+  const bot = { _client: { write: () => { throw new Error('不应发包') } } }
+  assert.throws(() => useEntityOn(bot, { id: 1 }), /目标位置不可用/)
+})

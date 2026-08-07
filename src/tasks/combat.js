@@ -1,6 +1,7 @@
 import { BaseTask } from './base.js'
 import { createMovement, stopPathfinding, clearGoal } from '../core/movement.js'
 import { attackEntity } from '../core/entity-actions.js'
+import { withTimeout } from '../util/promise-timeout.js'
 
 // 战斗任务：区域内对敌对实体（entity.type === 'hostile'）进行巡逻战斗。
 // 行为边界：区域限定（每轮重查 inArea）、低血自动进食/远离、攻击冷却、
@@ -185,10 +186,12 @@ export class CombatTask extends BaseTask {
     clearGoal(this.bot)
     if (this._eatWhenLowHealth && this.bot.autoEat?.eat) {
       try {
-        await this.bot.autoEat.eat()
+        // A4（第四轮）：autoEat.eat() 内部是事件驱动等待（equip/use_item 包），
+        // 断线后永不 settle——10s 超时保护（A1 触发面收敛）
+        await withTimeout(this.bot.autoEat.eat(), 10000, 'eat timeout')
         this.log.info('低血，自动进食')
         return
-      } catch { /* 没有食物或正在进食 */ }
+      } catch { /* 没有食物/超时/正在进食——走撤退分支 */ }
     }
     // 撤退：往远离最近敌人方向走 15 格（移动层 gotoPoint——到达即返回，
     // 优于原 fire-and-forget + 固定 10s 睡眠）
@@ -214,7 +217,8 @@ export class CombatTask extends BaseTask {
       const item = this._weaponName
         ? this.bot.inventory.items().find(it => it.name === this._weaponName)
         : this.bot.inventory.items().find(it => /sword$/.test(it.name))
-      if (item) await this.bot.equip(item, 'hand')
+      // A4（第四轮）：equip 事件驱动等待断线保护（同 autoEat 路径）
+      if (item) await withTimeout(this.bot.equip(item, 'hand'), 10000, 'equip timeout')
     } catch (err) {
       this.log.warn({ err: err.message }, '武器装备失败（空手继续）')
     }

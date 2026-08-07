@@ -26,6 +26,9 @@ export function attackEntity (bot, target) {
  * @param {{ id: number, position: { x, y, z }, height?: number }} target
  */
 export function useEntityOn (bot, target) {
+  // A4（第四轮）：pos 缺失明确报错（调用方 catch 重扫）而非 TypeError 吞成
+  // 无效包——目标引用残留但位置不可用时直接放弃本次喂食
+  if (!target?.position) throw new Error('useEntityOn: 目标位置不可用')
   const pos = target.position
   bot._client.write('use_entity', {
     target: target.id,
