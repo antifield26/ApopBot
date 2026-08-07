@@ -59,7 +59,10 @@ export function followPlugin (bot) {
   /** 移动方向前方 1 格（Bot 脚部同层）是实心障碍 → 需要跳跃（台阶/墙/坡）。
    * 注意用 sign 偏移：dx/dz 是方向余弦（<1），直接 offset 后 floor 会落在脚下格。 */
   function shouldJump (p, dx, dz) {
-    const ahead = bot.blockAt(p.offset(Math.sign(dx), 0, Math.sign(dz)))
+    // A5（第四轮）：blockAt 包 try——tick 是 setInterval 回调，抛错 =
+    // uncaughtException → fatalExit 停服；位置异常时按"无障碍"处理（防跳崖即可）
+    let ahead = null
+    try { ahead = bot.blockAt(p.offset(Math.sign(dx), 0, Math.sign(dz))) } catch { ahead = null }
     if (!ahead || ahead.boundingBox === 'empty') return false
     return ahead.name !== 'water' && ahead.name !== 'lava'
   }
@@ -80,6 +83,13 @@ export function followPlugin (bot) {
     if (!target?.position || !bot.entity?.position) { stopMoving(); return }
     const p = bot.entity.position
     const tp = target.position
+    // A5（第四轮）：NaN 坐标防御——异常位置继续运算（distanceTo/offset 直进
+    // blockAt）会抛错，setInterval 回调内抛错 = uncaughtException → exit(2) 停服
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z) ||
+        !Number.isFinite(tp.x) || !Number.isFinite(tp.y) || !Number.isFinite(tp.z)) {
+      stopMoving()
+      return
+    }
     const dist = p.distanceTo(tp)
     const yDiff = tp.y - p.y
 
@@ -112,7 +122,8 @@ export function followPlugin (bot) {
       updateJump(p, dx, dz)
       // 前方 2 格是虚空/未加载（直走会掉落）→ 切寻路（无条件，跳跃中也防跳崖）；
       // 同 sign 偏移：余弦偏移 floor 会落在脚下格
-      const ahead = bot.blockAt(p.offset(Math.sign(dx) * 2, -1, Math.sign(dz) * 2))
+      let ahead = null
+      try { ahead = bot.blockAt(p.offset(Math.sign(dx) * 2, -1, Math.sign(dz) * 2)) } catch { ahead = null }
       // 卡住检测：爬升中看 y 位移（贴墙跳时水平位移小会被误判卡住）；否则看水平位移
       const movedY = jumpHeld && lastPos ? Math.abs(p.y - lastPos.y) > 0.15 : false
       const moved = !jumpHeld && lastPos && p.distanceTo(lastPos) > 0.2

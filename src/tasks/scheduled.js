@@ -19,7 +19,15 @@ export function createTaskSchedule (taskEntry, { onTrigger }, logger, timezone =
   try {
     return new Cron(taskEntry.schedule, { timezone }, async () => {
       logger.info({ task: taskEntry.id, schedule: taskEntry.schedule }, 'cron fired')
-      await onTrigger()
+      try {
+        await onTrigger()
+      } catch (err) {
+        // A5（第四轮）：croner 9.1.0 的 catch 选项默认 false——async onTrigger 抛错
+        // 即 unhandledRejection → fatalExit exit(2) 停服。当前不变量（runScheduled
+        // 永不 reject）依赖"每次改动都不经 catch 的 await"，任一回归即整机停服——
+        // 此处显式承错作为纵深防线（log + 不抛），防的是不变量被破坏的回归面
+        logger.error({ task: taskEntry.id, err: err.message }, 'scheduled 触发异常（已承接，防止漂浮 rejection 停服）')
+      }
     })
   } catch (err) {
     logger.error({ task: taskEntry.id, schedule: taskEntry.schedule, err: err.message }, 'invalid cron expression')

@@ -208,7 +208,11 @@ export class BaseTask {
     this.waitingReason = null
     this._runPromise = null
     this._pauseWaiters = []
-    this._internalWaits.clear() // C4：残留 token 一并清（防旧代等待占用槽位）
+    // C4：残留 token 一并清（防旧代等待占用槽位）；A5：必须 clearTimeout 各 token
+    // 的 timer——只 clear Set 会让孤儿定时器存活到原等待时长（no-target 最长 5 分钟），
+    // 维持事件循环引用并事后空转 resolve；_wakeInternalWait 本就 clearTimeout+resolve
+    //（resolve 后旧代协程由代际守卫退出，无害）
+    this._wakeInternalWait()
   }
 
   /**

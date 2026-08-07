@@ -441,6 +441,37 @@ test('A1 修复：同 id 重启后旧代 run 晚 settle 不误清新一代登记
   await manager.stopAll()
 })
 
+test('A5 修复: stopTask 清理 _pendingExclusive（!task stop 排队中任务不再误报排队）', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  await manager.load({
+    tasks: [
+      { id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } },
+      { id: 'g2', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }
+    ]
+  })
+  await settle(5)
+  assert.equal(manager._pendingExclusive.length, 1, 'g2 应已排队')
+  await manager.stopTask('g2') // 停止排队中的任务（此前 rec 残留 → list 误报排队中）
+  assert.equal(manager._pendingExclusive.length, 0, 'stopTask 应清理排队队列（removeTask/reload 有，stopTask 此前漏了）')
+  assert.equal(manager.getStatus().find(t => t.id === 'g2').queuePosition, null)
+  await manager.stopAll()
+})
+
+test('A5 修复: cron onTrigger 抛错被承接（croner catch 默认 false——防 unhandledRejection 停服）', async () => {
+  const { createTaskSchedule } = await import('../src/tasks/scheduled.js')
+  const errors = []
+  const logger = { info () {}, error: (o) => { errors.push(o) } }
+  const cron = createTaskSchedule(
+    { id: 's1', schedule: '* * * * * *' },
+    { onTrigger: async () => { throw new Error('boom') } },
+    logger, 'UTC')
+  assert.ok(cron, '每秒触发一次')
+  await new Promise(r => setTimeout(r, 1100)) // 等一次触发窗口
+  assert.ok(errors.some(e => e.err === 'boom'), '抛错应被显式承接（不漂浮为 unhandledRejection）')
+  cron.stop()
+})
+
 test('C8/S 修复：exclusive 任务运行期间仲裁器登记，终态清除', async () => {
   const arb = await import('../src/core/arbiter.js')
   const bot = makeCombatBot()

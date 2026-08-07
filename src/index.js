@@ -73,7 +73,10 @@ const conn = new ConnectionManager(cfg, logger, {
     // 断线期（最长退避 5 分钟）任务/agent 不得继续在死 bot 上空转失败重试——
     // 拆除功能层（teardown 幂等 + 与 rebuild 串行）；重连成功后 onSpawn → rebuild 重建
     if (state !== 'connected') {
-      layer.queue(() => layer.teardown())
+      // A5（第四轮）：queue 有意原样返回 run 的 rejection（C3/L 修复）——此处
+      // 不接 catch 则 teardown 抛错 = unhandledRejection → fatalExit 停服
+      //（对比其他 queue 调用方均接了 catch；teardown 内部虽全防御，纵深防线）
+      layer.queue(() => layer.teardown()).catch(err => logger.warn({ err: err.message }, 'teardown 失败'))
     }
   }
 })

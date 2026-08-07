@@ -24,6 +24,16 @@ const TOOL_RESULT_MAX_CHARS = 2000 // 工具结果回填截断（大 JSON 撑爆
 const MAX_HISTORY_MESSAGES = 10
 const MAX_SESSIONS = 32
 const SESSIONS = new Map()
+// A5（第四轮）：summarize 全局冷却——模块级（agent 随重连/热重载重建，实例级会复位）。
+// 覆盖死亡播报（feature-layer）与任务终态播报（manager）全部组合：低配 PC + Ollama
+// 单请求队列下并发两条 LLM 请求会让 10s 超时静默触发或拖慢主对话（第四轮验证确认）
+const SUMMARY_COOLDOWN_MS = 60000
+let lastSummarizeAt = 0
+
+/** 测试钩子：重置 summarize 全局冷却（生产不调用；tests 需要独立验证冷却语义）。 */
+export function _resetSummarizeCooldown () {
+  lastSummarizeAt = 0
+}
 
 /** 读取会话并刷新 LRU 序（delete+set 移到迭代末尾）。 */
 function getSession (user) {
@@ -192,6 +202,10 @@ export class AgentInterface {
    */
   async summarize (prompt) {
     if (!this.provider?.chat) return null
+    // A5：全局冷却（60s）——死亡与任务终态并发时只发一条 LLM 请求
+    const now = Date.now()
+    if (now - lastSummarizeAt < SUMMARY_COOLDOWN_MS) return null
+    lastSummarizeAt = now
     try {
       const res = await this.provider.chat(
         [{ role: 'user', content: String(prompt).slice(0, 500) }],

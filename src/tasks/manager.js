@@ -141,6 +141,9 @@ export class TaskManager {
         try {
           const rec = this._createEntry(entry)
           this.tasks.set(id, rec) // 同 load：先入表再启动（exclusive 互斥判定依赖登记）
+          // A5（第四轮）：reload 变更后计数器回灌（doRebuild 同款——此前重建/重载
+          // 后 config 任务计数归零且快照覆写旧值，F5）
+          this.restoreCounters(id, this._stateStore?.counters?.[id])
           if (entry.schedule) {
             this._createSchedule(rec)
           } else if (entry.enabled !== false) {
@@ -365,6 +368,10 @@ export class TaskManager {
     this.log.info({ task: id }, 'stopping task')
     await rec.task.stop()
     this._releaseArbiter(rec) // A1：run 挂死（stop 超时）也不得泄漏 owner
+    // A5（第四轮）：!task stop 排队中的 exclusive 任务（created 状态）——rec 留在
+    // _pendingExclusive 会让 !task list 误报"排队中"、getStatus.queuePosition 误报
+    // 位置（removeTask/reload 有此清理，stopTask 此前漏了，F4）
+    this._pendingExclusive = this._pendingExclusive.filter(r => r !== rec)
     return true
   }
 

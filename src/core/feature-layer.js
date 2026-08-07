@@ -52,6 +52,13 @@ export function createFeatureLayerManager (ctx, logger) {
     ctx.tasks = new TaskManager(ctx.cfg, log(), { bot }, ctx.stateStore, () => ctx.agent)
     await ctx.tasks.load(ctx.cfg) // load 内部按条目容错，不抛
 
+    // A5（第四轮）：config 任务计数器回灌——_snapshotCounters 全量写（含 config 任务），
+    // 但 restoreCounters 此前只在下方 ad-hoc 恢复循环调用 → 重建后 config 任务计数归零，
+    // 且下一次快照即覆写 state.json 旧值（写了不读 = 数据丢失，F5）
+    for (const e of ctx.cfg.tasks ?? []) {
+      ctx.tasks.restoreCounters(e.id, ctx.stateStore?.counters?.[e.id])
+    }
+
     // U1 恢复：快照中的 ad-hoc 任务（配置里已存在的以配置文件为准，不重复添加）
     const configIds = new Set((ctx.cfg.tasks ?? []).map(e => e.id))
     for (const entry of ctx.stateStore?.tasks ?? []) {

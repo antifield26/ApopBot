@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Vec3 } from 'vec3'
-import { AgentInterface } from '../src/l2/agent-interface.js'
+import { AgentInterface, _resetSummarizeCooldown } from '../src/l2/agent-interface.js'
 import { createSkillRegistry } from '../src/l2/skills.js'
 import { createL2 } from '../src/l2/index.js'
 import { loadConfig } from '../src/core/config.js'
@@ -338,6 +338,19 @@ test('U6: summarize 单次 LLM 调用，不污染会话', async () => {
   await agent.chat('memx', 'hi')
   assert.equal(provider.calls[1].messages.length, 1, 'summarize 不应写入会话')
   agent.reset('memx')
+})
+
+test('A5 修复: summarize 全局冷却——60s 内连续调用只发一次 LLM 请求（死亡+任务终态并发防 Ollama 排队）', async () => {
+  _resetSummarizeCooldown() // 测试隔离：模块级冷却跨用例共享
+  const ctx = makeCtx()
+  let calls = 0
+  const p = { chat: async () => { calls++; return { text: '一句话' } } }
+  const skills = createSkillRegistry(ctx)
+  const agent = new AgentInterface(ctx, { provider: p, skills, config: l2cfg })
+  assert.equal(await agent.summarize('a'), '一句话', '首次调用应发出')
+  assert.equal(calls, 1)
+  assert.equal(await agent.summarize('b'), null, '冷却期内应静默跳过（返回 null 让调用方用固定模板）')
+  assert.equal(calls, 1, '冷却期内不得再发请求')
 })
 
 test('U6: summarize 失败 → null（调用方回退固定模板，不抛错）', async () => {

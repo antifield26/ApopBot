@@ -158,6 +158,23 @@ test('C6/N 修复：重建时回灌快照计数器（U1 承诺兑现——此前
   await layer.teardown()
 })
 
+test('A5 修复: 重建后 config 任务计数器回灌（快照全量写但此前只喂 ad-hoc——F5）', async () => {
+  const ctx = makeCtx()
+  ctx.stateStore = {
+    tasks: [],
+    counters: { 'cfg-1': { mined: 11 } }
+  }
+  // config 任务（非 ad-hoc）带快照计数（cfg 为冻结对象——整体替换）
+  ctx.cfg = { ...ctx.cfg, tasks: [{ id: 'cfg-1', type: 'mine', options: { blockTypes: ['iron_ore'] } }] }
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  const st = ctx.tasks.getStatus().find(t => t.id === 'cfg-1')
+  assert.ok(st, 'config 任务应装载')
+  assert.equal(st.counters.mined, 11, 'config 任务计数器应回灌（此前重建归零且快照覆写旧值）')
+  await layer.teardown()
+})
+
 test('C2 修复：死亡 → 暂停全部任务 + 停止跟随 + 自动重生', async () => {
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)

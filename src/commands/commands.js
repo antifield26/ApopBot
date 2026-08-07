@@ -315,6 +315,11 @@ export function registerBuiltinCommands (registry, ctx) {
       if (!c.agent) { await sendChat(c.bot, '§cL2 未启用（配置 l2.enabled=true 后重启）', c.cfg.chat?.maxLength); return }
       const [action, ...rest] = args
       if (action === 'chat') {
+        // A5（第四轮）：空文本进 LLM 消耗一轮生成与调用者冷却——入口拦截
+        if (!rest.join(' ').trim()) {
+          await sendChat(c.bot, '§c用法: !agent chat <text>（消息不能为空）', c.cfg.chat?.maxLength)
+          return
+        }
         const { reply } = await c.agent.chat(sender, rest.join(' '))
         await sendChat(c.bot, reply, c.cfg.chat?.maxLength)
       } else if (action === 'reset') {
