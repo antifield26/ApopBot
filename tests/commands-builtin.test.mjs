@@ -140,6 +140,19 @@ test('!follow 未启用插件 → 明确报错', async () => {
   assert.ok(lastMsg(bot).includes('未启用 follow 插件'))
 })
 
+test('C8/S 修复：!follow 在 exclusive 任务运行时拒绝（移动互斥，不再双控制器冲突）', async () => {
+  const arb = await import('../src/core/arbiter.js')
+  arb.setExclusiveOwner('guard-base')
+  try {
+    const { ctx, bot } = makeCtx({ plugins: { follow: { stop: () => {}, setTarget: () => {} } } })
+    await dispatch(ctx, '!follow steve')
+    assert.ok(lastMsg(bot).includes('无法跟随'), lastMsg(bot))
+    assert.ok(lastMsg(bot).includes('guard-base'), '应提示冲突任务 id')
+  } finally {
+    arb.setExclusiveOwner(null)
+  }
+})
+
 test('!follow off → 停止跟随', async () => {
   let stopped = false
   const { ctx, bot } = makeCtx({

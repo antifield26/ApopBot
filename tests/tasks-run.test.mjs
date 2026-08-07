@@ -103,6 +103,47 @@ test('C4/J 修复：pause 打断 collect 批次（批间检查，不再等整批
   assert.equal(task.state, 'stopped')
 })
 
+test('C8/R 修复：farm 区域超出扫描半径 → 告警而非静默 idle（anchor 改区域中心）', async () => {
+  const warns = []
+  const bot = {
+    entity: { position: new Vec3(0, 64, 0) },
+    registry: { blocksByName: { wheat: { id: 1 } } },
+    findBlocks: () => [],
+    blockAt: () => null
+  }
+  const logger = { child: () => logger, info () {}, warn: (o, m) => warns.push(m), error () {}, debug () {} }
+  const task = new FarmTask('f', 'farm', {
+    area: { x1: 1000, y1: 64, z1: 1000, x2: 1010, y2: 64, z2: 1010 }, cropTypes: ['wheat']
+  }, { bot, logger, config: {} })
+  const p = task.start()
+  await new Promise(r => setTimeout(r, 50))
+  assert.ok(warns.some(w => w.includes('超出扫描半径')), `应有距离告警: ${warns}`)
+  await task.stop()
+  await p
+})
+
+test('C8/R 修复：mine 区域超出扫描半径 → 告警（同 farm 同款）', async () => {
+  const warns = []
+  const bot = {
+    entity: { position: new Vec3(0, 64, 0) },
+    registry: { blocksByName: { iron_ore: { id: 44 } } },
+    findBlocks: () => [],
+    blockAt: () => null,
+    collectBlock: { collect: async () => {}, cancelTask () {} },
+    pathfinder: { stop () {} }
+  }
+  const logger = { child: () => logger, info () {}, warn: (o, m) => warns.push(m), error () {}, debug () {} }
+  const task = new MineTask('m', 'mine', {
+    blockTypes: ['iron_ore'],
+    area: { x1: 1000, y1: 64, z1: 1000, x2: 1010, y2: 64, z2: 1010 }
+  }, { bot, logger, config: {} })
+  const p = task.start()
+  await new Promise(r => setTimeout(r, 50))
+  assert.ok(warns.some(w => w.includes('超出扫描半径')), `应有距离告警: ${warns}`)
+  await task.stop()
+  await p
+})
+
 // ---- FishTask ----
 
 test('fish run: 背包满停止（不再抛竿）', async () => {

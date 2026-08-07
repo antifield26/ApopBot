@@ -316,6 +316,19 @@ test('C6/N 修复：removeTask 清理快照计数器 + restoreCounters 回灌', 
   await mgr.stopAll()
 })
 
+test('C8/S 修复：exclusive 任务运行期间仲裁器登记，终态清除', async () => {
+  const arb = await import('../src/core/arbiter.js')
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  await manager.load({
+    tasks: [{ id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }]
+  })
+  await settle(5)
+  assert.equal(arb.getExclusiveOwner(), 'g1', '运行中的 exclusive 任务应登记移动仲裁器')
+  await manager.stopAll()
+  assert.equal(arb.getExclusiveOwner(), null, '终态应清除登记')
+})
+
 test('addTask/removeTask 运行时增删', async () => {
   const mgr = makeManager()
   mgr.addTask({ id: 'ad1', type: 'afk', options: { intervalMinutes: 1 } })

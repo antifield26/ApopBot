@@ -8,6 +8,7 @@ import { BreedTask } from './breed.js'
 import { createTaskSchedule } from './scheduled.js'
 import { withTimeout } from '../util/promise-timeout.js'
 import { sendChat } from '../core/chat.js'
+import { setExclusiveOwner, getExclusiveOwner } from '../core/arbiter.js'
 
 /** 递归按键名排序（热重载 diff 不因用户重排键序而误判变更）。 */
 function sortKeys (v) {
@@ -179,6 +180,8 @@ export class TaskManager {
     }
 
     this.log.info({ task: id, type: rec.entry.type }, 'starting task')
+    // C8/S：exclusive 任务启动时登记移动仲裁器（!follow 据此拒绝冲突跟随）
+    if (rec.task.exclusive) setExclusiveOwner(rec.entry.id)
     const p = rec.task.start()
     // 排队时保存的时长上限：drain 启动后补挂（与 runScheduled 直启路径同款到期语义）
     const pendingMinutes = rec.pendingMaxMinutes
@@ -191,9 +194,13 @@ export class TaskManager {
     }
     // 任务终态（完成/失败/停止）时快照计数器（U1：遥测跨重启保留）；
     // 常驻任务完成/失败发聊天通知（scheduled 由 runScheduled 通知，跳过）
+    const releaseArbiter = () => {
+      // C8/S：终态清除仲裁器登记（仅当 owner 是自己——避免误清新一代任务）
+      if (rec.task.exclusive && getExclusiveOwner() === rec.entry.id) setExclusiveOwner(null)
+    }
     Promise.resolve(p).then(
-      () => { this._drainExclusive(); this._snapshotCounters(); this._notifyCompletion(rec) },
-      () => { this._drainExclusive(); this._snapshotCounters(); this._notifyCompletion(rec) }
+      () => { releaseArbiter(); this._drainExclusive(); this._snapshotCounters(); this._notifyCompletion(rec) },
+      () => { releaseArbiter(); this._drainExclusive(); this._snapshotCounters(); this._notifyCompletion(rec) }
     )
     return p
   }

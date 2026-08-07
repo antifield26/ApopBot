@@ -53,6 +53,15 @@ export class ChopTask extends BaseTask {
         count: this._batchMax
       })
       if (area) {
+        // C8/R 同款：bot 距区域中心超过扫描半径时区域必然扫不到——告警而非静默 no-target
+        if (this.bot.entity?.position) {
+          const d = Math.hypot(
+            this.bot.entity.position.x - (area.x1 + area.x2) / 2,
+            this.bot.entity.position.z - (area.z1 + area.z2) / 2)
+          if (d > this._radius) {
+            this.log.warn({ dist: Math.round(d), radius: this._radius }, 'bot 距区域中心超出扫描半径——请靠近区域或调整 radius')
+          }
+        }
         targets = targets.filter(({ x, y, z }) =>
           x >= area.x1 && x <= area.x2 && y >= area.y1 && y <= area.y2 && z >= area.z1 && z <= area.z2)
         targets = targets.slice(0, this._batchMax)

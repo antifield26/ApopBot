@@ -106,14 +106,25 @@ export class FarmTask extends BaseTask {
   _scanArea (area) {
     // 逐格 blockAt（20×20×4 ≈ 1600 次/cycle）在低配机是纯 CPU 空转——
     // 改 findBlocks（客户端区块内扫描）后按区域过滤，与 mine/chop 同模式（B4）
-    const anchor = this.bot.entity?.position ?? new Vec3(
+    // C8/R 修复：anchor 固定用区域中心——此前用 bot 当前位置，bot 离区域远时
+    // maxDistance=对角线+16 覆盖不到区域 → 永久 idle 空转且无任何提示
+    const anchor = new Vec3(
       (area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2, (area.z1 + area.z2) / 2)
     const diag = Math.hypot(area.x2 - area.x1, area.y2 - area.y1, area.z2 - area.z1)
+    const maxDistance = Math.ceil(diag) + 16
+    // 远距离告警（R）：bot 距区域中心超过扫描半径时扫描必空——明示而非静默 idle
+    const botPos = this.bot.entity?.position
+    if (botPos) {
+      const d = Math.hypot(botPos.x - anchor.x, botPos.z - anchor.z)
+      if (d > maxDistance) {
+        this.log.warn({ dist: Math.round(d), maxDistance }, 'bot 距区域中心超出扫描半径——请靠近区域或调整 area')
+      }
+    }
     let found
     try {
       found = this.bot.findBlocks({
         matching: (b) => b.type !== 0,
-        maxDistance: Math.ceil(diag) + 16, // 区域对角线 + 缓冲（锚点未必在区域中心）
+        maxDistance, // 区域对角线 + 16 缓冲（以区域中心为锚）
         count: 10000
       })
     } catch { return [] } // 区块未加载/API 缺失

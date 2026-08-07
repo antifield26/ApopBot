@@ -196,7 +196,9 @@ export function createSkillRegistry (ctx) {
         (b.x - c.bot.entity.position.x) ** 2 + (b.z - c.bot.entity.position.z) ** 2 ? a : b)
       const r = await createMovement(c.bot, c.logger).gotoNearest(result.candidates, 3, { timeoutMs: 120000 })
       if (r.ok) {
-        return `已到达 ${blockName}: ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}`
+        // C8/W 修复：汇报实际到达点（GoalCompositeAny 可达最近 ≠ 欧氏最近）
+        const p = c.bot.entity.position
+        return `已到达 ${blockName}: ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`
       }
       return `找到 ${blockName} 但${REASON_TEXT[r.reason] ?? '移动失败'}：最近候选 ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}`
     }

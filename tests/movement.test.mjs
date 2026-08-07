@@ -129,6 +129,15 @@ test('goto: A* Timeout 自动重试一次（第二次成功）', async () => {
   assert.equal(calls, 2)
 })
 
+test('C8/X 修复：gotoNearest 空数组 → no-path（不等 A* 跑满超时重试）', async () => {
+  const bot = makePathBot(() => Promise.resolve())
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  const r = await move.gotoNearest([], 3, { timeoutMs: 1000 })
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'no-path')
+  assert.equal(bot.setGoalCalls.length, 0, '空候选不应触发 setGoal')
+})
+
 // ---- gotoPoint / gotoNearest ----
 
 test('gotoPoint: 无 range → GoalBlock；有 range → GoalNear', async () => {

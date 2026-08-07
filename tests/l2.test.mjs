@@ -348,13 +348,13 @@ function makeFindCtx (overrides = {}, cfgPatch = {}) {
   return ctx
 }
 
-test('skills: find_block 找到并到达 → 报告坐标', async () => {
+test('C8/W 修复：find_block 找到并到达 → 报告实际到达坐标（非欧氏最近候选）', async () => {
   const ctx = makeFindCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
   const r = await agent.act('op1', 'find_block', { blockName: 'iron_ore' })
   assert.equal(r.ok, true)
   assert.ok(r.result.includes('已到达 iron_ore'), r.result)
-  assert.ok(r.result.includes('10,64,0'), r.result)
+  assert.ok(r.result.includes('0,64,0'), `应报实际到达点（bot 位置）: ${r.result}`)
 })
 
 test('skills: find_block 无候选 → 如实反馈', async () => {

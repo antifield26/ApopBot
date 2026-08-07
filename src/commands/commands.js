@@ -3,6 +3,7 @@ import { isOp } from './permissions.js'
 import { sendChat } from '../core/chat.js'
 import { findSurfaceBlocks, createMovement, REASON_TEXT } from '../core/movement.js'
 import { validateTaskOptions } from '../core/task-schemas.js'
+import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
 
 // !find 防重入：行走期间重复 find 拒绝（单 bot 架构，模块级标志）。
 // 重连重建功能层时若残留 true，由 120s 墙钟超时自愈（goto 必然结束）
@@ -204,6 +205,13 @@ export function registerBuiltinCommands (registry, ctx) {
         await sendChat(c.bot, '§a已停止跟随', c.cfg.chat?.maxLength)
         return
       }
+      // C8/S 根治：exclusive 任务运行中拒绝跟随——follow 直接控制层与任务
+      // pathfinder 双控制器冲突（此前只有 !find 有警告，follow 无任何防线）
+      if (hasExclusiveActive()) {
+        const owner = getExclusiveOwner()
+        await sendChat(c.bot, `§c无法跟随：exclusive 任务 ${owner} 运行中（移动互斥，先 !task stop ${owner}）`, c.cfg.chat?.maxLength)
+        return
+      }
       const lower = name.toLowerCase()
       const player = Object.values(c.bot.players).find(p => p.username.toLowerCase() === lower)
       if (!player?.entity) { await sendChat(c.bot, `§c找不到玩家 ${name}`, c.cfg.chat?.maxLength); return }
@@ -249,12 +257,13 @@ export function registerBuiltinCommands (registry, ctx) {
           await sendChat(c.bot, `§c范围内（${maxDistance} 格）没有暴露在地表的 ${blockName}`, c.cfg.chat?.maxLength)
           return
         }
-        // exclusive 任务运行中：collect 会收到 GoalChanged 中断——警告后放行（玩家自行权衡）
-        const busyExclusive = (c.tasks?.getStatus?.() ?? [])
-          .filter(t => ['init', 'running'].includes(t.state))
-          .map(t => t.id)
-        if (busyExclusive.length > 0) {
-          await sendChat(c.bot, `§e注意: 任务 ${busyExclusive.join(', ')} 运行中——寻路会与其移动冲突`, c.cfg.chat?.maxLength)
+        // exclusive 任务运行中（仲裁器登记）：collect 会收到 GoalChanged 中断——
+        // 警告后放行（玩家自行权衡）
+        if (hasExclusiveActive()) {
+          const owner = getExclusiveOwner()
+          const entry = (c.tasks?.getStatus?.() ?? []).find(t => t.id === owner)
+          const label = entry ? `任务 ${owner} (${entry.type})` : `exclusive 任务 ${owner}`
+          await sendChat(c.bot, `§e注意: ${label} 运行中——寻路会与其移动冲突`, c.cfg.chat?.maxLength)
         }
         // 走到最近地表候选 3 格内（GoalCompositeAny 多候选点选最近可达）
         const t0 = Date.now()
@@ -265,7 +274,10 @@ export function registerBuiltinCommands (registry, ctx) {
         const dist = Math.round(Math.hypot(nearest.x - c.bot.entity.position.x, nearest.z - c.bot.entity.position.z))
         if (r.ok) {
           const el = Math.round((Date.now() - t0) / 1000)
-          await sendChat(c.bot, `§a找到 ${blockName}: ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}（水平距离 ${dist}m，耗时 ${el}s）`, c.cfg.chat?.maxLength)
+          // C8/W 修复：汇报实际到达点——GoalCompositeAny 在最近候选不可达时会
+          // 到达更远候选，报"最近候选"坐标与实际位置不符（误导玩家）
+          const p = c.bot.entity.position
+          await sendChat(c.bot, `§a找到 ${blockName}，已到达 ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}（水平距离 ${dist}m，耗时 ${el}s）`, c.cfg.chat?.maxLength)
         } else {
           await sendChat(c.bot, `§e找到 ${blockName} 但${REASON_TEXT[r.reason] ?? '移动失败'}：最近候选 ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}（水平距离 ${dist}m）`, c.cfg.chat?.maxLength)
         }

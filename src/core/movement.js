@@ -164,6 +164,12 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
    * @param {number} range 到达半径
    */
   async function gotoNearest (points, range = 3, opts = {}) {
+    // C8/X 防御：GoalCompositeAny([]) heuristic=Infinity → A* 跑满 5s 预算再重试
+    // 一次（~10s 后误报"移动超时"）。当前调用方（!find/find_block）已前置空检查，
+    // 此守卫防未来调用方漏检
+    if (!Array.isArray(points) || points.length === 0) {
+      return { ok: false, reason: 'no-path', err: new Error('no candidate points') }
+    }
     const any = new goals.GoalCompositeAny(
       points.map(p => new goals.GoalNear(p.x, p.y, p.z, range))
     )
