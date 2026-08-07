@@ -200,6 +200,36 @@ test('!task start 排队（startTask 返回 null 且任务存在）→ 排队反
   assert.ok(lastMsg(bot).includes('已排队'), '排队应明确反馈而非静默')
 })
 
+test('B 修复：!task start 常驻任务立即回复（不 await run 完成 promise）', async () => {
+  const { ctx, bot } = makeCtx({
+    tasks: {
+      getStatus: () => [{ id: 'm1', state: 'running' }],
+      startTask: () => new Promise(() => {}) // 模拟常驻任务：run promise 永不 settle
+    }
+  })
+  await dispatch(ctx, '!task start m1')
+  assert.ok(lastMsg(bot).includes('已启动'), '应立即回复，而非挂到任务结束')
+})
+
+test('B 修复：!task start 启动失败 → 如实反馈失败原因', async () => {
+  const { ctx, bot } = makeCtx({
+    tasks: {
+      getStatus: () => [{ id: 'm1', state: 'failed', lastError: 'init boom' }],
+      startTask: () => new Promise(() => {})
+    }
+  })
+  await dispatch(ctx, '!task start m1')
+  assert.ok(lastMsg(bot).includes('启动失败'), lastMsg(bot))
+  assert.ok(lastMsg(bot).includes('init boom'), '应带失败原因')
+})
+
+test('L 修复：!reload 运行时异常 → 如实反馈（不再假成功）', async () => {
+  const { ctx, bot } = makeCtx({ onReload: async () => { throw new Error('boom') } })
+  await dispatch(ctx, '!reload')
+  assert.ok(lastMsg(bot).includes('重载失败'), lastMsg(bot))
+  assert.ok(lastMsg(bot).includes('运行时错误'), lastMsg(bot))
+})
+
 test('!task start 任务不存在 → 明确报错', async () => {
   const { ctx, bot } = makeCtx({
     tasks: {

@@ -154,7 +154,9 @@ function watchConfig () {
     try {
       watcher = fs.watch(file, () => {
         clearTimeout(timer)
-        timer = setTimeout(reloadQueued, 500)
+        // queue 会把 reload 运行时异常上抛——监视路径 fire-and-forget，须吞掉
+        //（错误已由 queue 日志留痕；!reload/SIGHUP 路径各自处理反馈）
+        timer = setTimeout(() => { reloadQueued().catch(() => {}) }, 500)
       })
       watcher.on('error', () => { /* 文件被替换时 watcher 会失效，由 rename 分支重挂 */ })
     } catch {

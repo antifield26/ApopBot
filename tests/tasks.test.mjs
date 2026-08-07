@@ -161,6 +161,53 @@ test('B2 时长上限：runScheduled maxMinutes 到时强制停止', async () =>
   await mgr.stopAll()
 })
 
+test('E 修复：scheduled exclusive 排队启动后仍到时停止（时长上限不丢）', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  await manager.load({
+    tasks: [
+      { id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } },
+      { id: 'g2', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }
+    ]
+  })
+  await settle(5)
+  assert.equal(manager._pendingExclusive.length, 1, 'g2 应已排队')
+  // 模拟 scheduled 触发：排队时挂时长上限（runScheduled 的 withTimeout 随函数栈丢弃）
+  await manager.runScheduled('g2', 0.01)
+  const rec = manager.tasks.get('g2')
+  assert.equal(rec.pendingMaxMinutes, 0.01, '排队记录应保存时长上限')
+  // 停止 g1 → drain 启动 g2（带上限）→ 0.6s 后到时停止
+  await manager.stopTask('g1')
+  await settle(2)
+  const s2 = manager.getStatus().find(t => t.id === 'g2')
+  assert.ok(['running', 'init'].includes(s2.state), 'g2 应在 g1 停止后启动')
+  await new Promise(r => setTimeout(r, 800))
+  assert.equal(manager.tasks.get('g2').task.state, 'stopped', '排队启动的 scheduled 任务应到时停止')
+  await manager.stopAll()
+})
+
+test('F 修复：scheduled 任务 run 抛错 → 通知失败而非上抛（croner 漂浮 rejection → fatal exit）', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  const notices = []
+  manager._notify = (rec, state) => { notices.push(state) }
+  await manager.load({
+    tasks: [{ id: 's1', type: 'combat', schedule: '0 3 * * *', options: { stopWhenNoTargets: false }, notifyChat: false }]
+  })
+  bot.entity = null // 触发 combat 循环 TypeError（F 触发源同类）
+  let rejected = false
+  try {
+    await manager.runScheduled('s1')
+  } catch {
+    rejected = true
+  }
+  assert.equal(rejected, false, 'runScheduled 不得上抛')
+  const s1 = manager.getStatus().find(t => t.id === 's1')
+  assert.equal(s1.state, 'failed')
+  assert.ok(notices.some(n => n.includes('failed')), `应通知失败: ${notices}`)
+  await manager.stopAll()
+})
+
 test('F5 修复：reload 移除/变更任务时 cron 定时器停止', async () => {
   const origStop = Cron.prototype.stop
   let stopCalls = 0

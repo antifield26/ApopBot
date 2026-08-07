@@ -90,14 +90,22 @@ export function registerBuiltinCommands (registry, ctx) {
       if (!id) { await sendChat(c.bot, `§c用法: !task ${action} <id>`, c.cfg.chat?.maxLength); return }
       switch (action) {
         case 'start': {
-          const p = await c.tasks.startTask(id)
-          // 静默是"指令无效"的主要来源——启动/排队/不存在三种情况都给反馈
-          if (p) {
-            await sendChat(c.bot, `§a任务 ${id} 已启动`, c.cfg.chat?.maxLength)
-          } else if (c.tasks.getStatus().some(t => t.id === id)) {
+          // B 修复：startTask 返回 run 完成 promise——await 会让常驻任务的回复挂到
+          // 任务结束（数小时无响应）。fire-and-forget + setImmediate 后查状态反馈
+          //（skills.js run_task 同款模式：failed/已排队/已启动如实告知）
+          c.tasks.startTask(id).catch(err => c.logger?.warn?.({ err: err.message }, 'task start failed'))
+          await new Promise(r => setImmediate(r))
+          const st = c.tasks.getStatus().find(t => t.id === id)
+          if (!st) {
+            await sendChat(c.bot, `§c任务不存在: ${id}（!task list 查看）`, c.cfg.chat?.maxLength)
+          } else if (st.state === 'failed') {
+            await sendChat(c.bot, `§c任务 ${id} 启动失败: ${st.lastError ?? '未知原因'}`, c.cfg.chat?.maxLength)
+          } else if (st.state === 'completed') {
+            await sendChat(c.bot, `§c任务 ${id} 已自然完成（无事可做）`, c.cfg.chat?.maxLength)
+          } else if (st.state === 'created') {
             await sendChat(c.bot, `§a任务 ${id} 已排队（等待冲突的 exclusive 任务结束）`, c.cfg.chat?.maxLength)
           } else {
-            await sendChat(c.bot, `§c任务不存在: ${id}（!task list 查看）`, c.cfg.chat?.maxLength)
+            await sendChat(c.bot, `§a任务 ${id} 已启动`, c.cfg.chat?.maxLength)
           }
           break
         }
@@ -139,9 +147,21 @@ export function registerBuiltinCommands (registry, ctx) {
     description: '热重载配置与任务（与改配置文件等效）',
     handler: async (c) => {
       // 与 SIGHUP/配置监视走同一条队列（校验 → updateCfg → tasks diff 重载）。
-      // reload 失败（读取/校验）时如实反馈——配置写坏时不再假成功
-      const ok = (await c.onReload?.()) !== false
-      await sendChat(c.bot, ok ? '§a配置已重载' : '§c重载失败（配置无效，保留旧配置，详见日志）', c.cfg.chat?.maxLength)
+      // 读取/校验失败 → reload 返回 false；运行时异常 → queue 上抛（L 修复）——
+      // 两者都如实反馈，配置写坏/代码异常时不再假成功"配置已重载"
+      let result
+      try {
+        result = await c.onReload?.()
+      } catch {
+        result = 'error'
+      }
+      if (result === false) {
+        await sendChat(c.bot, '§c重载失败（配置无效，保留旧配置，详见日志）', c.cfg.chat?.maxLength)
+      } else if (result === 'error') {
+        await sendChat(c.bot, '§c重载失败（运行时错误，保留旧配置，详见日志）', c.cfg.chat?.maxLength)
+      } else {
+        await sendChat(c.bot, '§a配置已重载', c.cfg.chat?.maxLength)
+      }
     }
   })
 

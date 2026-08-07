@@ -90,6 +90,11 @@ export class CombatTask extends BaseTask {
       }
       this._currentTarget = target
 
+      // F 触发源防御：_findTarget 返回后目标即刻消失（entity 移除但引用残留）→
+      // target.position 访问 undefined 抛 TypeError → run 协程 reject → croner
+      // 漂浮 rejection → fatalExit exit(2) 停服。换下一轮重扫即可
+      if (!target?.position) continue
+
       // 距离内攻击，否则移动层接近（approachEntity：到达判定/pause 响应/超时兜底）。
       // 行为变化：approach 期间不换目标（原每轮重扫）——由 30s 超时 + 循环顶部重扫兜底；
       // isInterrupted 含 aggroRange 检查保住"绝不追出区域/范围"语义

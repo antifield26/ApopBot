@@ -154,9 +154,11 @@ export class TaskManager {
    * 启动任务，返回 run 完成 Promise（B2）。
    * 已在运行/挂起 → 返回当前 run promise；终态 → 自动重置重启（F4）。
    * exclusive 互斥：其他 exclusive 任务运行中时拒绝启动（返回 null）。
+   * @param {number} [maxMinutes] 时长上限（scheduled 触发直传；排队路径记录到
+   *   rec.pendingMaxMinutes，drain 启动时补挂——E 修复：排队不再丢上限）
    * @returns {Promise<void>|null}
    */
-  async startTask (id, rec) {
+  async startTask (id, rec, maxMinutes) {
     rec = rec ?? this.tasks.get(id)
     if (!rec) return null
     if (RUNNING_STATES.includes(rec.task.state)) return rec.task._runPromise ?? null
@@ -167,6 +169,9 @@ export class TaskManager {
       if (busy) {
         // 排队而非静默拒绝：冲突任务终态后自动补启动（此前被拒任务永远停在 created）
         this.log.warn({ task: id, conflict: busy.entry.id }, 'exclusive 任务运行中，排队等待')
+        // E 修复：时长上限随排队记录保存——runScheduled 的 withTimeout 在排队时
+        // 随函数栈丢弃（`if (!p) return`），巡逻类 scheduled 任务排队后永久运行
+        rec.pendingMaxMinutes = maxMinutes ?? rec.pendingMaxMinutes ?? null
         this._pendingExclusive.push(rec)
         return null
       }
@@ -174,6 +179,15 @@ export class TaskManager {
 
     this.log.info({ task: id, type: rec.entry.type }, 'starting task')
     const p = rec.task.start()
+    // 排队时保存的时长上限：drain 启动后补挂（与 runScheduled 直启路径同款到期语义）
+    const pendingMinutes = rec.pendingMaxMinutes
+    rec.pendingMaxMinutes = null
+    if (pendingMinutes) {
+      withTimeout(p, pendingMinutes * 60 * 1000, 'scheduled duration reached').then(
+        () => { this._notify(rec, rec.task.state) }, // 自然完成（直启路径由 runScheduled 通知）
+        () => this._expireQueuedScheduled(id, rec, pendingMinutes)
+      )
+    }
     // 任务终态（完成/失败/停止）时快照计数器（U1：遥测跨重启保留）；
     // 常驻任务完成/失败发聊天通知（scheduled 由 runScheduled 通知，跳过）
     Promise.resolve(p).then(
@@ -197,6 +211,22 @@ export class TaskManager {
   /** 指定任务是否在 exclusive 排队中（命令反馈用）。 */
   isPendingExclusive (id) {
     return this._pendingExclusive.some(r => r.entry.id === id)
+  }
+
+  /**
+   * 排队启动的 scheduled 任务到期/失败处理（E：与 runScheduled 直启路径一致）。
+   * withTimeout 对 p 自身 rejection 也 reject——按任务终态区分"到时"与"运行失败"，
+   * 失败不再误报"时长到点"。
+   */
+  async _expireQueuedScheduled (id, rec, maxMinutes) {
+    if (rec.task.state === 'failed') {
+      this.log.warn({ task: id, err: rec.task.lastError }, 'scheduled 任务（排队启动）运行失败')
+      this._notify(rec, `failed: ${rec.task.lastError ?? '未知原因'}`)
+      return
+    }
+    try { await this.stopTask(id) } catch { /* 已停止 */ }
+    this.log.info({ task: id, maxMinutes }, 'scheduled 任务（排队启动）到时停止')
+    this._notify(rec, `stopped (duration ${maxMinutes}m)`)
   }
 
   /** 冲突任务终态后补启动排队的 exclusive 任务（FIFO，一次放行一个）。 */
@@ -224,20 +254,37 @@ export class TaskManager {
       return
     }
     this.log.info({ task: id, maxMinutes }, 'scheduled trigger fired')
-    const p = this.startTask(id)
-    if (!p) return
+    // maxMinutes 透传 startTask：排队路径把上限记录到 rec.pendingMaxMinutes（E）
+    const p = this.startTask(id, undefined, maxMinutes)
+    if (!p) return // 排队：到期处理由 startTask 的 pendingMaxMinutes 路径完成
 
     if (maxMinutes) {
       try {
         await withTimeout(p, maxMinutes * 60 * 1000, 'scheduled duration reached')
       } catch {
+        // withTimeout 对 p 自身 rejection 也会 reject——按任务终态区分：
+        // 运行失败不再误报"时长到点"；失败也不得向上抛（croner 漂浮 rejection → fatal exit）
+        if (rec.task.state === 'failed') {
+          this.log.warn({ task: id, err: rec.task.lastError }, 'scheduled 任务运行失败')
+          this._notify(rec, `failed: ${rec.task.lastError ?? '未知原因'}`)
+          return
+        }
         await this.stopTask(id)
         this.log.info({ task: id, maxMinutes }, 'scheduled 任务到时停止')
         this._notify(rec, `stopped (duration ${maxMinutes}m)`)
         return
       }
     } else {
-      await p
+      try {
+        await p
+      } catch (err) {
+        // F 修复：run 协程 reject（base.js 失败路径返回已 reject 的 promise）不得上抛——
+        // croner onTrigger 是 fire-and-forget（catch 选项默认 false）→ unhandledRejection
+        // → fatalExit exit(2) 停服（NSSM 停止等人工）
+        this.log.warn({ task: id, err: err.message }, 'scheduled 任务运行失败')
+        this._notify(rec, `failed: ${rec.task.lastError ?? err.message}`)
+        return
+      }
     }
     this._notify(rec, rec.task.state)
   }
