@@ -158,6 +158,50 @@ test('C6/N 修复：重建时回灌快照计数器（U1 承诺兑现——此前
   await layer.teardown()
 })
 
+test('U16 修复: 玩家上线问候（新玩家欢迎/首包洪峰去重/离开告别）', async () => {
+  const { _resetGreetState } = await import('../src/core/feature-layer.js')
+  _resetGreetState()
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  // 新玩家加入 → 欢迎（模板）
+  bot.emit('playerJoined', { username: 'steve' })
+  await new Promise(r => setTimeout(r, 10))
+  assert.ok(bot.messages.some(m => m.includes('欢迎回来，steve')), bot.messages.join('|'))
+  // 首包洪峰：同玩家再次触发 → 不重复问候
+  const before = bot.messages.length
+  bot.emit('playerJoined', { username: 'steve' })
+  await new Promise(r => setTimeout(r, 10))
+  assert.equal(bot.messages.length, before, '首包洪峰去重——已知玩家不重复问候')
+  // 离开 → 告别
+  bot.emit('playerLeft', { username: 'steve' })
+  await new Promise(r => setTimeout(r, 10))
+  assert.ok(bot.messages.some(m => m.includes('steve 离开了')), bot.messages.join('|'))
+  // 冷却：立刻重新加入 → 60s 内不问候
+  const before2 = bot.messages.length
+  bot.emit('playerJoined', { username: 'steve' })
+  await new Promise(r => setTimeout(r, 10))
+  assert.equal(bot.messages.length, before2, '冷却期内不重复问候')
+  await layer.teardown()
+  _resetGreetState()
+})
+
+test('U16 修复: 无 L2 时问候走纯模板（provider 缺失不报错）', async () => {
+  const { _resetGreetState } = await import('../src/core/feature-layer.js')
+  _resetGreetState()
+  const ctx = makeCtx()
+  ctx.agent = null // L2 未启用
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  bot.emit('playerJoined', { username: 'alex' })
+  await new Promise(r => setTimeout(r, 10))
+  assert.ok(bot.messages.some(m => m.includes('欢迎回来，alex')), bot.messages.join('|'))
+  await layer.teardown()
+  _resetGreetState()
+})
+
 test('A5 修复: 重建后 config 任务计数器回灌（快照全量写但此前只喂 ad-hoc——F5）', async () => {
   const ctx = makeCtx()
   ctx.stateStore = {

@@ -45,7 +45,9 @@ const BUILTIN_DEFAULTS = {
     cloudApiKeyEnv: 'ANTHROPIC_API_KEY',
     ollamaUrl: 'http://127.0.0.1:11434',
     ollamaModel: 'qwen3.5:4b',
-    maxSteps: 5,
+    // U13（第五轮）：默认 8——动作技能就位后真实链条（find_block→move→dig×3→
+    // inventory→reply）7 步打满原 5 步上限；4B 每步生成很短，成本增量小
+    maxSteps: 8,
     cooldownMs: 5000,
     // 生成超时/长度可配置（低配机 Ollama 仅 10-30 tok/s，默认 60s 防长回复误超时）
     cloudTimeoutMs: 60000,

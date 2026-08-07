@@ -15,6 +15,33 @@ import { sendChat } from './chat.js'
 import { createNotifier } from './notify.js'
 import * as discovery from './discovery.js'
 
+// U16（第五轮）：上下线问候——模块级已知玩家 Set 与按玩家冷却。
+// 模块级而非 doRebuild 闭包：player_info 首包会把登录时已在线的玩家全部触发
+// playerJoined（重连后闭包重建会把在线玩家当新人问候全服）；跨重建保留
+const knownPlayers = new Set()
+const lastGreetAt = new Map()
+const GREET_COOLDOWN_MS = 60000
+
+/** 测试钩子：重置上下线问候状态（模块级 knownPlayers/冷却跨用例共享）。 */
+export function _resetGreetState () {
+  knownPlayers.clear()
+  lastGreetAt.clear()
+}
+
+/** U16：LLM 一句话问候/告别（附加层——绕过 summarize 全局冷却走 provider 直调，
+ * 独立 60s 冷却在调用方；任何失败回退固定模板，绝不阻塞）。 */
+function broadcastGreet (bot, username, isJoin, ctx) {
+  const agent = ctx.agent
+  if (!agent?.provider?.chat) return // 无 L2 → 模板已由调用方发送
+  agent.provider.chat(
+    [{ role: 'user', content: `${username} ${isJoin ? '加入了' : '离开了'} Minecraft 服务器。用一句话${isJoin ? '欢迎' : '告别'}（≤100 字符）。` }],
+    { system: '你是 Minecraft 服务器上的 Bot 播报员。', signal: AbortSignal.timeout(10000) }
+  ).then((res) => {
+    const s = (res?.text ?? '').trim().slice(0, 120)
+    if (s) sendChat(bot, `§a[bot] ${s}`).catch(() => {})
+  }).catch(() => { /* 回退模板 */ })
+}
+
 export function createFeatureLayerManager (ctx, logger) {
   let pending = Promise.resolve()
   // 热重载会重建 logger——所有日志/组件构造一律运行时取 ctx.logger（P1-5：
@@ -130,6 +157,29 @@ export function createFeatureLayerManager (ctx, logger) {
       }
       try { bot.respawn() } catch { /* 重生通道未就绪 */ }
     })
+    // U16：玩家上下线问候（entities.js 已发射 playerJoined/playerLeft，项目此前零监听）。
+    // 独立于 summarize 的 60s 全局冷却（死亡/任务终态播报不被问候顶掉）；LLM 失败
+    // 回退固定模板；无 L2 时纯模板——问候永远不阻塞/不刷屏
+    bot.on('playerJoined', (p) => {
+      const name = p?.username
+      if (!name || name === ctx.cfg.username) return
+      if (knownPlayers.has(name)) return // 首包洪峰去重：在线玩家不算新人
+      knownPlayers.add(name)
+      const now = Date.now()
+      if (now - (lastGreetAt.get(name) ?? 0) < GREET_COOLDOWN_MS) return
+      lastGreetAt.set(name, now)
+      sendChat(bot, `§a[bot] 欢迎回来，${name}`).catch(() => {})
+      broadcastGreet(bot, name, true, ctx)
+    })
+    bot.on('playerLeft', (p) => {
+      const name = p?.username
+      if (!name || name === ctx.cfg.username) return
+      if (!knownPlayers.has(name)) return
+      knownPlayers.delete(name)
+      sendChat(bot, `§e[bot] ${name} 离开了`).catch(() => {})
+      broadcastGreet(bot, name, false, ctx)
+    })
+
     bot.on('respawn', () => {
       // U6：恢复本次死亡暂停的任务（手动暂停的保持暂停）
       const ids = deathPaused

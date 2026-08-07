@@ -29,7 +29,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 | `!pos` | op | 当前坐标与朝向（调试） |
 | `!follow <player>\|off` | op | 跟随/停止跟随玩家（需 `mineflayerPlugins.follow: true`；exclusive 任务运行中拒绝——移动互斥） |
 | `!find <方块名> [maxDistance]` | op | 找到指定方块的地表暴露位置（上方 2 格为天空，排除洞穴/液体）并走过去（3 格内）；报告实际到达坐标/距离/耗时。maxDistance 16-256（默认 64）。已知局限：高洞顶洞穴的 cave_air 也可能被判为地表（pc 版无 heightmap） |
-| `!agent chat <text>` | all | 与 L2 LLM 对话（需 `l2.enabled=true`；LLM 通过技能执行动作，危险操作仍由技能层 op 门强制） |
+| `!agent chat <text>` | all | 与 L2 LLM 对话（需 `l2.enabled=true`；LLM 通过 20 个技能执行动作——查询/移动/挖掘/放置/攻击/探索，危险操作仍由技能层 op 门强制）。自然语言示例：`!agent chat 你周围有什么？`、`!agent chat 帮我挖点铁`、`!agent chat 附近有什么矿？`、`!agent chat 你能做什么？`（触发 list_skills） |
 | `!agent act <name> [json]` | op | 直调技能（不经 LLM），如 `!agent act status {}`、`!agent act move_to {"x":10,"y":64,"z":10}` |
 | `!agent doctor` | all | cloud/ollama 连通性诊断 + 生效模式/最近延迟（只读） |
 | `!agent reset` | all | 清空调用者会话记忆 |

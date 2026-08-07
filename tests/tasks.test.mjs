@@ -467,7 +467,8 @@ test('A5 修复: cron onTrigger 抛错被承接（croner catch 默认 false—�
     { onTrigger: async () => { throw new Error('boom') } },
     logger, 'UTC')
   assert.ok(cron, '每秒触发一次')
-  await new Promise(r => setTimeout(r, 1100)) // 等一次触发窗口
+  // 2.2s = 两个触发窗口（全量测试并发负载下 1.1s 单窗口偶发错过——flaky 防护）
+  await new Promise(r => setTimeout(r, 2200))
   assert.ok(errors.some(e => e.err === 'boom'), '抛错应被显式承接（不漂浮为 unhandledRejection）')
   cron.stop()
 })

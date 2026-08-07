@@ -1,6 +1,25 @@
-# 项目路线图（2026-08-06 第二轮 / 2026-08-07 第三轮 / 2026-08-07 第四轮 / L2 进化）
+# 项目路线图（2026-08-06 第二轮 / 2026-08-07 第三轮 / 2026-08-07 第四轮 / L2 进化 / 第五轮）
 
-第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施；L2 进化（环境感知 + 自由探索）2026-08-07 实施。本文档记录已完成项、缓做项与明确不做项。
+第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施；L2 进化（环境感知 + 自由探索）2026-08-07 实施；第五轮（L2 深度控制与易用性，10 项全部 CONFIRMED）2026-08-07 实施。本文档记录已完成项、缓做项与明确不做项。
+
+## 第五轮已完成（2026-08-07）
+
+用户需求：LLM 在指令约束下完全控制 Bot + 更聪明更易用。三路 Explore（控制深度/新代码/易用性）+ Plan 验证（10 项全部 CONFIRMED + 3 个关联缺口）：
+
+### 完善档（P1+P2）
+- **P1 nearby_entities 恒失效根治**：filter 的 AND 语义 + entity.kind 大写分类（'Hostile mobs'）三连 bug——OR 语义 + 比对 e.type；**并发现 bot.entities 是 Map——Object.values(Map) 恒空，整个 nearby_entities 技能此前恒空**（双形态遍历）；scanEntities 敌对检测死代码同根修复
+- **P2 webhook 配置实时化**：feature-layer 改 ctx.notifier（reload 不重建 feature layer——闭包按值捕获是死配置）；manager getConfig 实时 getter（任务构造冻结的 cfg 引用）
+- **P2 move_to 仲裁器防线**（15 技能唯一漏网）+ act() busy 前置（!agent act 可打进进行中 chat 工具循环）
+- **P2 ExploreTask 站点地面 y 采样**（悬崖/山顶站点大量 NoPath）
+- **P2 预算修正**：estimateTokens 工具轮计入参数 JSON；2048 窗口 warn 带调参建议
+- **F1-b busy 反馈附带已进行秒数**（60-120s 阻塞窗口玩家感知不是卡死）
+
+### 升级档（U13-U17）
+- **U13 动作技能组**（LLM 完全控制核心）：dig/place/equip/use_item/attack——26.1 包安全性实测（dig 缺 sequence 补 0、block_place 全字段、use_item rotation 必填均序列化 OK），只有攻击走 entity-actions 原始包；统一守卫（exclusive 拒绝/前置检查/冷却只对实际执行生效/参数 example）
+- **U14 工具结果精简**：task_status 行式、status 去运维指标、inventory Top-N、空态转文本（固定 prompt 占预算 54% 下的最大 token 单点）
+- **U15 会话工具记录**：SESSIONS 升级 {history, calls}——跨对话注入"最近工具操作"≤3 条（"继续"不再失忆）
+- **U16 上下线问候**：playerJoined/playerLeft（首包洪峰去重 + 独立 60s 冷却 + 模板兜底，不顶掉死亡播报）
+- **U17 意图引导**：SYSTEM_PROMPT 意图→技能 few-shot（含 run_task 目标→类型映射/不确定→list_skills）；maxSteps 默认 8（真实动作链条 7 步）；config.example 补新键；README 自然语言示例
 
 ## L2 进化已完成（2026-08-07，A1-A3 + B1/B2 + C1/C2 + D）
 
