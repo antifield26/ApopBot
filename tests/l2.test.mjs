@@ -325,6 +325,36 @@ test('skills: run_task exclusive 排队时返回排队信息（不假成功）',
   assert.ok(r.result.includes('排队中'), `排队时应如实告知 LLM: ${r.result}`)
 })
 
+// ---- U6：summarize（死亡/任务终态的一句话播报，无会话无工具循环）----
+
+test('U6: summarize 单次 LLM 调用，不污染会话', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [{ text: '被僵尸击杀', toolCalls: [] }])
+  agent.reset('memx')
+  const s = await agent.summarize('死亡播报')
+  assert.equal(s, '被僵尸击杀')
+  assert.equal(provider.calls.length, 1, '应为单次调用')
+  // 不污染会话记忆
+  await agent.chat('memx', 'hi')
+  assert.equal(provider.calls[1].messages.length, 1, 'summarize 不应写入会话')
+  agent.reset('memx')
+})
+
+test('U6: summarize 失败 → null（调用方回退固定模板，不抛错）', async () => {
+  const ctx = makeCtx()
+  const p = { chat: async () => { throw new Error('API down') } }
+  const skills = createSkillRegistry(ctx)
+  const agent = new AgentInterface(ctx, { provider: p, skills, config: l2cfg })
+  assert.equal(await agent.summarize('x'), null)
+})
+
+test('U6: summarize 无 provider → null（零依赖路径）', async () => {
+  const ctx = makeCtx()
+  const skills = createSkillRegistry(ctx)
+  const agent = new AgentInterface(ctx, { provider: null, skills, config: l2cfg })
+  assert.equal(await agent.summarize('x'), null)
+})
+
 // ---- find_block 技能（L2 层 find 能力，与 !find 命令共享移动层）----
 
 function makeFindCtx (overrides = {}, cfgPatch = {}) {

@@ -183,6 +183,30 @@ export class AgentInterface {
     return this.skills.execute(name, params, user)
   }
 
+  /**
+   * 单次 LLM 一句话总结（U6/U7：死亡播报/任务终态播报）——无会话、无工具循环、
+   * 不占用 busy/冷却状态。任何失败/超时返回 null（调用方回退固定模板），
+   * 绝不阻塞调用方（10s 短超时）。
+   * @param {string} prompt
+   * @returns {Promise<string|null>}
+   */
+  async summarize (prompt) {
+    if (!this.provider?.chat) return null
+    try {
+      const res = await this.provider.chat(
+        [{ role: 'user', content: String(prompt).slice(0, 500) }],
+        {
+          system: '你是 Minecraft 服务器上的 Bot 播报员。用一句话（≤100 字符）概括，不要 Markdown，不要角色扮演。',
+          signal: AbortSignal.timeout(10000)
+        }
+      )
+      const text = (res?.text ?? '').trim()
+      return text ? text.slice(0, 120) : null
+    } catch {
+      return null
+    }
+  }
+
   /** 中止进行中的请求。 */
   stop () {
     this._abort?.abort()

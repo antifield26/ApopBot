@@ -105,6 +105,44 @@ test('C1 修复：未知命令反馈走 sendChat（含 § 前缀但发送层剥�
   await layer.teardown()
 })
 
+test('U6 修复：死亡 → LLM 播报；重生 → 恢复死亡时暂停的任务', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  let pauseIds = []
+  ctx.tasks.pauseAll = async () => { pauseIds = ['a', 'b']; return ['a', 'b'] }
+  ctx.plugins = { follow: { stop: () => {} } }
+  ctx.agent = { summarize: async () => '被僵尸击杀' }
+  bot.entity = { position: { x: 1, y: 2, z: 3 } }
+  bot.respawn = () => { bot.respawnCalls = (bot.respawnCalls ?? 0) + 1 }
+  bot.emit('death')
+  await new Promise(r => setTimeout(r, 20)) // pauseAll + summarize 链完成
+  assert.equal(bot.respawnCalls, 1, '应请求重生')
+  assert.ok(bot.messages.some(m => m.includes('被僵尸击杀')), `LLM 播报应发送: ${bot.messages}`)
+  const resumed = []
+  ctx.tasks.resumeTask = async (id) => { resumed.push(id) }
+  bot.emit('respawn')
+  await new Promise(r => setTimeout(r, 10))
+  assert.deepEqual(resumed, ['a', 'b'], '重生后应恢复本次死亡暂停的任务')
+  assert.ok(bot.messages.some(m => m.includes('已重生')), `重生应播报: ${bot.messages}`)
+  await layer.teardown()
+})
+
+test('U6 修复：LLM 播报失败 → 回退模板（不阻塞重生）', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  ctx.tasks.pauseAll = async () => []
+  ctx.agent = { summarize: async () => null } // 播报失败
+  bot.respawn = () => {}
+  bot.emit('death')
+  await new Promise(r => setTimeout(r, 20))
+  assert.ok(bot.messages.some(m => m.includes('已死亡')), `模板播报仍应发送: ${bot.messages}`)
+  await layer.teardown()
+})
+
 test('C6/N 修复：重建时回灌快照计数器（U1 承诺兑现——此前只写不读）', async () => {
   const ctx = makeCtx()
   ctx.stateStore = {

@@ -88,17 +88,39 @@ export function createFeatureLayerManager (ctx, logger) {
     }
     bot.on('chat', ctx.chatHandler)
 
-    // 死亡处理（C2/D 修复）：mineflayer 不自动 respawn（createBot 未传 respawn:true），
-    // 死亡后 bot 停在死亡界面——任务在死尸上空转、进行中的 goto 拖尸体直到超时，
-    // 之后永久停摆到进程重启。死亡 → 通知 + 暂停全部任务 + 停止跟随 + 请求重生
-    //（U6 在此基础上加 LLM 播报与重生后恢复任务）。
+    // 死亡处理（C2/D 修复 + U6 深化）：mineflayer 不自动 respawn（createBot 未传
+    // respawn:true），死亡后 bot 停在死亡界面——任务在死尸上空转、进行中的 goto
+    // 拖尸体直到超时，之后永久停摆到进程重启。
+    // C2：死亡 → 通知 + 暂停全部任务 + 停止跟随 + 请求重生。
+    // U6：L2 可用时经 LLM 一句话播报死因；重生后自动恢复暂停的任务 + 播报重生位置。
+    let deathPaused = [] // 本次死亡暂停的任务 id（重生时恢复；不触碰手动暂停的）
     bot.on('death', () => {
       ctx.tasks?.pauseAll().then((ids) => {
+        deathPaused = ids
         if (ids.length) log().info({ tasks: ids }, 'death: tasks paused')
       }).catch((err) => log().warn({ err: err.message }, 'death: pause tasks failed'))
       ctx.plugins?.follow?.stop?.()
-      sendChat(bot, '§c[bot] 已死亡——任务已暂停，自动重生中').catch(() => { /* 聊天通道未就绪 */ })
+      const pos = bot.entity?.position
+      const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
+      sendChat(bot, `§c[bot] 已死亡（${loc}）——任务已暂停，自动重生中`).catch(() => { /* 聊天通道未就绪 */ })
+      // U6：LLM 一句话播报（附加层——任何失败回退模板，不得阻塞重生）
+      if (ctx.agent?.summarize) {
+        ctx.agent.summarize(`Bot 在 Minecraft 服务器死亡（坐标 ${loc}）。用一句话向服务器玩家播报（如可能的死因），简洁。`)
+          .then((s) => { if (s) sendChat(bot, `§c[bot] ${s}`).catch(() => {}) })
+          .catch(() => {})
+      }
       try { bot.respawn() } catch { /* 重生通道未就绪 */ }
+    })
+    bot.on('respawn', () => {
+      // U6：恢复本次死亡暂停的任务（手动暂停的保持暂停）
+      const ids = deathPaused
+      deathPaused = []
+      for (const id of ids) {
+        ctx.tasks?.resumeTask(id).catch(() => { /* 任务可能已结束 */ })
+      }
+      const pos = bot.entity?.position
+      const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
+      sendChat(bot, `§a[bot] 已重生（${loc}），任务已恢复`).catch(() => { /* 聊天通道未就绪 */ })
     })
 
     log().info({ bot: ctx.cfg.username }, 'feature layer ready')
