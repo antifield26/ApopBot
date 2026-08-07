@@ -18,7 +18,7 @@
 - **U13 动作技能组**（LLM 完全控制核心）：dig/place/equip/use_item/attack——26.1 包安全性实测（dig 缺 sequence 补 0、block_place 全字段、use_item rotation 必填均序列化 OK），只有攻击走 entity-actions 原始包；统一守卫（exclusive 拒绝/前置检查/冷却只对实际执行生效/参数 example）
 - **U14 工具结果精简**：task_status 行式、status 去运维指标、inventory Top-N、空态转文本（固定 prompt 占预算 54% 下的最大 token 单点）
 - **U15 会话工具记录**：SESSIONS 升级 {history, calls}——跨对话注入"最近工具操作"≤3 条（"继续"不再失忆）
-- **U16 上下线问候**：playerJoined/playerLeft（首包洪峰去重 + 独立 60s 冷却 + 模板兜底，不顶掉死亡播报）
+- **U16 玩家上线问候**：playerJoined 固定模板欢迎（首包洪峰去重 + 独立 60s 冷却；只问候不告别——离场玩家不可见；纯模板、LLM 不参与）
 - **U17 意图引导**：SYSTEM_PROMPT 意图→技能 few-shot（含 run_task 目标→类型映射/不确定→list_skills）；maxSteps 默认 8（真实动作链条 7 步）；config.example 补新键；README 自然语言示例
 
 ## L2 进化已完成（2026-08-07，A1-A3 + B1/B2 + C1/C2 + D）

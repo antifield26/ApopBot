@@ -158,14 +158,14 @@ test('C6/N 修复：重建时回灌快照计数器（U1 承诺兑现——此前
   await layer.teardown()
 })
 
-test('U16 修复: 玩家上线问候（新玩家欢迎/首包洪峰去重/离开告别）', async () => {
+test('U16 修复: 玩家上线问候（新玩家欢迎/首包洪峰去重/离开不告别/冷却）', async () => {
   const { _resetGreetState } = await import('../src/core/feature-layer.js')
   _resetGreetState()
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)
   const bot = new FakeBot()
   await layer.rebuild(bot)
-  // 新玩家加入 → 欢迎（模板）
+  // 新玩家加入 → 欢迎（固定模板）
   bot.emit('playerJoined', { username: 'steve' })
   await new Promise(r => setTimeout(r, 10))
   assert.ok(bot.messages.some(m => m.includes('欢迎回来，steve')), bot.messages.join('|'))
@@ -174,11 +174,11 @@ test('U16 修复: 玩家上线问候（新玩家欢迎/首包洪峰去重/离开
   bot.emit('playerJoined', { username: 'steve' })
   await new Promise(r => setTimeout(r, 10))
   assert.equal(bot.messages.length, before, '首包洪峰去重——已知玩家不重复问候')
-  // 离开 → 告别
+  // 离开 → 不发送告别（离场玩家不可见）；仅从已知集合移除
   bot.emit('playerLeft', { username: 'steve' })
   await new Promise(r => setTimeout(r, 10))
-  assert.ok(bot.messages.some(m => m.includes('steve 离开了')), bot.messages.join('|'))
-  // 冷却：立刻重新加入 → 60s 内不问候
+  assert.ok(!bot.messages.some(m => m.includes('steve 离开了')), '离开不应发送告别')
+  // 冷却：离开后立刻重新加入 → 60s 内不问候
   const before2 = bot.messages.length
   bot.emit('playerJoined', { username: 'steve' })
   await new Promise(r => setTimeout(r, 10))
@@ -187,17 +187,18 @@ test('U16 修复: 玩家上线问候（新玩家欢迎/首包洪峰去重/离开
   _resetGreetState()
 })
 
-test('U16 修复: 无 L2 时问候走纯模板（provider 缺失不报错）', async () => {
+test('U16 修复: 问候只走固定模板（LLM 不参与——provider 被调用即测试失败）', async () => {
   const { _resetGreetState } = await import('../src/core/feature-layer.js')
   _resetGreetState()
   const ctx = makeCtx()
-  ctx.agent = null // L2 未启用
+  ctx.agent = { provider: { chat: async () => { throw new Error('LLM 不应参与问候') } } }
   const layer = createFeatureLayerManager(ctx, ctx.logger)
   const bot = new FakeBot()
   await layer.rebuild(bot)
   bot.emit('playerJoined', { username: 'alex' })
   await new Promise(r => setTimeout(r, 10))
-  assert.ok(bot.messages.some(m => m.includes('欢迎回来，alex')), bot.messages.join('|'))
+  assert.equal(bot.messages.length, 1, `仅模板问候一条: ${bot.messages.join('|')}`)
+  assert.ok(bot.messages[0].includes('欢迎回来，alex'), bot.messages[0])
   await layer.teardown()
   _resetGreetState()
 })
