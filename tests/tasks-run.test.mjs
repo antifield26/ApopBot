@@ -320,7 +320,7 @@ test('combat run: 默认巡逻——无怪时持续等待不完成（stop 打断
 
 test('combat run: 攻击 → entityGone 击杀 → maxTargets 完成', async () => {
   const attacks = []
-  const hostile = { id: 1, type: 'hostile', position: new Vec3(1, 64, 0) } // 距离 1 < attackRange 3.5
+  const hostile = { id: 1, type: 'hostile', position: new Vec3(1, 64, 0), height: 1.8 } // 距离 1 < attackRange 3.5
   const bot = new EventEmitter()
   Object.assign(bot, {
     pathfinder: { setGoal: () => {}, stop () {} },
@@ -330,6 +330,8 @@ test('combat run: 攻击 → entityGone 击杀 → maxTargets 完成', async () 
     inventory: { items: () => [] },
     equip: async () => {},
     attack: (t) => attacks.push(t),
+    lookAt: () => {},
+    entities: { 1: hostile }, // 攻击包防御：实体存在检查（combat 断线排查）
     nearestEntity: (filter) => (filter(hostile) ? hostile : null)
   })
   const task = new CombatTask('cb', 'combat', { maxTargets: 1, attackCooldownMs: 0 }, makeCtx(bot))
@@ -342,6 +344,30 @@ test('combat run: 攻击 → entityGone 击杀 → maxTargets 完成', async () 
   assert.equal(task.state, 'completed')
   assert.equal(task.counters.kills, 1)
   assert.ok(task.counters.attacks >= 1, '应至少发起一次攻击')
+})
+
+test('combat 攻击包防御：目标已从实体表消失 → 不得发 attack（无效 entityId 断线面）', async () => {
+  const attacks = []
+  const hostile = { id: 1, type: 'hostile', position: new Vec3(1, 64, 0), height: 1.8 }
+  const bot = new EventEmitter()
+  Object.assign(bot, {
+    pathfinder: { setGoal: () => {}, stop () {} },
+    entity: { position: new Vec3(0, 64, 0) },
+    health: 20,
+    autoEat: {},
+    inventory: { items: () => [] },
+    equip: async () => {},
+    attack: (t) => attacks.push(t),
+    lookAt: () => {},
+    entities: {}, // 目标不在实体表（被杀/走远后 _findTarget 竞态）
+    nearestEntity: (filter) => (filter(hostile) ? hostile : null)
+  })
+  const task = new CombatTask('cb', 'combat', { maxTargets: 1, attackCooldownMs: 0 }, makeCtx(bot))
+  const p = task.start()
+  await new Promise(r => setTimeout(r, 700))
+  assert.equal(attacks.length, 0, '目标已消失时不得 attack')
+  await task.stop()
+  await p
 })
 
 test('C5/Q 修复：低血撤退——敌人同格（零向量）→ 不构造 NaN 目标，原地等待', async () => {

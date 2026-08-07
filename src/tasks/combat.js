@@ -32,7 +32,9 @@ export class CombatTask extends BaseTask {
     if (o.aggroRange !== undefined && o.attackRange !== undefined && o.aggroRange < o.attackRange) {
       throw new Error('combat 任务 options.aggroRange 不能小于 attackRange（中间距离的怪将永不攻击）')
     }
-    this._attackCooldownMs = o.attackCooldownMs ?? 400
+    // 攻击冷却默认 600ms：原版 1.9+ 攻击冷却 0.5s——400ms 连击在反作弊（攻击速度
+    // 检测）下可疑（combat 断线排查：异常攻击频率的服务端 kick 面之一）
+    this._attackCooldownMs = o.attackCooldownMs ?? 600
     this._checkIntervalMs = (o.checkIntervalSeconds ?? 3) * 1000
     this._weaponName = typeof o.weapon === 'string' ? o.weapon : null // null = 自动找剑
     // 敌对实体判定防御：entity.type 依赖实体数据表 internalId 映射（协议 775 为 PR pin，
@@ -117,6 +119,21 @@ export class CombatTask extends BaseTask {
         }
       } else {
         clearGoal(this.bot) // 攻击前清残留 goal（防 pathfinder 继续走旧目标）
+        // 攻击包防御（combat 断线排查）：
+        // ① 目标已从世界移除（_findTarget 后被杀/走远的 entityGone 竞态）——无效
+        //    entityId 的 attack 包在部分服务端判协议违规断开
+        // ② 攻击前必须面向目标——原版客户端近战必然瞄准，反作弊（Grim/NCP 类）对
+        //    "不面向目标的攻击包"判 killaura → kick（mineflayer attack 不自动 lookAt）
+        if (!this.bot.entities?.[target.id]) {
+          this._currentTarget = null
+          // 防紧循环（测试挂起实测）：目标消失竞态下必须等一个扫描周期再重扫——
+          // 否则纯微任务链饿死事件循环（stop/pause 也无响应点）
+          await this._internalWait(this._checkIntervalMs, 'target-gone')
+          continue
+        }
+        try {
+          this.bot.lookAt(target.position.offset(0, (target.height ?? 1.8) / 2, 0), true)
+        } catch { /* 位置可能失效——仍尝试攻击 */ }
         await this._equipWeapon()
         try {
           this.bot.attack(target)
