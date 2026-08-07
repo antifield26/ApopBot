@@ -13,6 +13,7 @@ import { createCommandRegistry } from '../commands/commands.js'
 import { createL2 } from '../l2/index.js'
 import { sendChat } from './chat.js'
 import { createNotifier } from './notify.js'
+import * as discovery from './discovery.js'
 
 export function createFeatureLayerManager (ctx, logger) {
   let pending = Promise.resolve()
@@ -61,6 +62,10 @@ export function createFeatureLayerManager (ctx, logger) {
     for (const e of ctx.cfg.tasks ?? []) {
       ctx.tasks.restoreCounters(e.id, ctx.stateStore?.counters?.[e.id])
     }
+
+    // B1（L2 进化）：探索记忆回灌（模块级单例——跨重建/重连保留；容量与形状防御
+    // 在 importSnapshot 内部，坏数据按空处理）
+    discovery.importSnapshot(ctx.stateStore?.memory)
 
     // U1 恢复：快照中的 ad-hoc 任务（配置里已存在的以配置文件为准，不重复添加）
     const configIds = new Set((ctx.cfg.tasks ?? []).map(e => e.id))

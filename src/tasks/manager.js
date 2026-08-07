@@ -5,6 +5,7 @@ import { FarmTask } from './farm.js'
 import { ChopTask } from './chop.js'
 import { CombatTask } from './combat.js'
 import { BreedTask } from './breed.js'
+import { ExploreTask } from './explore.js'
 import { createTaskSchedule } from './scheduled.js'
 import { withTimeout } from '../util/promise-timeout.js'
 import { sendChat } from '../core/chat.js'
@@ -31,7 +32,8 @@ export const TASK_TYPES = {
   farm: (id, options, ctx) => new FarmTask(id, 'farm', options, ctx),
   chop: (id, options, ctx) => new ChopTask(id, 'chop', options, ctx),
   combat: (id, options, ctx) => new CombatTask(id, 'combat', options, ctx),
-  breed: (id, options, ctx) => new BreedTask(id, 'breed', options, ctx)
+  breed: (id, options, ctx) => new BreedTask(id, 'breed', options, ctx),
+  explore: (id, options, ctx) => new ExploreTask(id, 'explore', options, ctx) // L2 进化 C2：螺旋探索
 }
 
 const RUNNING_STATES = ['init', 'running', 'paused']

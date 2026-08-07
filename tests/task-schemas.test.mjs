@@ -41,7 +41,7 @@ test('schema: 通用字段（durationMinutes/notifyChat）放行', () => {
 })
 
 test('schema: 全部任务类型均有定义（manager TASK_TYPES 一致性防漂移）', () => {
-  for (const t of ['mine', 'fish', 'afk', 'farm', 'chop', 'combat', 'breed']) {
+  for (const t of ['mine', 'fish', 'afk', 'farm', 'chop', 'combat', 'breed', 'explore']) {
     assert.ok(TASK_OPTION_SCHEMAS[t], `缺 ${t} 的 schema`)
   }
 })

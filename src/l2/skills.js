@@ -6,6 +6,8 @@ import { isOp } from '../commands/permissions.js'
 import { validateTaskOptions } from '../core/task-schemas.js'
 import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
 import { environmentSnapshot, nearbyEntities } from './environment.js'
+import * as discovery from '../core/discovery.js'
+import { exploreStep } from '../core/explore.js'
 
 export function createSkillRegistry (ctx) {
   const skills = new Map()
@@ -139,7 +141,7 @@ export function createSkillRegistry (ctx) {
       type: 'object',
       required: ['type', 'id'],
       properties: {
-        type: { type: 'string', description: 'mine/fish/afk/farm/chop/combat/breed' },
+        type: { type: 'string', description: 'mine/fish/afk/farm/chop/combat/breed/explore' },
         id: { type: 'string', description: '任务唯一 id' },
         options: { type: 'object', description: '任务 options（如 area/blockTypes/durationMinutes）' }
       }
@@ -212,6 +214,63 @@ export function createSkillRegistry (ctx) {
     }
   })
 
+  // ---- L2 进化（B2/C1）：探索记忆查询 + 单步探索 ----
+
+  register({
+    name: 'query_map',
+    description: '查询探索记忆中已知的资源坐标（不重新扫描——省算力省 token）。探索过的区域可用 explore 技能或 explore 任务积累。',
+    parameters: {
+      type: 'object',
+      required: ['blockName'],
+      properties: {
+        blockName: { type: 'string', description: '方块名（如 iron_ore/diamond_ore/bamboo）' },
+        maxCount: { type: 'integer', min: 1, max: 20, description: '最多返回条数，默认 5' }
+      }
+    },
+    permission: 'all',
+    handler: async (c, { blockName, maxCount }) => {
+      const me = c.bot?.entity?.position
+      const hits = discovery.query(blockName, me, maxCount ?? 5)
+      if (hits.length === 0) return `地图上还没有 ${blockName} 的记录（可用 explore 技能或 explore 任务探索，或 !agent act query_map <方块> 复查）`
+      return hits.map(h => `${blockName} @ ${h.x},${h.y},${h.z}（${formatTs(h.ts)}）`).join('\n')
+    }
+  })
+
+  register({
+    name: 'map_status',
+    description: '探索记忆统计：已访问锚点数、覆盖范围、各资源记录数。',
+    permission: 'all',
+    handler: async () => {
+      const s = discovery.stats()
+      if (s.anchors === 0 && s.resources === 0) return '地图还是空的——用 explore 技能或 explore 任务开始探索'
+      const top = s.topResources.map(t => `${t.name}:${t.count}`).join(' ')
+      return `已访问 ${s.anchors} 站，覆盖 ${s.covered}，资源记录 ${s.resources} 条${top ? `，最多: ${top}` : ''}`
+    }
+  })
+
+  register({
+    name: 'explore',
+    description: '单步探索（op）：向指定方向游走一段距离，记录途中发现的资源与实体。重复调用逐步推进；探索记忆用 query_map 查询。',
+    parameters: {
+      type: 'object',
+      properties: {
+        maxDistance: { type: 'number', min: 16, max: 256, description: '探索距离 16-256，默认 48' },
+        direction: { type: 'string', description: 'n/s/e/w/ne/nw/se/sw/random，默认 random' }
+      }
+    },
+    handler: async (c, { maxDistance, direction }) => {
+      // C1：exclusive 任务运行中拒绝（移动互斥——与 !follow/find_block 同款仲裁器防线）
+      if (hasExclusiveActive()) {
+        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法探索（任务结束后可试，或先 !task stop）`)
+      }
+      const r = await exploreStep(c.bot, c.logger, { maxDistance, direction })
+      if (!r.ok) return `探索失败: ${r.reason}`
+      const found = r.found.length ? `，发现: ${r.found.map(f => `${f.name}@${f.x},${f.y},${f.z}`).slice(0, 5).join(' ')}` : ''
+      const hostile = r.entities.hostile?.length ? `，敌对: ${r.entities.hostile.join(' ')}` : ''
+      return `探索完成 ${r.from.x},${r.from.y},${r.from.z} → ${r.to.x},${r.to.y},${r.to.z}${found}${hostile}`
+    }
+  })
+
   // ---- L2 进化（A3）：环境感知 ----
 
   register({
@@ -270,6 +329,16 @@ export function createSkillRegistry (ctx) {
   })
 
   return { register, list, listForTools, execute }
+}
+
+/** 相对时间（query_map 用：发现时间戳 → 人类可读）。 */
+function formatTs (ts) {
+  if (!ts) return '未知时间'
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000))
+  if (s < 60) return `${s}s 前`
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`
+  return `${Math.floor(s / 86400)} 天前`
 }
 
 /** 极简 JSONSchema 校验（type + required + min/max）。 */

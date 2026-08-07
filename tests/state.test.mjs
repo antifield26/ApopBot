@@ -106,6 +106,29 @@ test('store: tasks 读副本——外部修改不污染内存态', (t) => {
   assert.equal(store.tasks[0].id, 'a', '读副本应防外部修改')
 })
 
+test('B1: memory 持久化往返 + 读副本（L2 探索记忆通道）', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 's.json')
+  const store = createStateStore({ file })
+  store.setMemory({ version: 1, anchors: [{ x: 1, y: 64, z: 2, ts: 1 }], resources: { iron_ore: [{ x: 10, y: 63, z: 8, ts: 1 }] } })
+  store.flush()
+  const store2 = createStateStore({ file })
+  assert.deepEqual(store2.memory.resources.iron_ore[0].x, 10, '重启后 memory 应保留')
+  assert.equal(store2.memory.anchors.length, 1)
+  // 读副本防污染
+  const copy = store2.memory
+  copy.resources = {}
+  assert.equal(store2.memory.resources.iron_ore.length, 1)
+})
+
+test('B1: loadState 形状防御——memory 非对象按空处理', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 's.json')
+  writeFileSync(file, JSON.stringify({ memory: 'bad', tasks: [] }))
+  const store = createStateStore({ file })
+  assert.deepEqual(store.memory, {}, '坏 memory 应按空处理')
+})
+
 function fileExists (f) {
   try { readFileSync(f); return true } catch { return false }
 }

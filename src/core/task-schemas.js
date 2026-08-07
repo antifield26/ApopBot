@@ -91,6 +91,16 @@ export const TASK_OPTION_SCHEMAS = {
       useCooldownMs: { type: 'integer', min: 0 },
       stopWhenNoAnimals: { type: 'boolean' }
     }
+  },
+  explore: {
+    type: 'object',
+    properties: {
+      // L2 进化 C2：螺旋探索——maxDistance 站点半径上限（同步枚举防线同款 16-256）
+      area: { type: 'object' },
+      maxDistance: { type: 'integer', min: 16, max: 256 },
+      stopWhenDone: { type: 'boolean' },
+      checkIntervalSeconds: { type: 'number', min: 0.1 }
+    }
   }
 }
 

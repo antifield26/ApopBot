@@ -10,6 +10,7 @@ import { setupSignals } from './core/signals.js'
 import { createStatusServer } from './core/http-status.js'
 import { createStateStore } from './core/state.js'
 import { createNotifier } from './core/notify.js'
+import * as discovery from './core/discovery.js'
 
 // 入口：参数 → 配置 → logger → ConnectionManager → 功能层（tasks/命令/L2）→ 信号处理
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -88,6 +89,8 @@ ctx.conn = conn
 
 // 运行状态快照（U1）：data/state.json，5s 防抖写；优雅退出时 flush
 ctx.stateStore = createStateStore({ logger })
+// B1（L2 进化）：探索记忆接入持久化通道（recordResource/recordAnchor 修改后 5s 防抖落盘）
+discovery.attachStore(ctx.stateStore)
 
 /**
  * 重载配置并热更新：校验 → 更新 ctx.cfg/conn.cfg → 日志配置变化重建 logger →

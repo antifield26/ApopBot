@@ -25,7 +25,9 @@ export function loadState (file = DEFAULT_FILE) {
 function normalize (data) {
   return {
     tasks: Array.isArray(data?.tasks) ? data.tasks.filter(t => t && typeof t === 'object' && t.id && t.type) : [],
-    counters: data?.counters && typeof data.counters === 'object' && !Array.isArray(data.counters) ? data.counters : {}
+    counters: data?.counters && typeof data.counters === 'object' && !Array.isArray(data.counters) ? data.counters : {},
+    // B1（L2 进化）：探索记忆（discovery.js 快照）——非对象/坏形状按空处理
+    memory: data?.memory && typeof data.memory === 'object' && !Array.isArray(data.memory) ? data.memory : {}
   }
 }
 
@@ -75,6 +77,15 @@ export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logg
     /** 任务计数器表 { taskId: counters } */
     get counters () {
       return { ...last.counters }
+    },
+    /** 探索记忆快照（B1：discovery.js 用；深拷贝防外部修改污染内存态） */
+    get memory () {
+      return JSON.parse(JSON.stringify(last.memory))
+    },
+    /** 全量更新探索记忆（discovery 修改后调用；5s 防抖合并落盘） */
+    setMemory (memory) {
+      last.memory = memory && typeof memory === 'object' ? JSON.parse(JSON.stringify(memory)) : {}
+      schedule()
     },
     /** 全量更新 ad-hoc 任务列表（manager 变更后调用）。 */
     setTasks (tasks) {

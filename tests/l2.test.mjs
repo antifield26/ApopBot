@@ -578,6 +578,79 @@ test('A3 修复: 环境自动注入——chat 的 system 含环境行', async ()
   assert.ok(!p2.calls[0].system.includes('\n环境: '), 'envInjection=false 不注入')
 })
 
+// ---- L2 进化（B2/C1）：探索记忆查询 + 单步探索 ----
+
+test('B2 修复: query_map 查询探索记忆（无记录 → 指引探索）', async () => {
+  const discovery = await import('../src/core/discovery.js')
+  discovery._reset()
+  const ctx = makeCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  // 空地图 → 指引
+  const empty = await agent.act('op1', 'query_map', { blockName: 'iron_ore' })
+  assert.equal(empty.ok, true)
+  assert.ok(empty.result.includes('还没有 iron_ore'), empty.result)
+  // 有记录 → 坐标
+  discovery.recordResource('iron_ore', { x: 10, y: 63, z: 8 })
+  const hit = await agent.act('op1', 'query_map', { blockName: 'iron_ore' })
+  assert.ok(hit.result.includes('iron_ore @ 10,63,8'), hit.result)
+  // 非 op 拒绝（all 权限？query_map 是 all——对，all）
+  const nonOp = await agent.act('creeper', 'query_map', { blockName: 'iron_ore' })
+  assert.equal(nonOp.ok, true, 'query_map 是 all 权限（只读查询）')
+  discovery._reset()
+})
+
+test('B2 修复: map_status 统计（空地图 → 指引）', async () => {
+  const discovery = await import('../src/core/discovery.js')
+  discovery._reset()
+  const ctx = makeCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const empty = await agent.act('op1', 'map_status', {})
+  assert.ok(empty.result.includes('地图还是空的'), empty.result)
+  discovery.recordAnchor({ x: 0, y: 64, z: 0 })
+  discovery.recordResource('coal_ore', { x: 5, y: 60, z: 0 })
+  const s = await agent.act('op1', 'map_status', {})
+  assert.ok(s.result.includes('已访问 1 站'), s.result)
+  assert.ok(s.result.includes('coal_ore:1'), s.result)
+  discovery._reset()
+})
+
+test('C1 修复: explore 技能单步探索（exclusive 任务运行中被拒）', async () => {
+  const arb = await import('../src/core/arbiter.js')
+  const discovery = await import('../src/core/discovery.js')
+  discovery._reset()
+  const bot = {
+    entity: { position: new Vec3(0, 64, 0) },
+    registry: { blocksByName: { iron_ore: { id: 44 } } },
+    findBlocks: ({ matching }) => (matching({ type: 44 }) ? [new Vec3(10, 63, 0)] : []),
+    once: () => {},
+    removeListener: () => {},
+    pathfinder: { setGoal: () => {}, stop: () => {}, goto: () => Promise.resolve() }
+  }
+  const ctx = makeCtx({ bot }, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  try {
+    // exclusive 运行中 → 拒绝（移动互斥）
+    arb.setExclusiveOwner('g1')
+    const denied = await agent.act('op1', 'explore', { direction: 'n' })
+    assert.equal(denied.ok, false)
+    assert.ok(denied.result.includes('exclusive 任务 g1'), denied.result)
+    // 无冲突 → 单步探索成功 + 记录
+    arb.setExclusiveOwner(null)
+    const r = await agent.act('op1', 'explore', { direction: 'n' })
+    assert.equal(r.ok, true)
+    assert.ok(r.result.includes('探索完成'), r.result)
+    assert.ok(r.result.includes('iron_ore'), `报告应含发现: ${r.result}`)
+    assert.ok(discovery.query('iron_ore', null, 20).length >= 1, '发现应写入记忆')
+    // 非 op 拒绝
+    const nonOp = await agent.act('creeper', 'explore', {})
+    assert.equal(nonOp.ok, false)
+    assert.ok(nonOp.result.includes('权限不足'))
+  } finally {
+    arb.setExclusiveOwner(null)
+    discovery._reset()
+  }
+})
+
 test('A2 修复: 预算裁剪生效——provider 有 contextWindow 时超预算消息被裁', async () => {
   const ctx = makeCtx()
   const { agent, provider } = makeAgent(ctx, [{ text: 'ok' }])

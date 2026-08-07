@@ -1,0 +1,118 @@
+// 探索核心（L2 进化 C1/C2）：explore 技能（单步）与 ExploreTask（螺旋）共享——
+// 资源采样、实体扫描、螺旋 waypoint 生成。
+//
+// 同步枚举防线：所有 findBlocks 一律 maxDistance ≤ 64、count ≤ 2（采样是周期性
+// 低频动作，64 半径 ≈ 231 section 单次 2-5ms，23 资源 ≈ 100ms/站——不触碰
+// movement.js:228 的 16-256 通道，那是给用户输入限幅的；此处是内部常量）。
+
+import * as discovery from './discovery.js'
+import { RESOURCE_WHITELIST, nearbyEntities } from '../l2/environment.js'
+
+export const SAMPLE_RADIUS = 64 // 采样半径（主控旋钮）
+export const SAMPLE_COUNT = 2 // 每资源最多记录条数
+export const EXPLORE_STEP = 48 // 单步探索默认距离（技能）
+export const SPIRAL_STEP = 32 // 螺旋站点间距（2 个区块）
+
+/**
+ * 采样记录资源（findBlocks 64 半径 × count 2；chunk 去重由 discovery 负责）。
+ * @returns {Array<{name, x, y, z}>} 新发现的资源（首次记录的 chunk）
+ */
+export function sampleResources (bot) {
+  const found = []
+  if (!bot?.findBlocks || !bot.registry?.blocksByName) return found
+  const byName = bot.registry.blocksByName
+  for (const name of RESOURCE_WHITELIST) {
+    const def = byName[name]
+    if (!def) continue // 维度内不存在的资源（如主世界无 nether_gold_ore）——跳过
+    let blocks = []
+    try {
+      blocks = bot.findBlocks({ matching: (b) => b.type === def.id, maxDistance: SAMPLE_RADIUS, count: SAMPLE_COUNT })
+    } catch { /* 区块未加载/API 异常——跳过该资源 */ }
+    for (const p of blocks) {
+      if (discovery.recordResource(name, p)) found.push({ name, x: p.x, y: p.y, z: p.z })
+    }
+  }
+  return found
+}
+
+/** 实体扫描（半径 64；返回分类计数与敌对名单——26.1 entity.type 可退化，kind 作标签）。 */
+export function scanEntities (bot) {
+  const hostile = []
+  const counts = { hostile: 0, passive: 0, neutral: 0, player: 0, other: 0 }
+  for (const e of nearbyEntities(bot, { maxDistance: 64, limit: 50 })) {
+    const kind = e.kind
+    if (kind === 'hostile') { counts.hostile++; hostile.push(`${e.name}(${e.dist}m)`) } else if (counts[kind] !== undefined) counts[kind]++
+    else counts.other++
+  }
+  return { counts, hostile: hostile.slice(0, 8) }
+}
+
+/** 方向解析（8 向 + random；返回 {dx, dz} 单位向量）。 */
+export function resolveDirection (direction) {
+  const dirs = {
+    n: { dx: 0, dz: -1 }, s: { dx: 0, dz: 1 }, e: { dx: 1, dz: 0 }, w: { dx: -1, dz: 0 },
+    ne: { dx: 1, dz: -1 }, nw: { dx: -1, dz: -1 }, se: { dx: 1, dz: 1 }, sw: { dx: -1, dz: 1 }
+  }
+  if (direction && dirs[direction]) return dirs[direction]
+  // random：4/8 向等概率（Math.random 不可注入——测试直接传具体方向）
+  const names = Object.keys(dirs)
+  return dirs[names[Math.floor(Math.random() * names.length)]]
+}
+
+/**
+ * 方形螺旋 waypoint 生成（纯函数，可测）。
+ * 第 r 环（Chebyshev 半径 r·step）周长上均匀取 max(4, round(8r)) 站；
+ * 环半径超过 maxDistance 停止。
+ * @returns {Array<{x: number, z: number, ring: number}>} 按访问顺序
+ */
+export function spiralWaypoints (centerX, centerZ, maxDistance, step = SPIRAL_STEP) {
+  const points = []
+  const maxRing = Math.max(1, Math.floor(maxDistance / step))
+  for (let r = 1; r <= maxRing; r++) {
+    const radius = r * step
+    const n = Math.max(4, Math.round(8 * r))
+    for (let i = 0; i < n; i++) {
+      const per = ((i + 0.5) / n) * 8 * r // 方形周长参数 0..8r（单位 step）
+      let x, z
+      if (per < 2 * r) { x = (per - r) * step; z = -r * step } // 顶边左→右
+      else if (per < 4 * r) { x = r * step; z = (per - 3 * r) * step } // 右边上→下
+      else if (per < 6 * r) { x = (5 * r - per) * step; z = r * step } // 底边右→左
+      else { x = -r * step; z = (7 * r - per) * step } // 左边下→上
+      points.push({ x: centerX + Math.round(x), z: centerZ + Math.round(z), ring: r })
+    }
+  }
+  return points
+}
+
+/**
+ * 单步探索（explore 技能）：向 direction 游走 min(maxDistance, 48) 格，
+ * 到达后采样记录 + 实体扫描。移动走 movement.js（end-race/墙钟超时免费获得）。
+ * @returns {{ok: boolean, reason?: string, from: {x,y,z}, to: {x,y,z}|null, found: Array, entities: object}}
+ */
+export async function exploreStep (bot, log, { maxDistance = EXPLORE_STEP, direction = 'random' } = {}) {
+  const me = bot?.entity
+  if (!me?.position) return { ok: false, reason: 'no-position', from: null, to: null, found: [], entities: {} }
+  const { Vec3 } = await import('vec3')
+  const { createMovement, REASON_TEXT } = await import('./movement.js')
+  const start = { x: Math.floor(me.position.x), y: Math.floor(me.position.y), z: Math.floor(me.position.z) }
+  const dir = resolveDirection(direction)
+  const dist = Math.min(maxDistance, EXPLORE_STEP)
+  const target = new Vec3(
+    Math.floor(me.position.x + dir.dx * dist),
+    Math.floor(me.position.y),
+    Math.floor(me.position.z + dir.dz * dist))
+  const move = createMovement(bot, log)
+  const r = await move.gotoPoint(target, { range: 3, timeoutMs: 45000 })
+  const found = sampleResources(bot)
+  const entities = scanEntities(bot)
+  const end = bot.entity?.position
+  if (end) discovery.recordAnchor(end)
+  return {
+    ok: r.ok,
+    reason: r.ok ? undefined : (REASON_TEXT[r.reason] ?? r.err?.message ?? '移动失败'),
+    from: start,
+    to: end ? { x: Math.floor(end.x), y: Math.floor(end.y), z: Math.floor(end.z) } : null,
+    found,
+    entities
+  }
+}
