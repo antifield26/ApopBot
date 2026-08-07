@@ -344,7 +344,7 @@ export function createSkillRegistry (ctx) {
 
   register({
     name: 'attack',
-    description: '攻击附近指定名称/类型的实体（自动面向目标+存在检查+攻击冷却——反作弊防线）。玩家说"打那个僵尸"时用。',
+    description: '攻击指定名称/类型的实体：自动接近到攻击距离后攻击，目标存活会继续连击（至多 5 次；击杀/走失/上限即止）。玩家说"打那个僵尸"时用。',
     parameters: {
       type: 'object',
       required: ['filter'],
@@ -355,10 +355,9 @@ export function createSkillRegistry (ctx) {
         throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法攻击（任务结束后可试）`)
       }
       checkActionCooldown('attack')
-      if (!c.bot?.entities) throw new Error('实体表不可用')
+      if (!c.bot?.entities || !c.bot.entity?.position) throw new Error('实体表/位置不可用')
       const { attackEntity } = await import('../core/entity-actions.js')
-      const { Vec3 } = await import('vec3')
-      // 从实体表找最近匹配（需真实 entity 引用——attackEntity 用 id/position）
+      const { createMovement, REASON_TEXT } = await import('../core/movement.js')
       const me = c.bot.entity
       const f = filter?.toLowerCase()
       const matches = []
@@ -370,10 +369,41 @@ export function createSkillRegistry (ctx) {
       if (matches.length === 0) return `附近没有匹配 ${filter} 的实体（nearby_entities 查看）`
       matches.sort((a, b) => a.position.distanceTo(me.position) - b.position.distanceTo(me.position))
       const target = matches[0]
-      if (!c.bot.entities?.[target.id]) return '目标已消失，重试'
-      try { c.bot.lookAt(target.position.offset(0, (target.height ?? 1.8) / 2, 0), true) } catch { /* 位置可能失效 */ }
-      attackEntity(c.bot, target) // 26.1 门控 bug 绕过（项目层原始包）
-      return `已攻击 ${target.name}（${Math.round(target.position.distanceTo(me.position))} 格）`
+      // 战斗循环（combat 任务同款三件套：存在检查 + 接近 + 攻击）：
+      // 修复①（原地不动根因一）：bot.entities 是 Map——`entities[id]` 下标恒
+      //   undefined → 存在检查恒 false → attack 从未真正发出（P1 Map bug 同根漏网）
+      // 修复②（原地不动根因二）：无接近逻辑——5 格外攻击包被服务端 reach 校验
+      //   拒绝（无效攻击），Bot 原地不动。approachEntity 接近后攻击，目标移动
+      //   触发 RECALC interrupted → 重扫重接近（追逐语义，同 combat 循环）
+      const move = createMovement(c.bot, c.logger)
+      const ATTACK_RANGE = 3.5 // 原版近战攻击距离（combat 任务同款）
+      let hits = 0
+      for (let i = 0; i < 5; i++) {
+        const alive = c.bot.entities instanceof Map
+          ? c.bot.entities.has(target.id)
+          : !!c.bot.entities?.[target.id]
+        if (!alive || !target.position) {
+          return hits > 0
+            ? `已攻击 ${target.name} ${hits} 次，目标已消失（可能已击杀）`
+            : '目标已消失，可重试'
+        }
+        const dist = me.position.distanceTo(target.position)
+        if (dist > ATTACK_RANGE) {
+          const r = await move.approachEntity(target, {
+            range: 2, // 停点保证能攻击到
+            timeoutMs: 15000,
+            isInterrupted: () => !target?.position || me.position.distanceTo(target.position) > 64 // 追出 64 格放弃
+          })
+          if (r.ok) continue // 接近后重查距离（目标可能在动）
+          if (r.reason === 'interrupted') continue // 目标位移触发重算——重扫重接近
+          return `无法接近 ${target.name}: ${REASON_TEXT[r.reason] ?? r.err?.message}`
+        }
+        try { c.bot.lookAt(target.position.offset(0, (target.height ?? 1.8) / 2, 0), true) } catch { /* 位置可能失效 */ }
+        attackEntity(c.bot, target) // 26.1 门控 bug 绕过（项目层原始包）
+        hits++
+        await new Promise(r => setTimeout(r, 600)) // 攻击冷却（反作弊：1.9+ 攻击速度检测，combat 同款）
+      }
+      return `已攻击 ${target.name} ${hits} 次，目标仍存活——可再次调用 attack 继续`
     }
   })
 

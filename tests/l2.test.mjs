@@ -801,6 +801,93 @@ test('U13: place 技能——参考方块/占用检查/heldItem 前置', async (
   assert.ok(noItem.result.includes('equip'), noItem.result)
 })
 
+test('U13 修复: attack 技能——Map 实体表回归 + 击杀即止（原地不动根因一）', async () => {
+  // 根因：bot.entities 是 Map——`entities[id]` 下标恒 undefined → 存在检查恒 false →
+  // attack 技能从未真正发出攻击包（P1 Map bug 同根，U13 侧漏网）
+  const arb = await import('../src/core/arbiter.js')
+  const packets = []
+  const entities = new Map()
+  const hostile = { id: 1, type: 'hostile', name: 'zombie', position: new Vec3(2, 64, 0), height: 1.8 } // 距离 2 ≤ 3.5
+  entities.set(1, hostile)
+  const bot = {
+    ...makeCtx().bot,
+    entity: { position: new Vec3(0, 64, 0) },
+    entities,
+    lookAt: () => {},
+    _client: { write: (name, params) => { packets.push({ name, ...params }); if (name === 'attack') entities.delete(1) } } // 一击击杀
+  }
+  const ctx = makeCtx({ bot }, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  try {
+    const r = await agent.act('op1', 'attack', { filter: 'zombie' })
+    assert.equal(r.ok, true)
+    assert.ok(r.result.includes('已攻击 zombie'), r.result)
+    assert.ok(r.result.includes('目标已消失'), r.result)
+    assert.equal(packets.filter(p => p.name === 'attack').length, 1, '应写独立 attack 包（此前 Map 下标检查恒 false 从未发出）')
+    assert.equal(packets[0].entityId, 1)
+    // exclusive 拒绝（exclusive 检查在冷却之前——不受 500ms 冷却干扰）
+    arb.setExclusiveOwner('g1')
+    const denied = await agent.act('op1', 'attack', { filter: 'zombie' })
+    assert.equal(denied.ok, false)
+    assert.ok(denied.result.includes('exclusive 任务 g1'), denied.result)
+    // 非 op 拒绝
+    const nonOp = await agent.act('creeper', 'attack', { filter: 'zombie' })
+    assert.equal(nonOp.ok, false)
+  } finally {
+    arb.setExclusiveOwner(null)
+  }
+})
+
+test('U13 修复: attack 技能——远距目标自动接近后攻击（原地不动根因二）', async () => {
+  // 根因：无接近逻辑——5 格外攻击包被服务端 reach 校验拒绝（无效攻击），Bot 原地不动。
+  // 修复：approachEntity 接近到攻击距离再攻击（combat 任务同款三件套）
+  const packets = []
+  const entities = new Map()
+  const hostile = { id: 1, type: 'hostile', name: 'zombie', position: new Vec3(10, 64, 0), height: 1.8 } // 距离 10 > 3.5
+  entities.set(1, hostile)
+  let gotoCalls = 0
+  const bot = {
+    ...makeCtx().bot,
+    entity: { position: new Vec3(0, 64, 0) },
+    entities,
+    once: () => {},
+    removeListener: () => {},
+    pathfinder: {
+      setGoal: () => {},
+      stop: () => {},
+      // 模拟寻路成功：目标被走近（真实 goto 由 pathfinder 驱动，此处直接改位置）
+      goto: async () => { gotoCalls++; hostile.position = new Vec3(1, 64, 0) }
+    },
+    lookAt: () => {},
+    _client: { write: (name, params) => { packets.push({ name, ...params }); if (name === 'attack') entities.delete(1) } }
+  }
+  const ctx = makeCtx({ bot }, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('op1', 'attack', { filter: 'zombie' })
+  assert.equal(r.ok, true)
+  assert.equal(gotoCalls, 1, '远距目标应先接近（approachEntity）')
+  assert.ok(r.result.includes('已攻击 zombie'), r.result)
+  assert.equal(packets.filter(p => p.name === 'attack').length, 1, '接近后应攻击（此前远距直接发无效包）')
+})
+
+test('U13 修复: attack 技能——连击上限（目标存活 5 次后提示可继续）', async () => {
+  const packets = []
+  const hostile = { id: 1, type: 'hostile', name: 'zombie', position: new Vec3(2, 64, 0), height: 1.8 }
+  const bot = {
+    ...makeCtx().bot,
+    entity: { position: new Vec3(0, 64, 0) },
+    entities: new Map([[1, hostile]]),
+    lookAt: () => {},
+    _client: { write: (name, params) => packets.push({ name, ...params }) }
+  }
+  const ctx = makeCtx({ bot }, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('op1', 'attack', { filter: 'zombie' })
+  assert.equal(r.ok, true)
+  assert.ok(r.result.includes('目标仍存活'), r.result)
+  assert.equal(packets.filter(p => p.name === 'attack').length, 5, '应连击至 5 次上限（600ms 冷却）')
+})
+
 test('U15: 会话工具记录——第二次 chat 的 system 注入上次工具操作', async () => {
   const ctx = makeCtx()
   ctx.bot.registry = { blocksByName: { iron_ore: { id: 44 } } }

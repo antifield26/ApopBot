@@ -16,6 +16,7 @@
 
 ### 升级档（U13-U17）
 - **U13 动作技能组**（LLM 完全控制核心）：dig/place/equip/use_item/attack——26.1 包安全性实测（dig 缺 sequence 补 0、block_place 全字段、use_item rotation 必填均序列化 OK），只有攻击走 entity-actions 原始包；统一守卫（exclusive 拒绝/前置检查/冷却只对实际执行生效/参数 example）
+- **U13 善后（部署机实测"打僵尸原地不动"根因）**：attack 技能两个叠加缺陷——① `entities[id]` 下标检查在 Map 下恒 false → attack 从未真正发出（P1 Map bug 同根漏网，U13 无测试覆盖）；② 无接近逻辑——5 格外攻击包被服务端 reach 校验拒绝。修复：Map 双形态存在检查 + approachEntity 接近（combat 同款三件套）+ 有界连击（至多 5 次，600ms 反作弊冷却），补 3 个测试
 - **U14 工具结果精简**：task_status 行式、status 去运维指标、inventory Top-N、空态转文本（固定 prompt 占预算 54% 下的最大 token 单点）
 - **U15 会话工具记录**：SESSIONS 升级 {history, calls}——跨对话注入"最近工具操作"≤3 条（"继续"不再失忆）
 - **U16 玩家上线问候**：playerJoined 固定模板欢迎（首包洪峰去重 + 独立 60s 冷却；只问候不告别——离场玩家不可见；纯模板、LLM 不参与）
