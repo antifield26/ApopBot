@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { Vec3 } from 'vec3'
 import { AgentInterface } from '../src/l2/agent-interface.js'
 import { createSkillRegistry } from '../src/l2/skills.js'
 import { createL2 } from '../src/l2/index.js'
@@ -292,4 +293,76 @@ test('skills: run_task exclusive 排队时返回排队信息（不假成功）',
   const r = await agent.act('op1', 'run_task', { type: 'combat', id: 'g' })
   assert.equal(r.ok, true)
   assert.ok(r.result.includes('排队中'), `排队时应如实告知 LLM: ${r.result}`)
+})
+
+// ---- find_block 技能（L2 层 find 能力，与 !find 命令共享移动层）----
+
+function makeFindCtx (overrides = {}, cfgPatch = {}) {
+  const bot = {
+    chat: () => {},
+    entity: { position: new Vec3(0, 64, 0) },
+    inventory: { items: () => [] },
+    players: {},
+    registry: { blocksByName: { iron_ore: { id: 44 }, bamboo: { id: 99 } } },
+    // findSurfaceBlocks 的 isSurfaceAt 调 p.offset——必须返回 Vec3（findBlocks 真实语义）
+    findBlocks: ({ matching }) => (matching({ type: 44 }) ? [new Vec3(10, 64, 0)] : []),
+    blockAt: () => ({ boundingBox: 'empty', name: 'air' }),
+    pathfinder: { setGoal: () => {}, stop: () => {}, goto: () => Promise.resolve() },
+    ...(overrides.bot ?? {})
+  }
+  const ctx = makeCtx(overrides, cfgPatch)
+  ctx.bot = bot
+  return ctx
+}
+
+test('skills: find_block 找到并到达 → 报告坐标', async () => {
+  const ctx = makeFindCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('op1', 'find_block', { blockName: 'iron_ore' })
+  assert.equal(r.ok, true)
+  assert.ok(r.result.includes('已到达 iron_ore'), r.result)
+  assert.ok(r.result.includes('10,64,0'), r.result)
+})
+
+test('skills: find_block 无候选 → 如实反馈', async () => {
+  const ctx = makeFindCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('op1', 'find_block', { blockName: 'bamboo' })
+  assert.equal(r.ok, true)
+  assert.ok(r.result.includes('没有暴露在地表的 bamboo'), r.result)
+})
+
+test('skills: find_block 未知方块 → ok:false', async () => {
+  const ctx = makeFindCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('op1', 'find_block', { blockName: 'not_a_block' })
+  assert.equal(r.ok, false)
+  assert.ok(r.result.includes('未知方块类型'))
+})
+
+test('skills: find_block 无法到达（NoPath）→ 如实反馈最近候选', async () => {
+  const bot = {
+    entity: { position: new Vec3(0, 64, 0) },
+    registry: { blocksByName: { iron_ore: { id: 44 } } },
+    findBlocks: () => [new Vec3(10, 64, 0)],
+    blockAt: () => ({ boundingBox: 'empty', name: 'air' }),
+    pathfinder: {
+      setGoal: () => {}, stop: () => {},
+      goto: () => Promise.reject(Object.assign(new Error('NoPath'), { name: 'NoPath' }))
+    }
+  }
+  const ctx = makeCtx({ bot }, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('op1', 'find_block', { blockName: 'iron_ore' })
+  assert.equal(r.ok, true) // 技能 handler 返回文本（含失败信息），非抛错
+  assert.ok(r.result.includes('无法到达'), r.result)
+  assert.ok(r.result.includes('10,64,0'), r.result)
+})
+
+test('skills: find_block 非 op → 权限不足', async () => {
+  const ctx = makeFindCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('creeper', 'find_block', { blockName: 'iron_ore' })
+  assert.equal(r.ok, false)
+  assert.ok(r.result.includes('权限不足'))
 })

@@ -163,6 +163,40 @@ export function createSkillRegistry (ctx) {
   })
 
   register({
+    name: 'find_block',
+    description: '找到指定方块的地表暴露位置（上方 2 格为天空，排除洞穴/地下/液体上方）并走过去（3 格内）。适合找露头矿、竹子、甘蔗等。',
+    parameters: {
+      type: 'object',
+      required: ['blockName'],
+      properties: {
+        blockName: { type: 'string', description: '方块名（无命名空间前缀，如 iron_ore/bamboo/sugarcane）' },
+        maxDistance: { type: 'number', description: '搜索半径 16-256，默认 64' }
+      }
+    },
+    handler: async (c, { blockName, maxDistance }) => {
+      // 与 !find 命令共享 findSurfaceBlocks + gotoNearest（移动层）；LLM 可感知失败原因
+      const { findSurfaceBlocks, createMovement, REASON_TEXT } = await import('../core/movement.js')
+      let result
+      try {
+        result = findSurfaceBlocks(c.bot, blockName, { maxDistance: maxDistance ?? 64 })
+      } catch {
+        throw new Error(`未知方块类型: ${blockName}`)
+      }
+      if (result.candidates.length === 0) {
+        return `范围内（${maxDistance ?? 64} 格）没有暴露在地表的 ${blockName}`
+      }
+      const nearest = result.candidates.reduce((a, b) =>
+        (a.x - c.bot.entity.position.x) ** 2 + (a.z - c.bot.entity.position.z) ** 2 <=
+        (b.x - c.bot.entity.position.x) ** 2 + (b.z - c.bot.entity.position.z) ** 2 ? a : b)
+      const r = await createMovement(c.bot, c.logger).gotoNearest(result.candidates, 3, { timeoutMs: 120000 })
+      if (r.ok) {
+        return `已到达 ${blockName}: ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}`
+      }
+      return `找到 ${blockName} 但${REASON_TEXT[r.reason] ?? '移动失败'}：最近候选 ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}`
+    }
+  })
+
+  register({
     name: 'follow_player',
     description: '让 Bot 跟随（或停止跟随，参数 off）指定玩家。',
     parameters: {

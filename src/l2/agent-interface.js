@@ -26,9 +26,10 @@ const SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（mi
 规则：
 1. 回答保持简短（≤250 字符），用 reply 技能说话。
 2. 涉及移动/创建任务/控制行为的操作必须用对应技能完成，不要编造能力。
-3. 危险操作（move_to/run_task/stop_task/follow_player）只有 op 玩家可用——当前调用者是否是 op 见"当前会话"（技能层会强制校验，无需再向调用者要求验证）。
+3. 危险操作（move_to/run_task/stop_task/follow_player/find_block）只有 op 玩家可用——当前调用者是否是 op 见"当前会话"（技能层会强制校验，无需再向调用者要求验证）。
 4. 状态查询（status/task_status/inventory_summary）可自由使用，回答时引用真实数据。
-5. 不要角色扮演，不要输出 Markdown，不要虚构玩家或世界状态。`
+5. 找东西用 find_block 技能（如"去找铁矿石"→ find_block(iron_ore)），不要用其他方式编造位置。
+6. 不要角色扮演，不要输出 Markdown，不要虚构玩家或世界状态。`
 
 /**
  * 每次对话注入调用者身份：LLM 必须知道"谁在说话、是否有 op 权限"，
