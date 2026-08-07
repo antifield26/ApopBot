@@ -449,6 +449,19 @@ export class TaskManager {
   }
 
   getStatus () {
-    return [...this.tasks.values()].map(rec => rec.task.getStatus())
+    const now = Date.now()
+    return [...this.tasks.values()].map((rec) => {
+      const st = rec.task.getStatus()
+      // U8：调度增强字段（!task list 展示）——排队位置/时长剩余/下次 cron 触发
+      const queuePos = this._pendingExclusive.indexOf(rec)
+      st.queuePosition = queuePos >= 0 ? queuePos + 1 : null // 1-based
+      const maxMinutes = rec.entry.durationMinutes ?? rec.entry.options?.durationMinutes
+      if (maxMinutes && st.startedAt && ['init', 'running', 'paused'].includes(st.state)) {
+        const elapsedMs = now - st.startedAt
+        st.remainingMinutes = Math.max(0, Math.round((maxMinutes * 60 * 1000 - elapsedMs) / 60000 * 10) / 10)
+      }
+      st.nextRunAt = rec.cron?.nextRun ? (rec.cron.nextRun() ?? null) : null
+      return st
+    })
   }
 }

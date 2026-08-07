@@ -74,6 +74,23 @@ test('!task list → 状态行（含 counters）', async () => {
   assert.ok(lastMsg(bot).includes('mined'))
 })
 
+test('U8 修复：!task list 显示排队位置/时长剩余/下次 cron 触发', async () => {
+  const { ctx, bot } = makeCtx({
+    tasks: {
+      getStatus: () => [{
+        id: 's1', type: 'combat', state: 'running', counters: {},
+        waitingReason: null, lastError: null,
+        queuePosition: 2, remainingMinutes: 5, nextRunAt: new Date('2026-08-07T12:34:00')
+      }]
+    }
+  })
+  await dispatch(ctx, '!task list')
+  const msg = lastMsg(bot)
+  assert.ok(msg.includes('排队#2'), msg)
+  assert.ok(msg.includes('余5m'), msg)
+  assert.ok(msg.includes('下次12:34'), msg)
+})
+
 test('!task new 缺参 → 用法提示', async () => {
   const { ctx, bot, calls } = makeCtx()
   await dispatch(ctx, '!task new')

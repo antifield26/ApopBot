@@ -50,8 +50,19 @@ export function registerBuiltinCommands (registry, ctx) {
       }
       if (action === 'list') {
         const status = c.tasks.getStatus()
+        // U8：排队位置/时长剩余/下次 cron 触发（调度可见性——此前排队与时长只有日志）
+        const pad = (n) => String(n).padStart(2, '0')
         await sendChat(c.bot, status.length
-          ? status.map(t => `${t.id}:${t.state}${t.waitingReason ? `(${t.waitingReason})` : ''}${t.lastError ? `(err:${t.lastError})` : ''}${Object.keys(t.counters).length ? `[${JSON.stringify(t.counters)}]` : ''}`).join('; ')
+          ? status.map(t => {
+            const parts = [`${t.id}:${t.state}`]
+            if (t.waitingReason) parts.push(`(${t.waitingReason})`)
+            if (t.lastError) parts.push(`(err:${t.lastError})`)
+            if (t.queuePosition) parts.push(`[排队#${t.queuePosition}]`)
+            if (t.remainingMinutes !== undefined) parts.push(`[余${t.remainingMinutes}m]`)
+            if (t.nextRunAt) parts.push(`[下次${pad(t.nextRunAt.getHours())}:${pad(t.nextRunAt.getMinutes())}]`)
+            if (Object.keys(t.counters).length) parts.push(`[${JSON.stringify(t.counters)}]`)
+            return parts.join('')
+          }).join('; ')
           : 'no tasks configured', c.cfg.chat?.maxLength)
         return
       }

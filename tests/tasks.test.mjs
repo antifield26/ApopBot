@@ -316,6 +316,31 @@ test('C6/N 修复：removeTask 清理快照计数器 + restoreCounters 回灌', 
   await mgr.stopAll()
 })
 
+test('U8 修复：getStatus 附加调度字段（排队位置/时长剩余/下次 cron 触发）', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({ scheduleTimezone: 'UTC' }, makeLogger(), { bot })
+  await manager.load({
+    tasks: [
+      { id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false }, durationMinutes: 0.01 },
+      { id: 'g2', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }
+    ]
+  })
+  await settle(5)
+  const s1 = manager.getStatus().find(t => t.id === 'g1')
+  const s2 = manager.getStatus().find(t => t.id === 'g2')
+  assert.equal(s1.queuePosition, null, '运行中的任务不排队')
+  assert.equal(s2.queuePosition, 1, '排队的 g2 应显示位置 1')
+  assert.ok(s1.remainingMinutes !== undefined, '带 durationMinutes 的运行任务应显示剩余时长')
+  await manager.stopAll()
+  // cron 下次触发
+  const bot2 = makeCombatBot()
+  const mgr2 = new TaskManager({ scheduleTimezone: 'UTC' }, makeLogger(), { bot: bot2 })
+  await mgr2.load({ tasks: [{ id: 's1', type: 'afk', schedule: '0 3 * * *', options: { intervalMinutes: 1 } }] })
+  const st = mgr2.getStatus()[0]
+  assert.ok(st.nextRunAt instanceof Date, 'cron 任务应显示下次触发时间')
+  await mgr2.stopAll()
+})
+
 test('U7 修复：任务终态经 LLM 一句话总结（附加层）+ 冷却防刷屏', async () => {
   const summaries = []
   const agent = { summarize: async (p) => { summaries.push(p); return '挖了 5 个铁' } }
