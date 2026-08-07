@@ -432,6 +432,56 @@ test('skills: find_block 非 op → 权限不足', async () => {
   assert.ok(r.result.includes('权限不足'))
 })
 
+// ---- A3（第四轮）：技能层仲裁器防线与参数边界 ----
+
+test('A3 修复: follow_player 在 exclusive 任务运行中被拒（与 !follow 命令同款防线）', async () => {
+  const arb = await import('../src/core/arbiter.js')
+  try {
+    const follow = { setTarget: () => {}, stop: () => {} }
+    const ctx = makeCtx({ plugins: { follow } }, { ops: ['op1'] })
+    ctx.bot.players = { steve: { username: 'Steve', entity: { id: 1 } } }
+    const { agent } = makeAgent(ctx, [])
+    arb.setExclusiveOwner('g1') // 模拟 exclusive 任务运行中
+    const r = await agent.act('op1', 'follow_player', { name: 'steve' })
+    assert.equal(r.ok, false, 'exclusive 运行中跟随应被拒')
+    assert.ok(r.result.includes('exclusive 任务 g1'), r.result)
+    // off 不受限（停止跟随不冲突）
+    const off = await agent.act('op1', 'follow_player', { name: 'off' })
+    assert.equal(off.ok, true)
+  } finally {
+    arb.setExclusiveOwner(null) // 清理模块级单例
+  }
+})
+
+test('A3 修复: find_block 到达时附加 exclusive 冲突告警（与 !find 命令同款）', async () => {
+  const arb = await import('../src/core/arbiter.js')
+  try {
+    const ctx = makeFindCtx({}, { ops: ['op1'] })
+    const { agent } = makeAgent(ctx, [])
+    arb.setExclusiveOwner('g1')
+    const r = await agent.act('op1', 'find_block', { blockName: 'iron_ore' })
+    assert.equal(r.ok, true)
+    assert.ok(r.result.includes('exclusive 任务 g1'), `到达结果应含告警: ${r.result}`)
+  } finally {
+    arb.setExclusiveOwner(null)
+  }
+})
+
+test('A3 修复: move_to 坐标越界（世界边界 ±30000000）→ 参数校验拒绝', async () => {
+  const ctx = makeCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r1 = await agent.act('op1', 'move_to', { x: 1e18, y: 64, z: 0 })
+  assert.equal(r1.ok, false)
+  assert.ok(r1.result.includes('不能大于'), r1.result)
+  const r2 = await agent.act('op1', 'move_to', { x: -1e18, y: 64, z: 0 })
+  assert.equal(r2.ok, false)
+  assert.ok(r2.result.includes('不能小于'), r2.result)
+  // NaN/Infinity 兜底（validateParams isFinite）
+  const r3 = await agent.act('op1', 'move_to', { x: Number.NaN, y: 64, z: 0 })
+  assert.equal(r3.ok, false)
+  assert.ok(r3.result.includes('有限数值'), r3.result)
+})
+
 test('C5/G 修复：find_block maxDistance 越界（16-256 外）→ 参数校验拒绝（防主线程冻结）', async () => {
   const ctx = makeFindCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])

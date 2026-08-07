@@ -4,6 +4,7 @@
 
 import { isOp } from '../commands/permissions.js'
 import { validateTaskOptions } from '../core/task-schemas.js'
+import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
 
 export function createSkillRegistry (ctx) {
   const skills = new Map()
@@ -113,7 +114,11 @@ export function createSkillRegistry (ctx) {
       type: 'object',
       required: ['x', 'y', 'z'],
       properties: {
-        x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' }
+        // A3（第四轮）：世界边界 ±30000000——LLM 幻觉传 1e18 会直进 GoalBlock
+        //（界外坐标寻路行为异常）；validateParams 另有 isFinite 兜底
+        x: { type: 'number', min: -30000000, max: 30000000 },
+        y: { type: 'number', min: -30000000, max: 30000000 },
+        z: { type: 'number', min: -30000000, max: 30000000 }
       }
     },
     handler: async (c, { x, y, z }) => {
@@ -198,7 +203,9 @@ export function createSkillRegistry (ctx) {
       if (r.ok) {
         // C8/W 修复：汇报实际到达点（GoalCompositeAny 可达最近 ≠ 欧氏最近）
         const p = c.bot.entity.position
-        return `已到达 ${blockName}: ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`
+        // A3：exclusive 任务运行中附加告警（与 !find 命令同款语义——寻路会与其移动冲突）
+        const warn = hasExclusiveActive() ? `（注意: exclusive 任务 ${getExclusiveOwner()} 运行中，移动可能冲突）` : ''
+        return `已到达 ${blockName}: ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}${warn}`
       }
       return `找到 ${blockName} 但${REASON_TEXT[r.reason] ?? '移动失败'}：最近候选 ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}`
     }
@@ -219,6 +226,12 @@ export function createSkillRegistry (ctx) {
       if (name === 'off') {
         c.plugins.follow.stop()
         return '已停止跟随'
+      }
+      // A3（第四轮）：技能层与命令层同款仲裁器防线——!follow 命令有拒绝而
+      // follow_player 技能绕过命令层直调插件（op 玩家/LLM 工具循环可在 exclusive
+      // 任务运行期开启跟随 = 双控制器冲突，R2 根治目标复活）
+      if (hasExclusiveActive()) {
+        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法跟随（任务结束后可试）`)
       }
       const lower = name.toLowerCase()
       const player = Object.values(c.bot.players ?? {}).find(p => p.username.toLowerCase() === lower)
@@ -251,6 +264,8 @@ function validateParams (schema, params) {
     }[def.type]
     if (!ok) return { ok: false, error: `${k} 必须是 ${def.type}` }
     if ((def.type === 'number' || def.type === 'integer') && typeof v === 'number') {
+      // A3：NaN/Infinity 兜底（JSON 无法携带但防御直传/未来入口）
+      if (!Number.isFinite(v)) return { ok: false, error: `${k} 必须是有限数值` }
       if (def.min !== undefined && v < def.min) return { ok: false, error: `${k} 不能小于 ${def.min}` }
       if (def.max !== undefined && v > def.max) return { ok: false, error: `${k} 不能大于 ${def.max}` }
     }
