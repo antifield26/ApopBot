@@ -8,6 +8,7 @@ import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
 import { environmentSnapshot, nearbyEntities } from './environment.js'
 import * as discovery from '../core/discovery.js'
 import { exploreStep, notifyValuableFound } from '../core/explore.js'
+import { withTimeout } from '../util/promise-timeout.js'
 
 export function createSkillRegistry (ctx) {
   const skills = new Map()
@@ -67,39 +68,51 @@ export function createSkillRegistry (ctx) {
 
   register({
     name: 'status',
-    description: '获取 Bot 状态摘要（连接状态/位置/内存/重连次数）。',
+    description: '获取 Bot 状态（连接/位置/血量/食物）。',
     permission: 'all',
     handler: async (c) => {
+      // U14（第五轮）：精简输出——memMb/reconnectCount 是运维指标，LLM 决策用不上
+      //（固定 prompt 已占预算 54%，查询结果 token 浪费是最大单点）
       const s = c.conn.getStatus()
       const e = c.bot?.entity
       return {
         state: s.state,
-        reconnectCount: s.reconnectCount,
         position: e ? [Math.floor(e.position.x), Math.floor(e.position.y), Math.floor(e.position.z)] : null,
         health: c.bot?.health ?? null, // update_health 包（26.1 实体元数据不解析 health）
-        food: c.bot?.food ?? null,
-        memMb: Math.round(process.memoryUsage().rss / 1024 / 1024)
+        food: c.bot?.food ?? null
       }
     }
   })
 
   register({
     name: 'task_status',
-    description: '获取全部任务的运行状态与计数。',
+    description: '获取全部任务的运行状态与等待原因。',
     permission: 'all',
-    handler: async (c) => c.tasks.getStatus()
+    handler: async (c) => {
+      // U14：LLM 通道精简为 id: state (waitingReason) 行——counters/queuePosition/
+      // nextRunAt 等全字段对决策是噪声且撑爆 2000 字符截断（人类看 !task list）
+      const lines = c.tasks.getStatus().map(t =>
+        `${t.id}: ${t.state}${t.waitingReason ? ` (${t.waitingReason})` : ''}${t.lastError ? ` 错误:${t.lastError}` : ''}`)
+      return lines.length ? lines.join('；') : '当前无任务'
+    }
   })
 
   register({
     name: 'inventory_summary',
-    description: '获取背包物品摘要（名称与数量）。',
+    description: '获取背包物品摘要（名称与数量，按数量降序 Top-N）。',
+    parameters: {
+      type: 'object',
+      properties: { maxItems: { type: 'integer', min: 1, max: 50, description: '最多返回条数，默认 10', example: 10 } }
+    },
     permission: 'all',
-    handler: async (c) => {
+    handler: async (c, { maxItems }) => {
+      // U14：top-N 截取（50+ 物品时此前撑满 2000 字符截断，LLM 通常只需几样）
       const counts = {}
       for (const it of c.bot?.inventory?.items() ?? []) {
         counts[it.name] = (counts[it.name] ?? 0) + (it.count ?? 1)
       }
-      return counts
+      const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, maxItems ?? 10)
+      return entries.length ? entries.map(([n, c]) => `${n}:${c}`).join(' ') : '背包为空'
     }
   })
 
@@ -217,6 +230,150 @@ export function createSkillRegistry (ctx) {
         return `已到达 ${blockName}: ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}${warn}`
       }
       return `找到 ${blockName} 但${REASON_TEXT[r.reason] ?? '移动失败'}：最近候选 ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}`
+    }
+  })
+
+  // ---- L2 进化（U13）：动作技能组（LLM 完全控制）----
+  // 26.1 包安全性实测（第五轮）：dig（block_dig 缺 sequence 补 0 序列化 OK）、
+  // place（block_place 全字段匹配）、use_item（rotation 必填）均可高层 API；
+  // 只有实体右键/攻击必须走 entity-actions 原始包（门控 bug）。动作技能统一守卫：
+  // exclusive 拒绝（动方块/实体与任务冲突）+ 前置检查 + 冷却防刷。
+
+  /** 动作技能冷却（dig/place/attack 防刷；equip/use_item 不拦）。 */
+  const ACTION_COOLDOWN_MS = 500
+  const lastActionAt = new Map()
+  function checkActionCooldown (name) {
+    const now = Date.now()
+    const last = lastActionAt.get(name) ?? 0
+    if (now - last < ACTION_COOLDOWN_MS) {
+      throw new Error(`${name} 冷却中（${Math.ceil((ACTION_COOLDOWN_MS - (now - last)) / 1000)}s 后重试）`)
+    }
+    lastActionAt.set(name, now)
+  }
+
+  register({
+    name: 'dig',
+    description: '挖掘指定坐标的方块（自动校验可挖性与距离；挖完立即返回，不收集掉落）。玩家说"挖这块"时用。',
+    parameters: {
+      type: 'object',
+      required: ['x', 'y', 'z'],
+      properties: {
+        x: { type: 'integer', description: '方块 X 坐标', example: 10 },
+        y: { type: 'integer', description: '方块 Y 坐标', example: 63 },
+        z: { type: 'integer', description: '方块 Z 坐标', example: -5 }
+      }
+    },
+    handler: async (c, { x, y, z }) => {
+      if (hasExclusiveActive()) {
+        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法挖掘（任务结束后可试）`)
+      }
+      if (!c.bot?.dig || !c.bot.canDigBlock) throw new Error('dig 能力不可用（插件缺失）')
+      const { Vec3 } = await import('vec3')
+      const block = c.bot.blockAt(new Vec3(x, y, z))
+      if (!block) return `坐标 (${x},${y},${z}) 没有方块（区块未加载？）`
+      if (!c.bot.canDigBlock(block)) {
+        return `方块 ${block.name} 不可挖掘（距离过远或不可挖掘）——先 move_to 靠近到 5 格内`
+      }
+      // 冷却只对实际执行生效（提示/校验类不占——LLM 连续尝试不同方块时不误伤）
+      checkActionCooldown('dig')
+      await withTimeout(c.bot.dig(block), 30000, 'dig timeout') // 断线保护（A4 同款）
+      return `已挖掘 ${block.name} @ ${x},${y},${z}`
+    }
+  })
+
+  register({
+    name: 'place',
+    description: '在指定位置放置手持物品（目标位必须为空；reference 取 face 反向相邻方块）。玩家说"放一块石头/种棵树"时用。',
+    parameters: {
+      type: 'object',
+      required: ['x', 'y', 'z', 'face'],
+      properties: {
+        x: { type: 'integer', description: '目标 X 坐标', example: 10 },
+        y: { type: 'integer', description: '目标 Y 坐标', example: 64 },
+        z: { type: 'integer', description: '目标 Z 坐标', example: -5 },
+        face: { type: 'string', description: '放置方向：up/down/north/south/east/west（默认 up）', example: 'up' }
+      }
+    },
+    handler: async (c, { x, y, z, face = 'up' }) => {
+      if (hasExclusiveActive()) {
+        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法放置（任务结束后可试）`)
+      }
+      if (!c.bot?.placeBlock) throw new Error('place 能力不可用（插件缺失）')
+      const { Vec3 } = await import('vec3')
+      const off = { up: [0, -1, 0], down: [0, 1, 0], north: [0, 0, 1], south: [0, 0, -1], east: [-1, 0, 0], west: [1, 0, 0] }[face]
+      if (!off) return `无效的 face: ${face}（up/down/north/south/east/west）`
+      const refBlock = c.bot.blockAt(new Vec3(x + off[0], y + off[1], z + off[2]))
+      if (!refBlock || refBlock.boundingBox === 'empty') return '参考方块不存在（目标位置悬空？）'
+      const dest = c.bot.blockAt(new Vec3(x, y, z))
+      if (dest && dest.boundingBox !== 'empty') return `目标位置被 ${dest.name} 占用`
+      if (!c.bot.heldItem) return '手里没有物品——先 equip <物品名>'
+      // 冷却只对实际执行生效（校验类不占）
+      checkActionCooldown('place')
+      const itemName = c.bot.heldItem.name
+      await withTimeout(c.bot.placeBlock(refBlock, face), 30000, 'place timeout')
+      return `已放置 ${itemName} @ ${x},${y},${z}`
+    }
+  })
+
+  register({
+    name: 'equip',
+    description: '装备背包中的物品到手持（挖矿放镐/战斗放剑/放置前取方块）。玩家说"拿出..."时用。',
+    parameters: {
+      type: 'object',
+      required: ['itemName'],
+      properties: { itemName: { type: 'string', description: '物品名（如 iron_pickaxe/diamond_sword/stone）', example: 'iron_pickaxe' } }
+    },
+    handler: async (c, { itemName }) => {
+      const item = c.bot.inventory?.items()?.find(it => it.name === itemName)
+      if (!item) return `背包里没有 ${itemName}（用 inventory_summary 查看）`
+      await withTimeout(c.bot.equip(item, 'hand'), 10000, 'equip timeout') // 断线保护（A4）
+      return `已装备 ${itemName}`
+    }
+  })
+
+  register({
+    name: 'use_item',
+    description: '使用手持物品（吃食物/喝药水等）。低血时进食用。',
+    handler: async (c) => {
+      if (!c.bot?.activateItem) throw new Error('use_item 能力不可用（插件缺失）')
+      const held = c.bot.heldItem?.name ?? '手持物品'
+      await withTimeout(c.bot.activateItem(), 5000, 'use_item timeout')
+      return `已使用 ${held}`
+    }
+  })
+
+  register({
+    name: 'attack',
+    description: '攻击附近指定名称/类型的实体（自动面向目标+存在检查+攻击冷却——反作弊防线）。玩家说"打那个僵尸"时用。',
+    parameters: {
+      type: 'object',
+      required: ['filter'],
+      properties: { filter: { type: 'string', description: '实体名子串或类型（hostile/zombie...）', example: 'zombie' } }
+    },
+    handler: async (c, { filter }) => {
+      if (hasExclusiveActive()) {
+        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法攻击（任务结束后可试）`)
+      }
+      checkActionCooldown('attack')
+      if (!c.bot?.entities) throw new Error('实体表不可用')
+      const { attackEntity } = await import('../core/entity-actions.js')
+      const { Vec3 } = await import('vec3')
+      // 从实体表找最近匹配（需真实 entity 引用——attackEntity 用 id/position）
+      const me = c.bot.entity
+      const f = filter?.toLowerCase()
+      const matches = []
+      for (const e of c.bot.entities instanceof Map ? c.bot.entities.values() : Object.values(c.bot.entities)) {
+        if (!e || e === me || !e.position) continue
+        if (f && !String(e.name ?? '').toLowerCase().includes(f) && e.type !== f) continue
+        matches.push(e)
+      }
+      if (matches.length === 0) return `附近没有匹配 ${filter} 的实体（nearby_entities 查看）`
+      matches.sort((a, b) => a.position.distanceTo(me.position) - b.position.distanceTo(me.position))
+      const target = matches[0]
+      if (!c.bot.entities?.[target.id]) return '目标已消失，重试'
+      try { c.bot.lookAt(target.position.offset(0, (target.height ?? 1.8) / 2, 0), true) } catch { /* 位置可能失效 */ }
+      attackEntity(c.bot, target) // 26.1 门控 bug 绕过（项目层原始包）
+      return `已攻击 ${target.name}（${Math.round(target.position.distanceTo(me.position))} 格）`
     }
   })
 

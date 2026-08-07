@@ -207,12 +207,17 @@ test('skills: reply 技能通过 sendChat 发送', async () => {
   assert.ok(ctx.bot.messages.includes('你好'))
 })
 
-test('skills: inventory_summary 聚合数量', async () => {
+test('skills: inventory_summary 聚合数量（U14 精简为字符串 Top-N）', async () => {
   const ctx = makeCtx()
   const { agent } = makeAgent(ctx, [])
   const r = await agent.act('steve', 'inventory_summary', {})
   assert.equal(r.ok, true)
-  assert.deepEqual(r.result, { diamond: 5 })
+  assert.equal(r.result, 'diamond:5', 'U14 后为紧凑字符串（不再全量对象撑爆上下文）')
+  // 空背包 → 空态文本
+  const ctx2 = makeCtx({ bot: { ...makeCtx().bot, inventory: { items: () => [] } } })
+  const { agent: a2 } = makeAgent(ctx2, [])
+  const empty = await a2.act('steve', 'inventory_summary', {})
+  assert.equal(empty.result, '背包为空')
 })
 
 test('provider: auto 模式 cloud 失败回退 ollama', async () => {
@@ -711,6 +716,111 @@ test('P2-5 修复: messageTokens 工具轮计入参数 JSON（估算不再系统
   const small = messageTokens({ role: 'assistant', content: '', toolCalls: [{ name: 'status', arguments: {} }] })
   const big = messageTokens({ role: 'assistant', content: '', toolCalls: [{ name: 'run_task', arguments: { type: 'mine', id: 'x', options: { blockTypes: ['iron_ore'], area: { x1: 0, y1: 0, z1: 0, x2: 10, y2: 10, z2: 10 } } } }] })
   assert.ok(big > small, `参数大的调用估算应更大: ${small} vs ${big}`)
+})
+
+// ---- L2 进化（U13/U14/U15）：动作技能 / 结果精简 / 会话工具记录 ----
+
+test('U13: dig 技能——可挖性校验/距离提示/exclusive 拒绝', async () => {
+  const arb = await import('../src/core/arbiter.js')
+  const dug = []
+  const bot = {
+    ...makeCtx().bot,
+    // canDigBlock 按真实语义（可挖 + 距离 ≤5.1）——far 场景借此走"不可挖掘"提示
+    canDigBlock: (b) => b.position.distanceTo(bot.entity.position) <= 5.1,
+    dig: async (b) => { dug.push(b.position) },
+    // position 用传入的 Vec3（dig handler 的 distanceTo 调用）
+    blockAt: (p) => ({ name: 'stone', boundingBox: 'solid', position: p }),
+    entity: { position: new Vec3(0, 64, 0) }
+  }
+  const ctx = makeCtx({ bot }, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  try {
+    const r = await agent.act('op1', 'dig', { x: 2, y: 63, z: 0 })
+    assert.equal(r.ok, true)
+    assert.ok(r.result.includes('已挖掘 stone'), r.result)
+    assert.equal(dug.length, 1)
+    // 距离过远 → 提示先 move_to
+    const far = await agent.act('op1', 'dig', { x: 100, y: 63, z: 100 })
+    assert.equal(far.ok, true)
+    assert.ok(far.result.includes('不可挖掘') || far.result.includes('move_to'), far.result)
+    assert.equal(dug.length, 1, '距离过远不得挖掘')
+    // exclusive 运行中拒绝
+    arb.setExclusiveOwner('g1')
+    const denied = await agent.act('op1', 'dig', { x: 2, y: 63, z: 0 })
+    assert.equal(denied.ok, false)
+    assert.ok(denied.result.includes('exclusive 任务 g1'), denied.result)
+    // 非 op 拒绝
+    const nonOp = await agent.act('creeper', 'dig', { x: 2, y: 63, z: 0 })
+    assert.equal(nonOp.ok, false)
+  } finally {
+    arb.setExclusiveOwner(null)
+  }
+})
+
+test('U13: place 技能——参考方块/占用检查/heldItem 前置', async () => {
+  const placed = []
+  const bot = {
+    ...makeCtx().bot,
+    blockAt: (p) => {
+      // (10,64,-5) 目标位为空；其下方 (10,63,-5) 是石头（face=up 参考）
+      if (p.x === 10 && p.z === -5 && p.y === 64) return { name: 'air', boundingBox: 'empty' }
+      if (p.x === 10 && p.z === -5 && p.y === 63) return { name: 'stone', boundingBox: 'solid' }
+      return { name: 'air', boundingBox: 'empty' }
+    },
+    heldItem: { name: 'stone' },
+    placeBlock: async (ref, face) => { placed.push([ref.position, face]) }
+  }
+  const ctx = makeCtx({ bot }, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('op1', 'place', { x: 10, y: 64, z: -5, face: 'up' })
+  assert.equal(r.ok, true)
+  assert.ok(r.result.includes('已放置 stone'), r.result)
+  assert.equal(placed.length, 1)
+  // 目标位占用 → 拒绝
+  const bot2 = {
+    ...makeCtx().bot,
+    blockAt: () => ({ name: 'stone', boundingBox: 'solid' }),
+    heldItem: { name: 'stone' },
+    placeBlock: async () => {}
+  }
+  const ctx2 = makeCtx({ bot: bot2 }, { ops: ['op1'] })
+  const { agent: a2 } = makeAgent(ctx2, [])
+  const occupied = await a2.act('op1', 'place', { x: 10, y: 64, z: -5, face: 'up' })
+  assert.equal(occupied.ok, true)
+  assert.ok(occupied.result.includes('占用'), occupied.result)
+  // 空手 → 提示 equip（参考方块须 solid 才能走到 heldItem 检查——检查顺序在占位之前）
+  const bot3 = {
+    ...makeCtx().bot,
+    blockAt: (p) => (p.y === 63 ? { name: 'stone', boundingBox: 'solid' } : { name: 'air', boundingBox: 'empty' }),
+    heldItem: null,
+    placeBlock: async () => {}
+  }
+  const ctx3 = makeCtx({ bot: bot3 }, { ops: ['op1'] })
+  const { agent: a3 } = makeAgent(ctx3, [])
+  const noItem = await a3.act('op1', 'place', { x: 10, y: 64, z: -5, face: 'up' })
+  assert.ok(noItem.result.includes('equip'), noItem.result)
+})
+
+test('U15: 会话工具记录——第二次 chat 的 system 注入上次工具操作', async () => {
+  const ctx = makeCtx()
+  ctx.bot.registry = { blocksByName: { iron_ore: { id: 44 } } }
+  ctx.bot.findBlocks = ({ matching }) => (matching({ type: 44 }) ? [new Vec3(10, 63, 0)] : [])
+  ctx.bot.blockAt = () => ({ boundingBox: 'empty', name: 'air' })
+  ctx.bot.once = () => {}
+  ctx.bot.removeListener = () => {}
+  ctx.bot.pathfinder = { setGoal: () => {}, stop: () => {}, goto: () => Promise.resolve() }
+  const { agent, provider } = makeAgent(ctx, [
+    { text: null, toolCalls: [{ id: 't1', name: 'status', arguments: {} }] },
+    { text: '完成' },
+    { text: '继续' }
+  ])
+  // 第一轮：调用 status 工具 → 记录进 calls
+  await agent.chat('steve', '看看状态')
+  // 第二轮：system 应含"最近工具操作: status→..."
+  await agent.chat('steve', '继续')
+  const lastSystem = provider.calls.at(-1).system
+  assert.ok(lastSystem.includes('最近工具操作'), `system 应注入工具记录: ${lastSystem}`)
+  assert.ok(lastSystem.includes('status'), lastSystem)
 })
 
 test('A2 修复: 预算裁剪生效——provider 有 contextWindow 时超预算消息被裁', async () => {

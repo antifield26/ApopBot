@@ -114,20 +114,26 @@ export function applyTokenBudget (messages, fixedTokens, budget) {
   return true
 }
 
-/** 读取会话并刷新 LRU 序（delete+set 移到迭代末尾）。 */
+/**
+ * 读取会话并刷新 LRU 序（delete+set 移到迭代末尾）。
+ * U15（第五轮）：会话值从纯数组升级为 { history, calls }——calls 记录最近工具操作
+ * （跨对话注入，LLM 知道上次实际执行了什么）。兼容旧结构（纯数组 → 转 history）。
+ */
 function getSession (user) {
   const v = SESSIONS.get(user)
   if (v !== undefined) {
     SESSIONS.delete(user)
     SESSIONS.set(user, v)
+    return Array.isArray(v) ? { history: v, calls: [] } : v
   }
-  return v
+  return null
 }
 
 /** 写入会话（LRU 上限驱逐最久未访问者）。 */
-function setSession (user, history) {
+function setSession (user, value) {
+  const session = Array.isArray(value) ? { history: value, calls: [] } : value
   if (SESSIONS.has(user)) SESSIONS.delete(user)
-  SESSIONS.set(user, history)
+  SESSIONS.set(user, session)
   if (SESSIONS.size > MAX_SESSIONS) {
     SESSIONS.delete(SESSIONS.keys().next().value)
   }
@@ -209,8 +215,11 @@ export class AgentInterface {
     const ac = new AbortController()
     this._abort = ac
     try {
-      // 会话注入：历史（裁剪后）+ 本轮用户消息（history 是副本，工具循环内 push 不污染存储）
-      const history = (getSession(user) ?? []).slice(-MAX_HISTORY_MESSAGES)
+      // 会话注入：历史（裁剪后）+ 本轮用户消息（history 是副本，工具循环内 push 不污染存储）。
+      // U15：session.calls 是跨对话工具操作记录（最近 20 条，注入用）
+      const session = getSession(user)
+      const history = (session?.history ?? []).slice(-MAX_HISTORY_MESSAGES)
+      const toolCalls = session?.calls ?? []
       const userMsg = String(text).slice(0, INPUT_MAX_CHARS)
       const messages = [...history, { role: 'user', content: userMsg }]
       const maxSteps = this.cfg.maxSteps ?? 5
@@ -222,7 +231,13 @@ export class AgentInterface {
         const tools = this.skills.listForTools()
         // A3：环境自动注入——每次工具轮重新生成（bot 移动后数据新鲜）；开关可关；
         // 缺失字段 environmentLine 内部兜底（返回空串）
-        const system = buildSystem(user, this.ctx.cfg) + (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`)
+        // U15：最近工具操作注入（≤3 条 × ≤60 字符摘要）——跨对话规划连续性的核心：
+        // 会话刻意不存工具轮，第二次 chat 时 LLM 不知道上次实际执行了什么
+        let toolLog = ''
+        if (toolCalls.length) {
+          toolLog = `\n最近工具操作: ${toolCalls.slice(-3).map(c => `${c.name}${c.result ? `→${c.result}` : ''}`).join('；')}`
+        }
+        const system = buildSystem(user, this.ctx.cfg) + (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`) + toolLog
         // A2：上下文预算裁剪（provider 有窗口时）——fixed = system + 工具定义；
         // 超预算按序裁剪历史/工具结果/用户消息。窗口 null（云端/测试）→ 不裁剪
         const window = this.provider.contextWindow?.()
@@ -264,6 +279,12 @@ export class AgentInterface {
           if (typeof output !== 'string') output = JSON.stringify(output)
           if (output.length > TOOL_RESULT_MAX_CHARS) output = output.slice(0, TOOL_RESULT_MAX_CHARS) + '…(截断)'
           results.push({ id: tc.id, name: tc.name, output })
+          // U15：跨对话工具操作记录（摘要 ≤120 字符；失败也记录——LLM 下次知道上次错在哪）
+          const summary = r.ok
+            ? (typeof r.result === 'string' ? r.result : JSON.stringify(r.result))
+            : `失败:${r.result}`
+          toolCalls.push({ name: tc.name, result: summary.slice(0, 120) })
+          if (toolCalls.length > 20) toolCalls.shift()
         }
         messages.push({ role: 'assistant', content: res.text ?? '', toolCalls: calls })
         messages.push({ role: 'user', content: '', toolResults: results })
@@ -273,10 +294,10 @@ export class AgentInterface {
         // 显式文案提示重试
         reply = `已达最大工具步数（${maxSteps}），请重试`
       }
-      // 回写会话：本轮 user 轮 + 最终 assistant 轮（纯文本，裁剪到上限）
+      // 回写会话：本轮 user 轮 + 最终 assistant 轮（纯文本，裁剪到上限）+ 工具操作记录
       history.push({ role: 'user', content: userMsg })
       history.push({ role: 'assistant', content: reply.slice(0, REPLY_MAX_CHARS) })
-      setSession(user, history.slice(-MAX_HISTORY_MESSAGES))
+      setSession(user, { history: history.slice(-MAX_HISTORY_MESSAGES), calls: toolCalls.slice(-20) })
       return { reply: reply.slice(0, REPLY_MAX_CHARS) }
     } catch (err) {
       if (err.name === 'AbortError') return { reply: '请求已中止' }
