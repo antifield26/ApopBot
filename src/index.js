@@ -187,6 +187,7 @@ const stopWatch = watchConfig()
 // 只读 HTTP 状态端点（U3）：/health + /metrics，默认关闭（cfg.http.enabled=true 才监听）
 const statusServer = createStatusServer(() => ctx.cfg, logger, () => ({
   conn: ctx.conn,
+  bot: ctx.bot, // U12：/metrics 坐标/血量/饱食度（运维看"卡在哪"）
   tasks: ctx.tasks?.getStatus() ?? [],
   sessionCount: ctx.agent?.sessionCount?.() ?? 0,
   lastLlmLatencyMs: ctx.agent?.usage?.latencyMs ?? null,

@@ -74,6 +74,31 @@ test('/metrics：200 且含 tasks/l2 形状', async (t) => {
   assert.ok(Array.isArray(r.body.tasks))
 })
 
+test('U12: /metrics 含 bot 坐标/血量/饱食度与等待原因（运维判断"卡在哪"）', async (t) => {
+  const state = makeState({
+    bot: {
+      entity: { position: { x: 10.6, y: 64.2, z: -5.4 } },
+      health: 12,
+      food: 7
+    }
+  })
+  const server = makeServer(state)
+  t.after(() => server.stop())
+  const port = await waitForPort(server)
+  const r = await fetchJson(port, '/metrics')
+  assert.equal(r.status, 200)
+  assert.deepEqual(r.body.bot.position, [11, 64, -5], '坐标应取整')
+  assert.equal(r.body.bot.health, 12)
+  assert.equal(r.body.bot.food, 7)
+  assert.equal(r.body.tasks[0].waitingReason, 'no-target')
+  // 无实体（断线期）→ position null
+  const server2 = makeServer(makeState({ bot: null }))
+  t.after(() => server2.stop())
+  const port2 = await waitForPort(server2)
+  const r2 = await fetchJson(port2, '/metrics')
+  assert.equal(r2.body.bot.position, null, '断线期 position 应为 null 而非 500')
+})
+
 test('/health：断线状态 ok=false', async (t) => {
   const server = makeServer(makeState({ conn: { state: 'reconnecting', reconnectCount: 5, lastError: 'ECONNRESET' } }))
   t.after(() => server.stop())

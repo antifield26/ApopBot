@@ -70,11 +70,19 @@ function healthPayload (s) {
 
 function metricsPayload (s) {
   const mem = process.memoryUsage()
+  const e = s.bot?.entity?.position
   return {
     process: {
       uptimeSec: Math.round(process.uptime()),
       rssMb: Math.round(mem.rss / 1024 / 1024),
       heapMb: Math.round(mem.heapUsed / 1024 / 1024)
+    },
+    bot: {
+      // U12：bot 当前坐标/血量/饱食度——配合 tasks.waitingReason 判断"卡在哪"
+      //（如坐标不动 + waitingReason=no-target = 无怪；inventory-full = 背包满）
+      position: e ? [Math.round(e.x), Math.round(e.y), Math.round(e.z)] : null,
+      health: s.bot?.health ?? null, // update_health 包通道（26.1 实体元数据不解析 health）
+      food: s.bot?.food ?? null
     },
     connection: {
       state: s.conn?.state ?? 'unknown',
