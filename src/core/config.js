@@ -190,9 +190,11 @@ function readJson (file) {
 
 /**
  * 加载并合并配置。优先级：内置默认 < default.json < --config 文件 < MCBOT_* 环境变量 < CLI 参数
+ * @param {{ argv?: string[], env?: object }} [opts] skipProdConfig 仅供测试：不合并
+ *   工作区 config/config.json（测试必须独立于本地真实配置——本地测试会创建该文件）
  * @returns {object} 冻结的配置对象
  */
-export function loadConfig ({ argv = process.argv.slice(2), env = process.env } = {}) {
+export function loadConfig ({ argv = process.argv.slice(2), env = process.env } = {}, { skipProdConfig = false } = {}) {
   const cli = parseCli(argv)
   const envCfg = parseEnv(env)
 
@@ -202,7 +204,7 @@ export function loadConfig ({ argv = process.argv.slice(2), env = process.env } 
     const fileCfg = readJson(explicit)
     if (fileCfg === null) throw new Error(`指定的配置文件不存在: ${explicit}`)
     cfg = deepMerge(cfg, fileCfg)
-  } else {
+  } else if (!skipProdConfig) {
     // 无显式 --config：存在 config/config.json（按 README 复制示例的生产路径）则合并——
     // 此前只读 default.json，config.json 仅在 NSSM AppParameters 显式传入时生效
     const prodFile = readJson(path.join(ROOT, 'config', 'config.json'))

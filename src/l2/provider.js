@@ -235,8 +235,16 @@ class OllamaProvider {
     // native 响应：data.message（非 choices[0].message）；usage 在 prompt_eval_count/eval_count
     const msg = data.message
     const toolCalls = (msg?.tool_calls ?? []).map((tc, i) => {
+      // native /api/chat 的 arguments 是对象（非 OpenAI 兼容的 JSON 字符串）——
+      // JSON.parse(对象) 抛错被吞 → LLM 参数全部丢失成 {}（带参技能全失效）。
+      // 字符串才 parse（防御其他端点/未来变化），对象直接用
+      const raw = tc.function?.arguments
       let args = {}
-      try { args = JSON.parse(tc.function?.arguments ?? '{}') } catch { /* 参数解析失败按空 */ }
+      if (typeof raw === 'string') {
+        try { args = JSON.parse(raw) } catch { /* 参数解析失败按空 */ }
+      } else if (raw && typeof raw === 'object') {
+        args = raw
+      }
       return { id: tc.id ?? `tc_${i}`, name: tc.function?.name, arguments: args }
     })
     // token 计量（U5）：prompt_eval_count/eval_count（native 语义）
@@ -306,7 +314,10 @@ function toOpenAIMessages (m) {
       tool_calls: m.toolCalls.map(tc => ({
         id: tc.id,
         type: 'function',
-        function: { name: tc.name, arguments: JSON.stringify(tc.arguments ?? {}) }
+        // native /api/chat 的 arguments 必须传对象（map）——OpenAI 兼容的 JSON
+        // 字符串会让 Ollama 解析报 400 'can't find closing }'（实测：第二轮必炸）。
+        // 注意：Ollama 响应解析侧也要对应处理（_chatOnce 已做双形态）
+        function: { name: tc.name, arguments: tc.arguments ?? {} }
       }))
     }]
   }

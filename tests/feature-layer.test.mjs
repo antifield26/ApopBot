@@ -19,7 +19,7 @@ function makeLogger () {
 }
 
 function makeCtx () {
-  const cfg = loadConfig({ argv: [], env: {} }) // tasks: [] → load 空转，无需真 bot API
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true }) // tasks: [] → load 空转，无需真 bot API
   return { cfg, logger: makeLogger(), bot: null, tasks: null, conn: null, agent: null, commands: null, chatHandler: null }
 }
 

@@ -6,7 +6,7 @@ import path from 'node:path'
 import { loadConfig, validateConfig, assertLogDirWritable } from '../src/core/config.js'
 
 test('内置默认值：生产基线', () => {
-  const cfg = loadConfig({ argv: [], env: {} })
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
   assert.equal(cfg.mcVersion, '26.1.2')
   assert.equal(cfg.host, 'localhost')
   assert.equal(cfg.port, 25565)
@@ -58,13 +58,13 @@ test('validateConfig 校验非法值', () => {
   assert.ok(errors.some(e => e.includes('port')))
   assert.ok(errors.some(e => e.includes('auth')))
 
-  const good = loadConfig({ argv: [], env: {} })
+  const good = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
   assert.equal(validateConfig(good).ok, true)
 })
 
 // M6 修复：新增校验项
 function base () {
-  return loadConfig({ argv: [], env: {} })
+  return loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
 }
 
 test('A2/F3: config 任务 options 过统一 schema（此前静默放行 → init 抛错被吞 → 任务静默不运行）', () => {
@@ -178,28 +178,28 @@ test('M6: L2 环境变量映射与数值转换', () => {
 })
 
 test('未知顶层键拒绝（拼写错误不再静默忽略）', () => {
-  const cfg = loadConfig({ argv: [], env: {} })
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
   const { ok, errors } = validateConfig({ ...cfg, mcversion: '1.20' })
   assert.equal(ok, false)
   assert.ok(errors.some(e => e.includes('未知配置键')), JSON.stringify(errors))
 })
 
 test('log.pretty 非布尔拒绝（MCBOT_LOG_PRETTY=1 场景）', () => {
-  const cfg = loadConfig({ argv: [], env: {} })
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
   const { ok, errors } = validateConfig({ ...cfg, log: { ...cfg.log, pretty: '1' } })
   assert.equal(ok, false)
   assert.ok(errors.some(e => e.includes('log.pretty')), JSON.stringify(errors))
 })
 
 test('log.dir 非字符串拒绝（config 置 log:null 不抛 TypeError）', () => {
-  const cfg = loadConfig({ argv: [], env: {} })
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
   const { ok, errors } = validateConfig({ ...cfg, log: null })
   assert.equal(ok, false)
   assert.ok(errors.some(e => e.includes('log.dir')), JSON.stringify(errors))
 })
 
 test('畸形形状配置不抛 TypeError（reconnect:null / chat:null）', () => {
-  const cfg = loadConfig({ argv: [], env: {} })
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
   const r1 = validateConfig({ ...cfg, reconnect: null })
   assert.equal(r1.ok, false)
   const r2 = validateConfig({ ...cfg, chat: null })
@@ -207,7 +207,7 @@ test('畸形形状配置不抛 TypeError（reconnect:null / chat:null）', () =>
 })
 
 test('l2 数值/模型校验（maxSteps/超时/ollamaModel）', () => {
-  const cfg = loadConfig({ argv: [], env: {} })
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
   const base = { ...cfg, l2: { ...cfg.l2, enabled: true } }
   for (const [patch, kw] of [
     [{ maxSteps: 'abc' }, 'l2.maxSteps'],
@@ -236,14 +236,14 @@ test('MCBOT_TASKS_FILE 任务文件合并（内部键加载后删除）', () => 
 })
 
 test('assertLogDirWritable：空路径报错（mkdirSync recursive 对已存在文件不抛，需无效路径）', () => {
-  const cfg = loadConfig({ argv: [], env: {} })
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
   assert.throws(
     () => assertLogDirWritable({ ...cfg, log: { ...cfg.log, dir: '' } }),
     /日志目录不可写/)
 })
 
 test('P1-4 修复：顶层 _comment 放行（config.example.json 复制为 config.json 即可用）', () => {
-  const cfg = { ...loadConfig({ argv: [], env: {} }), _comment: '生产配置示例' }
+  const cfg = { ...loadConfig({ argv: [], env: {} }, { skipProdConfig: true }), _comment: '生产配置示例' }
   const { ok, errors } = validateConfig(cfg)
   assert.equal(ok, true, `含顶层 _comment 的配置应通过校验: ${errors.join('; ')}`)
 })
@@ -263,7 +263,7 @@ test('B2: ENV_MAP 覆盖 l2.maxTokens/cloudTimeoutMs/ollamaTimeoutMs', () => {
 })
 
 test('B2: scheduled fish 缺 durationMinutes 在配置校验期报错（与 afk 一致）', () => {
-  const cfg = { ...loadConfig({ argv: [], env: {} }),
+  const cfg = { ...loadConfig({ argv: [], env: {} }, { skipProdConfig: true }),
     tasks: [{ id: 'f', type: 'fish', schedule: '0 20 * * *' }] }
   const { ok, errors } = validateConfig(cfg)
   assert.equal(ok, false)
@@ -285,7 +285,7 @@ test('B7: 无 --config 时存在 config/config.json 则合并（README 复制即
   const backup = existed ? fs.readFileSync(file, 'utf8') : null
   fs.writeFileSync(file, JSON.stringify({ host: 'prod.example.com' }))
   try {
-    const cfg = loadConfig({ argv: [], env: {} })
+    const cfg = loadConfig({ argv: [], env: {} }) // B7 专测 prod 合并——必须真实读取（有备份恢复）
     assert.equal(cfg.host, 'prod.example.com', 'config.json 应合并覆盖 default.json（此前只读 default）')
     assert.equal(cfg.mcVersion, '26.1.2', 'default 键应保留（合并而非替换）')
   } finally {

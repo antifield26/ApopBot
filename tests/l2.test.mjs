@@ -11,7 +11,7 @@ function makeLogger () {
 }
 
 function makeCtx (overrides = {}, cfgPatch = {}) {
-  const cfg = { ...loadConfig({ argv: [], env: {} }), ...cfgPatch }
+  const cfg = { ...loadConfig({ argv: [], env: {} }, { skipProdConfig: true }), ...cfgPatch }
   const tasks = { getStatus: () => [{ id: 'm1', state: 'running' }], addTask: () => {}, removeTask: async () => {} }
   const conn = { getStatus: () => ({ state: 'connected', reconnectCount: 2 }) }
   const bot = {

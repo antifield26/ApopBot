@@ -117,7 +117,47 @@ test('OllamaProvider: tool_calls 解析与 native /api/chat 传参（A1）', asy
   assert.deepEqual(res.toolCalls, [{ id: 'a', name: 'status', arguments: { x: 1 } }])
   assert.deepEqual(res.usage, { inputTokens: 10, outputTokens: 5 }, 'native prompt_eval_count/eval_count 归一化')
   assert.equal(p.contextWindow(), 4096, 'contextWindow 应返回配置窗口')
-  restoreFetch()
+})
+
+test('修复: Ollama 工具轮 arguments 必须传对象——OpenAI 字符串格式致 400（本地测试实测）', async () => {
+  // 根因：toOpenAIMessages 把 arguments JSON.stringify 成字符串（OpenAI 兼容），
+  // 而 Ollama native /api/chat 期望对象 → 第二轮（回填 tool_calls）必 400
+  // "Value looks like object, but can't find closing '}' symbol"
+  const calls = mockFetch(() => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ message: { role: 'assistant', content: 'done', tool_calls: [] }, prompt_eval_count: 1, eval_count: 1 })
+  }))
+  const l2 = { ...l2Base, provider: 'ollama', ollamaUrl: 'http://127.0.0.1:11434' }
+  const p = createProvider({ l2 }, makeLogger())
+  const messages = [
+    { role: 'user', content: '打那个僵尸' },
+    { toolCalls: [{ id: 'tc_1', name: 'attack', arguments: { filter: 'zombie' } }] },
+    { toolResults: [{ id: 'tc_1', output: '已攻击 zombie' }] }
+  ]
+  await p.chat(messages, { tools: [{ name: 'attack', description: 'a', parameters: { type: 'object' } }] })
+  const sent = calls[0].body.messages.find(m => m.role === 'assistant' && m.tool_calls)
+  assert.equal(typeof sent.tool_calls[0].function.arguments, 'object', 'arguments 必须是对象（Ollama native 格式，字符串会 400）')
+  assert.deepEqual(sent.tool_calls[0].function.arguments, { filter: 'zombie' })
+})
+
+test('修复: Ollama 响应 arguments 对象形态直接使用（JSON.parse 对象吞参）', async () => {
+  // 真实 Ollama native 响应的 arguments 是对象——原 JSON.parse(对象) 抛错被吞 →
+  // 参数全丢成 {}。双形态：字符串 parse、对象直用
+  const mock = mockFetch(() => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      message: { role: 'assistant', content: null, tool_calls: [{ id: 'b', type: 'function', function: { name: 'move_to', arguments: { x: 10, y: 64, z: 20 } } }] },
+      prompt_eval_count: 1,
+      eval_count: 1
+    })
+  }))
+  const l2 = { ...l2Base, provider: 'ollama', ollamaUrl: 'http://127.0.0.1:11434' }
+  const p = createProvider({ l2 }, makeLogger())
+  const res = await p.chat([{ role: 'user', content: '走过去' }])
+  assert.deepEqual(res.toolCalls, [{ id: 'b', name: 'move_to', arguments: { x: 10, y: 64, z: 20 } }], '对象 arguments 应原样保留（此前被 JSON.parse 吞成 {}）')
+  mock.length // 抑制未使用告警
 })
 
 test('U9: diagnose 端点可达即连通（405 是方法错不是网络错）', async () => {
