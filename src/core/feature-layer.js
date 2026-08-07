@@ -12,6 +12,7 @@ import { TaskManager } from '../tasks/manager.js'
 import { createCommandRegistry } from '../commands/commands.js'
 import { createL2 } from '../l2/index.js'
 import { sendChat } from './chat.js'
+import { createNotifier } from './notify.js'
 
 export function createFeatureLayerManager (ctx, logger) {
   let pending = Promise.resolve()
@@ -51,6 +52,8 @@ export function createFeatureLayerManager (ctx, logger) {
 
     ctx.tasks = new TaskManager(ctx.cfg, log(), { bot }, ctx.stateStore, () => ctx.agent)
     await ctx.tasks.load(ctx.cfg) // load 内部按条目容错，不抛
+    // U10：webhook 通知（每次重建取最新 cfg——!reload 的 notify 配置即时生效）
+    const notifier = createNotifier(ctx.cfg, log())
 
     // A5（第四轮）：config 任务计数器回灌——_snapshotCounters 全量写（含 config 任务），
     // 但 restoreCounters 此前只在下方 ad-hoc 恢复循环调用 → 重建后 config 任务计数归零，
@@ -110,6 +113,8 @@ export function createFeatureLayerManager (ctx, logger) {
       const pos = bot.entity?.position
       const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
       sendChat(bot, `§c[bot] 已死亡（${loc}）——任务已暂停，自动重生中`).catch(() => { /* 聊天通道未就绪 */ })
+      // U10：死亡推送（webhook 独立于游戏聊天——无人值守时玩家可能不在线）
+      notifier.send('death', `Bot 死亡（${loc}）`, '任务已暂停，自动重生中')
       // U6：LLM 一句话播报（附加层——任何失败回退模板，不得阻塞重生）
       if (ctx.agent?.summarize) {
         ctx.agent.summarize(`Bot 在 Minecraft 服务器死亡（坐标 ${loc}）。用一句话向服务器玩家播报（如可能的死因），简洁。`)
@@ -128,6 +133,7 @@ export function createFeatureLayerManager (ctx, logger) {
       const pos = bot.entity?.position
       const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
       sendChat(bot, `§a[bot] 已重生（${loc}），任务已恢复`).catch(() => { /* 聊天通道未就绪 */ })
+      notifier.send('respawn', `Bot 已重生（${loc}）`, '任务已恢复') // U10
     })
 
     log().info({ bot: ctx.cfg.username }, 'feature layer ready')
@@ -137,6 +143,7 @@ export function createFeatureLayerManager (ctx, logger) {
     const s = ctx.conn?.getStatus?.()
     if (s && s.reconnectCount > 0) {
       try { await sendChat(bot, `§a[bot] 已重新连接（累计重连 ${s.reconnectCount} 次）`, ctx.cfg.chat?.maxLength) } catch { /* 聊天通道可能未就绪 */ }
+      notifier.send('reconnect', `Bot 已重新连接（累计重连 ${s.reconnectCount} 次）`) // U10
     }
   }
 

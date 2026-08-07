@@ -28,6 +28,7 @@ const BUILTIN_DEFAULTS = {
     rotate: { frequency: 'daily', keepDays: 14 }
   },
   tasks: [],
+  notify: { webhook: '' }, // U10：运维 webhook 通知（空 = 关闭；企业微信/Server酱自动识别）
   mineflayerPlugins: {
     pathfinder: true,
     collectBlock: true,
@@ -315,6 +316,10 @@ export function validateConfig (cfg) {
   if (!Number.isInteger(cfg.http?.port) || cfg.http.port < 1 || cfg.http.port > 65535) {
     errors.push(`http.port 必须是 1-65535 的整数，当前: ${cfg.http?.port}`)
   }
+  // U10：webhook 通知可选——空字符串/未配置 = 关闭；非空必须是字符串（含 https:// 的完整 URL）
+  if (cfg.notify && typeof cfg.notify.webhook !== 'string') {
+    errors.push('notify.webhook 必须是字符串（webhook URL 或空字符串关闭）')
+  }
   if (!Array.isArray(cfg.tasks)) errors.push('tasks 必须是数组')
 
   // 任务条目校验：id 非空且唯一、类型已知、scheduled 完成语义、options 形状
@@ -363,6 +368,7 @@ export function validateConfig (cfg) {
   const KNOWN_TOP_KEYS = new Set([
     'mcVersion', 'host', 'port', 'username', 'auth', 'spawnTimeoutMs',
     'reconnect', 'ops', 'log', 'tasks', 'mineflayerPlugins', 'l2', 'chat', 'http', 'scheduleTimezone',
+    'notify', // U10：webhook 运维通知
     '_comment' // JSON 注释惯例（config.example.json 顶层使用；复制为 config.json 必须放行）
   ])
   for (const k of Object.keys(cfg)) {

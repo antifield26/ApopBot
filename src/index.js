@@ -9,6 +9,7 @@ import { createL2 } from './l2/index.js'
 import { setupSignals } from './core/signals.js'
 import { createStatusServer } from './core/http-status.js'
 import { createStateStore } from './core/state.js'
+import { createNotifier } from './core/notify.js'
 
 // 入口：参数 → 配置 → logger → ConnectionManager → 功能层（tasks/命令/L2）→ 信号处理
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -33,6 +34,8 @@ let logger = createLogger(cfg)
 // 与连接层 fatal 语义一致 exit(2) 停止等人工（flush 带 1s 兜底防卡死）
 function fatalExit (err, label) {
   logger.fatal({ err: err?.message ?? String(err) }, `${label} —— 按 fatal 停止等人工`)
+  // U10：fatal 停服推送（无人值守时唯一感知通道；ctx.notifier 随 reload 更新）
+  ctx.notifier?.send('fatal', `Bot 停止等人工（${label}）`, err?.message ?? String(err))
   let exited = false
   const exitNow = () => { if (!exited) { exited = true; process.exit(2) } }
   try { logger.flush(exitNow) } catch { exitNow() }
@@ -56,7 +59,8 @@ const ctx = {
   agent: null,
   commands: null,
   stateStore: null, // U1：ad-hoc 任务/计数器快照（feature-layer 重建时传 TaskManager）
-  onReload: null // !reload 命令走同一 reload 队列（与 SIGHUP/配置监视一致）
+  onReload: null, // !reload 命令走同一 reload 队列（与 SIGHUP/配置监视一致）
+  notifier: createNotifier(cfg, logger) // U10：webhook 通知（fatalExit 使用；reload 更新）
 }
 
 // 功能层每次 spawn 全量重建（B1：重连后任务/命令/chat 监听必须绑定新 bot）
@@ -110,6 +114,7 @@ async function reload () {
   const httpChanged = JSON.stringify(newCfg.http) !== JSON.stringify(ctx.cfg.http)
   ctx.cfg = newCfg
   ctx.conn.updateCfg(newCfg)
+  ctx.notifier = createNotifier(newCfg, logger) // U10：webhook 配置随 reload 更新（fatalExit 使用）
 
   if (logChanged) {
     logger.info({ level: newCfg.log.level }, '日志配置变化，重建 logger')
