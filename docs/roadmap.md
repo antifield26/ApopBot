@@ -1,6 +1,26 @@
-# 项目路线图（2026-08-06 第二轮全面评估）
+# 项目路线图（2026-08-06 第二轮评估 / 2026-08-07 第三轮评估）
 
-第二轮评估（3 Explore + 1 Plan + 逐项复核）产出的三档路线图。完善档（P0/P1/高价值 P2）与升级档（U1/U2/U3/U4+U5）已于 2026-08-06 全部实施；本文档记录已完成项、缓做项与明确不做项。
+第二轮评估（3 Explore + 1 Plan + 逐项复核）产出的三档路线图，2026-08-06 全部实施；第三轮评估（3 Explore + 1 Plan + 26 条发现逐条 verdict）的完善档/升级档/重构档已于 2026-08-07 全部实施。本文档记录已完成项、缓做项与明确不做项。
+
+## 第三轮已完成（2026-08-07，commit 74b619b..8aed83d，共 12 个 commit）
+
+### 完善档（P0/P1/高价值 P2，8 个 commit C1-C8）
+- **C1 聊天通道安全（P0）**：裸 § 聊天三处改走 sendChat（feature-layer 未知命令/重连广播、follow 目标消失）——含 § 被 Paper 踢出 → fatal 停服（53d3352 回归）；空文本不发包
+- **C2 断线一致性（P1）**：goto 与 bot end 事件 race（断线后 path_stop 永不到达 → 挂死/轮询器泄漏/findBusy 不复发）；死亡 → 暂停任务 + 自动重生；process exit 同步落盘
+- **C3 命令反馈与调度链路（P1）**：!task start 不再 await run 完成 promise（常驻任务回复挂到结束）；scheduled 排队保留 durationMinutes（drain 补挂）；croner 漂浮 rejection → fatal exit 杜绝（runScheduled 容错 + combat 触发源判空）；!reload 运行时异常如实反馈
+- **C4 任务状态机显式化（重构 R1）**：per-wait token（跨代际串扰根治）、pause-init 窗口伪死锁、start() 采纳窗口关闭；mine/chop/farm collect 分批响应 pause
+- **C5 配置 schema 化（重构 R3）**：src/core/task-schemas.js（!task new/run_task options 零校验根治）；find_block maxDistance 16-256（主线程冻结防护）；afk intervalMinutes ≥ 1；combat 同格零向量/aggroRange 陷阱
+- **C6 热重载与持久化**：httpChanged 赋值前计算（热重载死代码）；U1 计数器回灌 + removeTask 清理
+- **C7 L2 会话治理**：SESSIONS LRU 上限 32、冷却按玩家、maxSteps 耗尽显式文案、auto 粘滞回退、!agent chat 开放全员（buildSystem 普通玩家分支转活跃）
+- **C8 移动权仲裁器（重构 R2）**：src/core/arbiter.js——exclusive 任务登记/查询，!follow 冲突拒绝、!find 警告统一信息源；farm anchor 区域中心 + 距离告警；实际到达坐标汇报；gotoNearest 空数组守卫
+
+### 升级档（U6-U9，4 个 commit）
+- **U6 死亡重生 + LLM 播报**：death 经 summarize 一句话播报死因；respawn 自动恢复任务
+- **U7 L2 主动播报**：任务终态 LLM 一句话总结（固定模板之后，1 分钟冷却防刷屏，失败回退）
+- **U8 !task list 增强**：排队位置/时长剩余/cron 下次触发（croner.nextRun）
+- **U9 !agent doctor**：cloud/ollama 连通性诊断（5s 短超时探测，缺 key 明确报未配置）
+
+## 第二轮已完成（2026-08-06，commit 9de9070..3c4255d）
 
 ## 已完成（2026-08-06，commit 9de9070..3c4255d）
 
@@ -34,12 +54,15 @@
 ### R1 任务类型单一来源（1 天内）
 manager.js `TASK_TYPES` + config.js `KNOWN_TASK_TYPES` + `NATURAL_COMPLETION_TYPES` 三处手工同步（目前靠一致性断言测试防漂移）。改法：`src/tasks/types.js` 导出 `{ name → { factory, naturalCompletion } }`，两处导入；`run_task` 技能的类型提示从注册表生成。风险低（纯搬移）。
 
-### R2 任务公共代码消重（需阶段 0 测试网之后）
-- `_cancel` 三份重复（mine/farm/chop 的 collectBlock.cancelTask + pathfinder.stop）
+### R2 任务公共代码消重（部分已完成，剩余可选）
+- ~~`_cancel` 三份重复~~：已完成（统一 stopPathfinding）
+- ~~breed._approach 手写轮询~~：已完成（统一 approachEntity，C2 迁移）
 - NoChests 处理 + collect 重试三处重复（可提 `collectWithChestFallback`）
 - `_isArea` 四份重复（chop/combat/breed/farm → BaseTask 方法或 tasks/util.js）
-- breed._approach 手写轮询不响应 pause（改 `_internalWait` 模式）
-- 风险中：重试超时/文案/计数语义有细微差异，无测试重构是事故高发区——阶段 0 已补 run 主循环测试，可做
+
+### R3 后续可选增强（第三轮遗留观察）
+- 仲裁器跨重启/热重载状态验证（当前登记随任务重建天然清零，重连期间 !follow 行为需真机验证）
+- L2 主动播报扩展：任务长 idle（waitingReason 持续 N 分钟）经 LLM 播报原因
 
 ## 明确不做（及理由）
 

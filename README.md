@@ -8,7 +8,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 - **连接守护**：断线原因分类（LoginGuard 思想）、指数退避重连（5s→300s）、10s 防抖防崩溃循环、spawn 超时兜底；名字冲突/白名单/版本不匹配/消息违规（illegal）算致命，其余退避重连
 - **重连自愈**：每次 spawn 全量重建功能层（任务/命令/LLM 重新绑定新 bot，一次重连后一切照常）
 - **任务系统**：7 种任务——挖矿（区域+背包满暂停）、钓鱼、AFK 防踢、**种植收割、伐木、战斗巡逻、养殖**；cron 调度（run-completion 语义，防重叠+时长上限）、热重载（SIGHUP/改配置/`!reload` 同一队列）
-- **聊天命令**：`!ping` `!status` `!task`（含 `!task new/remove` 临时任务）`!reload` `!say` `!pos` `!follow` `!find`（地表方块定位）`!agent`，op 白名单 + 速率限制 + 256 字符自动分片（见下方指令列表）
+- **聊天命令**：`!ping` `!status` `!task`（含 `!task new/remove` 临时任务）`!reload` `!say` `!pos` `!follow` `!find`（地表方块定位）`!agent`（chat/doctor/reset 全员可用，act 需 op），op 白名单 + 速率限制 + 256 字符自动分片（见下方指令列表）
 - **生产设施**：pino 结构化日志（按天轮转）、NSSM Windows 服务（自启+崩溃重启+fatal 停止等人工）、PowerShell 一键部署（`scripts/deploy.ps1`）、兼容性门禁、冒烟测试
 
 ## 指令列表
@@ -19,19 +19,23 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 |---|---|---|
 | `!ping` | all | 心跳检查，回复 `pong (uptime=...)` |
 | `!status` | op | 状态摘要：坐标 / 血量 / 饱食度 / 连接状态 / 重连次数 / 内存 / 任务 |
-| `!task list` | op | 全部任务：id、状态、等待原因、计数 |
-| `!task new <type> <id> [jsonOptions]` | op | 运行时创建并启动任务（不持久化），如 `!task new mine probe-1 {"blockTypes":["iron_ore"]}` |
+| `!task list` | op | 全部任务：id、状态、等待原因、计数、排队位置、时长剩余、下次 cron 触发 |
+| `!task new <type> <id> [jsonOptions]` | op | 运行时创建并启动任务（不持久化），如 `!task new mine probe-1 {"blockTypes":["iron_ore"]}`；options 过 schema 校验（类型/范围） |
 | `!task remove <id>` | op | 移除任务（含其 cron 调度） |
-| `!task start\|stop\|pause\|resume <id>` | op | 启停/暂停/恢复任务（`!task start` 支持终态重启） |
-| `!reload` | op | 热重载配置与任务（与改配置文件/`nssm restart` 等效） |
+| `!task start\|stop\|pause\|resume <id>` | op | 启停/暂停/恢复任务（`!task start` 立即反馈已启动/排队/失败，支持终态重启） |
+| `!reload` | op | 热重载配置与任务（与改配置文件/`nssm restart` 等效；http 配置变更也即时生效） |
 | `!say <text>` | op | 以 Bot 身份说话（超长自动分片） |
 | `!pos` | op | 当前坐标与朝向（调试） |
-| `!follow <player>\|off` | op | 跟随/停止跟随玩家（需 `mineflayerPlugins.follow: true`） |
-| `!find <方块名> [maxDistance]` | op | 找到指定方块的地表暴露位置（上方 2 格为天空，排除洞穴/液体）并走过去（3 格内）；报告坐标/距离/耗时。maxDistance 16-256（默认 64）。已知局限：高洞顶洞穴的 cave_air 也可能被判为地表（pc 版无 heightmap） |
-| `!agent chat <text>` | op | 与 L2 LLM 对话（需 `l2.enabled=true`；LLM 通过技能执行动作） |
+| `!follow <player>\|off` | op | 跟随/停止跟随玩家（需 `mineflayerPlugins.follow: true`；exclusive 任务运行中拒绝——移动互斥） |
+| `!find <方块名> [maxDistance]` | op | 找到指定方块的地表暴露位置（上方 2 格为天空，排除洞穴/液体）并走过去（3 格内）；报告实际到达坐标/距离/耗时。maxDistance 16-256（默认 64）。已知局限：高洞顶洞穴的 cave_air 也可能被判为地表（pc 版无 heightmap） |
+| `!agent chat <text>` | all | 与 L2 LLM 对话（需 `l2.enabled=true`；LLM 通过技能执行动作，危险操作仍由技能层 op 门强制） |
 | `!agent act <name> [json]` | op | 直调技能（不经 LLM），如 `!agent act status {}`、`!agent act move_to {"x":10,"y":64,"z":10}` |
+| `!agent doctor` | all | cloud/ollama 连通性诊断 + 生效模式/最近延迟（只读） |
+| `!agent reset` | all | 清空调用者会话记忆 |
 
-聊天安全层：回复消息自动 ≤256 字符分片（`chat.maxLength`）；op 命令冷却（`chat.commandCooldownMs`）防刷屏；**发送时统一剥离 `§` 颜色码**（Paper 26.1.2 实测含颜色码的消息会被踢出，见下文兼容性说明）。
+聊天安全层：回复消息自动 ≤256 字符分片（`chat.maxLength`）；op 命令冷却（`chat.commandCooldownMs`）防刷屏；**发送时统一剥离 `§` 颜色码**（Paper 26.1.2 实测含颜色码的消息会被踢出，见下文兼容性说明；所有出口——含命令反馈/重连广播/任务通知——都走 sendChat 剥离）。
+
+存活保障：死亡后自动重生（任务暂停 → LLM 一句话播报死因 → `respawn` 后自动恢复任务并播报重生位置）；断线重连后进行中的寻路不再挂死（`goto` 与断线事件 race）；配置/状态快照在进程退出时同步落盘。
 
 ## 任务类型
 
