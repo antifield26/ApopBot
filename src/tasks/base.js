@@ -220,13 +220,21 @@ export class BaseTask {
     this._reset()
     this._runGen++ // 新代际：stop() 超时强制结束后旧 run 协程在下次循环检查时自弃
     const gen = this._runGen
+    let runPromise = null
     try {
       await this.init()
       if (this._stopRequested) { this._setState('stopped'); return null }
       this.runCount++
-      this._runPromise = this.run(gen)
-      await this._runPromise
-      if (!this._stopRequested && this._state === 'running') this._setState('completed') // 自然完成
+      // A1 修复：run promise 必须绑定局部引用——_runPromise 是单槽字段，同 id
+      // 重启后会被新一代覆盖；start() 若返回/await 字段当前值，旧代调用方
+      //（startTask/runScheduled）会挂到新一代的 run 上（p 永不 settle / 误到时）
+      runPromise = this.run(gen)
+      this._runPromise = runPromise
+      await runPromise
+      // A1 修复：自然完成判定必须限本代（gen 匹配）——stop 超时强制结束 + 同 id
+      // 重启后旧代协程醒来时 _stopRequested 已被新代 _reset 清空、state 是新代的
+      // running，不加代际检查会把新代任务误置 completed
+      if (gen === this._runGen && !this._stopRequested && this._state === 'running') this._setState('completed') // 自然完成
     } catch (err) {
       if (gen !== this._runGen) return null // 旧代际的失败不影响新 run 的状态
       this.lastError = err.message
@@ -237,7 +245,7 @@ export class BaseTask {
       //（croner 漂浮 rejection → unhandledRejection → fatalExit 停服，链在此断）
       return null
     }
-    return this._runPromise
+    return runPromise
   }
 
   /** 当前 run 代际仍有效（start 换代后旧协程循环退出）。 */

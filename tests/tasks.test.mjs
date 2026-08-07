@@ -373,6 +373,74 @@ test('U7 修复：无 agent 时总结静默跳过（任务流程不受影响）'
   await mgr.stopAll()
 })
 
+// ---- A1（第四轮）：仲裁器 owner 泄漏根治（stop 超时/代际竞态）----
+
+/** A1 测试：run 永不 settle 的 exclusive 任务（模拟 stop 超时强制结束路径）。 */
+class HangTask extends BaseTask {
+  constructor (id, type, options, ctx) {
+    super(id, type, options, ctx)
+    this.exclusive = true
+    this.hangs = [] // 每代 run 的 resolve（FIFO：先挂的先醒）
+  }
+
+  async run () {
+    await super.run()
+    await new Promise(r => this.hangs.push(r))
+  }
+
+  resolveHang () {
+    const r = this.hangs.shift()
+    if (r) r()
+  }
+}
+
+test('A1 修复：stop 超时强制结束后（run 挂死）stopTask 无条件释放仲裁器', async () => {
+  const arb = await import('../src/core/arbiter.js')
+  const manager = makeManager()
+  const task = new HangTask('h1', 'hang', {}, { bot: {}, logger: makeLogger(), config: {} })
+  manager.tasks.set('h1', { entry: { id: 'h1', type: 'hang', options: {}, notifyChat: false }, task, cron: null })
+  manager.startTask('h1') // 不 await：run 挂死，start() 的 promise 不会 settle
+  await settle(3)
+  assert.equal(arb.getExclusiveOwner(), 'h1', '运行中的 exclusive 任务应登记')
+  // 模拟 stop() 超时强制结束后的状态：state=stopped 但 run 仍挂死
+  //（真实场景：stop() 10s 超时返回、run promise 永不 settle）
+  task._stopRequested = true
+  task._setState('stopped')
+  await manager.stopTask('h1')
+  assert.equal(arb.getExclusiveOwner(), null, 'run 挂死时 stopTask 也必须释放（此前唯一释放点挂在 run settle 上）')
+  task.resolveHang() // 清理挂死协程
+  await settle(3)
+})
+
+test('A1 修复：同 id 重启后旧代 run 晚 settle 不误清新一代登记', async () => {
+  const arb = await import('../src/core/arbiter.js')
+  const manager = makeManager()
+  const task = new HangTask('h1', 'hang', {}, { bot: {}, logger: makeLogger(), config: {} })
+  manager.tasks.set('h1', { entry: { id: 'h1', type: 'hang', options: {}, notifyChat: false }, task, cron: null })
+  // 第一代：启动并挂死（startTask 捕获 startedGen）
+  const p1 = manager.startTask('h1')
+  await settle(3)
+  assert.equal(arb.getExclusiveOwner(), 'h1')
+  // 模拟 stop 超时强制结束 + 同 id 立即重启（新代重新登记）
+  task._stopRequested = true
+  task._setState('stopped')
+  const p2 = manager.startTask('h1')
+  await settle(3)
+  assert.equal(arb.getExclusiveOwner(), 'h1', '新代登记应保持')
+  // 旧代 run 终于 settle（挂死解除）→ 旧 startTask 的 releaseArbiter 触发
+  task.resolveHang()
+  await p1
+  await settle(3)
+  assert.equal(arb.getExclusiveOwner(), 'h1', '旧代晚 settle 不得误清新代登记（需代际比对）')
+  assert.equal(task.state, 'running', '旧代 start() 协程晚醒不得把新代任务误置 completed（代际守卫）')
+  // 清理：停新代
+  task._stopRequested = true
+  task._setState('stopped')
+  task.resolveHang()
+  await p2
+  await manager.stopAll()
+})
+
 test('C8/S 修复：exclusive 任务运行期间仲裁器登记，终态清除', async () => {
   const arb = await import('../src/core/arbiter.js')
   const bot = makeCombatBot()

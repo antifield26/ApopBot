@@ -190,6 +190,10 @@ export class TaskManager {
     // C8/S：exclusive 任务启动时登记移动仲裁器（!follow 据此拒绝冲突跟随）
     if (rec.task.exclusive) setExclusiveOwner(rec.entry.id)
     const p = rec.task.start()
+    // A1 代际捕获：start() 同步段已 _runGen++（async 函数首个 await 之前）——
+    // releaseArbiter 需要比对"仍是本代"才清（防同 id 重启后旧代 run 晚 settle
+    // 误清新一代的登记；第四轮验证确认的竞态）
+    const startedGen = rec.task._runGen
     // 排队时保存的时长上限：drain 启动后补挂（与 runScheduled 直启路径同款到期语义）
     const pendingMinutes = rec.pendingMaxMinutes
     rec.pendingMaxMinutes = null
@@ -202,8 +206,12 @@ export class TaskManager {
     // 任务终态（完成/失败/停止）时快照计数器（U1：遥测跨重启保留）；
     // 常驻任务完成/失败发聊天通知（scheduled 由 runScheduled 通知，跳过）
     const releaseArbiter = () => {
-      // C8/S：终态清除仲裁器登记（仅当 owner 是自己——避免误清新一代任务）
-      if (rec.task.exclusive && getExclusiveOwner() === rec.entry.id) setExclusiveOwner(null)
+      // C8/S + A1：终态清除仲裁器登记。owner 匹配防"A 停→B 启"竞态误清 B；
+      // 代际比对防同 id 重启后旧代 run 晚 settle 误清新一代登记（stop 超时强制
+      // 结束路径下 run promise 可滞后新代数秒乃至永不 settle）
+      if (rec.task.exclusive && rec.task._runGen === startedGen && getExclusiveOwner() === rec.entry.id) {
+        setExclusiveOwner(null)
+      }
     }
     Promise.resolve(p).then(
       () => { releaseArbiter(); this._drainExclusive(); this._snapshotCounters(); this._notifyCompletion(rec) },
@@ -338,6 +346,16 @@ export class TaskManager {
   }
 
   /**
+   * 任务停止/终态时释放移动仲裁器（A1 根治：释放不得只依赖 run promise settle——
+   * stop() 超时强制结束后 run 永不 settle → 释放点永不触发 → owner 泄漏 →
+   * !follow 永久被拒（跨重连不愈）。owner 匹配守卫：只清自己的登记（防
+   * "A 停→B 启"竞态误清 B；startTask 的 releaseArbiter 另有代际比对）。
+   */
+  _releaseArbiter (rec) {
+    if (rec.task.exclusive && getExclusiveOwner() === rec.entry.id) setExclusiveOwner(null)
+  }
+
+  /**
    * 停止任务。注：!task stop 只停当前运行，cron 调度保持（下次触发重新启动）。
    * @returns {Promise<boolean>} 任务是否存在（命令层反馈用）
    */
@@ -346,6 +364,7 @@ export class TaskManager {
     if (!rec) return false
     this.log.info({ task: id }, 'stopping task')
     await rec.task.stop()
+    this._releaseArbiter(rec) // A1：run 挂死（stop 超时）也不得泄漏 owner
     return true
   }
 
@@ -385,6 +404,7 @@ export class TaskManager {
     await Promise.all([...this.tasks.values()].map(async (rec) => {
       rec.cron?.stop()
       await rec.task.stop()
+      this._releaseArbiter(rec) // A1：teardown 路径同款释放（stop 超时也不泄漏）
     }))
     this._snapshotCounters() // U1：停止前快照终态计数（tasks 随后清空）
     this.tasks.clear()
@@ -432,6 +452,7 @@ export class TaskManager {
     if (!rec) throw new Error(`任务不存在: ${id}`)
     rec.cron?.stop()
     await rec.task.stop()
+    this._releaseArbiter(rec) // A1：移除路径同款释放
     this.tasks.delete(id)
     this._pendingExclusive = this._pendingExclusive.filter(r => r !== rec)
     // C6/N：计数器随任务移除清理（此前快照只写不删 → state.json 垃圾数据无限增长）
