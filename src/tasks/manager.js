@@ -265,6 +265,21 @@ export class TaskManager {
     return true
   }
 
+  /**
+   * 暂停全部运行中任务（死亡处理器用）；返回被暂停的任务 id 列表。
+   * 已暂停的跳过——death 处理器的恢复语义只恢复本次暂停的任务。
+   */
+  async pauseAll () {
+    const paused = []
+    for (const [id, rec] of this.tasks) {
+      if (rec.task.state === 'init' || rec.task.state === 'running') {
+        paused.push(id)
+        await rec.task.pause()
+      }
+    }
+    return paused
+  }
+
   /** @returns {Promise<boolean>} 任务是否存在 */
   async pauseTask (id) {
     const rec = this.tasks.get(id)

@@ -307,6 +307,9 @@ function makeFindCtx (overrides = {}, cfgPatch = {}) {
     // findSurfaceBlocks 的 isSurfaceAt 调 p.offset——必须返回 Vec3（findBlocks 真实语义）
     findBlocks: ({ matching }) => (matching({ type: 44 }) ? [new Vec3(10, 64, 0)] : []),
     blockAt: () => ({ boundingBox: 'empty', name: 'air' }),
+    // C2 end-race 需要事件 API（本组测试不模拟断线，no-op 即可）
+    once: () => {},
+    removeListener: () => {},
     pathfinder: { setGoal: () => {}, stop: () => {}, goto: () => Promise.resolve() },
     ...(overrides.bot ?? {})
   }
@@ -346,6 +349,8 @@ test('skills: find_block 无法到达（NoPath）→ 如实反馈最近候选', 
     registry: { blocksByName: { iron_ore: { id: 44 } } },
     findBlocks: () => [new Vec3(10, 64, 0)],
     blockAt: () => ({ boundingBox: 'empty', name: 'air' }),
+    once: () => {},
+    removeListener: () => {},
     pathfinder: {
       setGoal: () => {}, stop: () => {},
       goto: () => Promise.reject(Object.assign(new Error('NoPath'), { name: 'NoPath' }))

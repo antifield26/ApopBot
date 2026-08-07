@@ -28,6 +28,9 @@ function makeCtx (overrides = {}) {
     },
     // 上方 2 格空 → 全部候选视为地表
     blockAt: (p) => ({ boundingBox: 'empty', name: 'air' }),
+    // C2 end-race 需要事件 API（本组测试不模拟断线，no-op 即可）
+    once: () => {},
+    removeListener: () => {},
     pathfinder: {
       setGoal: () => {},
       stop: () => {},
@@ -97,6 +100,8 @@ test('!find 无法到达（NoPath）→ 如实反馈 + 最近候选', async () =
       registry: { blocksByName: { iron_ore: { id: 44 } } },
       findBlocks: () => [new Vec3(10, 64, 0)],
       blockAt: () => ({ boundingBox: 'empty', name: 'air' }),
+      once: () => {},
+      removeListener: () => {},
       pathfinder: { setGoal: () => {}, stop: () => {}, goto: () => d.promise }
     }
   })
@@ -119,6 +124,8 @@ test('!find 行走期间防重入（busy）', async () => {
       registry: { blocksByName: { iron_ore: { id: 44 } } },
       findBlocks: () => [new Vec3(10, 64, 0)],
       blockAt: () => ({ boundingBox: 'empty', name: 'air' }),
+      once: () => {},
+      removeListener: () => {},
       pathfinder: { setGoal: () => {}, stop: () => {}, goto: () => d.promise }
     }
   })

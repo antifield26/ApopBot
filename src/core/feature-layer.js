@@ -85,6 +85,20 @@ export function createFeatureLayerManager (ctx, logger) {
       }
     }
     bot.on('chat', ctx.chatHandler)
+
+    // 死亡处理（C2/D 修复）：mineflayer 不自动 respawn（createBot 未传 respawn:true），
+    // 死亡后 bot 停在死亡界面——任务在死尸上空转、进行中的 goto 拖尸体直到超时，
+    // 之后永久停摆到进程重启。死亡 → 通知 + 暂停全部任务 + 停止跟随 + 请求重生
+    //（U6 在此基础上加 LLM 播报与重生后恢复任务）。
+    bot.on('death', () => {
+      ctx.tasks?.pauseAll().then((ids) => {
+        if (ids.length) log().info({ tasks: ids }, 'death: tasks paused')
+      }).catch((err) => log().warn({ err: err.message }, 'death: pause tasks failed'))
+      ctx.plugins?.follow?.stop?.()
+      sendChat(bot, '§c[bot] 已死亡——任务已暂停，自动重生中').catch(() => { /* 聊天通道未就绪 */ })
+      try { bot.respawn() } catch { /* 重生通道未就绪 */ }
+    })
+
     log().info({ bot: ctx.cfg.username }, 'feature layer ready')
 
     // 重连恢复通知：玩家可感知 Bot 已回来（首连安静上线，仅重连提示）。

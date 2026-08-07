@@ -105,6 +105,25 @@ test('C1 修复：未知命令反馈走 sendChat（含 § 前缀但发送层剥�
   await layer.teardown()
 })
 
+test('C2 修复：死亡 → 暂停全部任务 + 停止跟随 + 自动重生', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  let pauseAllCalls = 0
+  ctx.tasks.pauseAll = async () => { pauseAllCalls++; return ['a', 'b'] }
+  let followStops = 0
+  ctx.plugins = { follow: { stop: () => { followStops++ } } }
+  bot.respawn = () => { bot.respawnCalls = (bot.respawnCalls ?? 0) + 1 }
+  bot.emit('death')
+  await new Promise(r => setTimeout(r, 10)) // pauseAll promise 链完成
+  assert.equal(pauseAllCalls, 1, '应调用 pauseAll')
+  assert.equal(followStops, 1, '应停止跟随')
+  assert.equal(bot.respawnCalls, 1, '应请求自动重生')
+  assert.ok(bot.messages.some(m => m.includes('已死亡')), `应聊天通知: ${bot.messages}`)
+  await layer.teardown()
+})
+
 test('C1 修复：重连广播走 sendChat（§ 前缀在发送层剥离）', async () => {
   const ctx = makeCtx()
   ctx.conn = { getStatus: () => ({ state: 'connected', reconnectCount: 2 }) }

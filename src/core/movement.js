@@ -95,8 +95,18 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
     let succeeded = false
     let stoppedByUs = false
     const p = bot.pathfinder.goto(goal)
+    // 断线一致性（C2）：断线后 physics tick 停止 → path_stop 永不到达 → goto promise
+    // 永不 settle → runOnce 挂死（轮询器泄漏 + findBusy 不复发 + 任务 run 永不返回）。
+    // 与 bot 'end' 事件 race：end 先到即以 interrupted 返回收尾；finally 清理监听。
+    let disconnected = false
+    let endResolve
+    const ended = new Promise((resolve) => { endResolve = resolve })
+    const onEnd = () => { disconnected = true; endResolve() }
+    bot.once('end', onEnd)
     const timer = setInterval(() => {
-      if (isInterrupted?.()) {
+      // 双保险：error 路径可能先于 end 到达——轮询器检测到断线立即收尾
+      if (!disconnected && bot._client?.state === 'disconnected') onEnd()
+      else if (isInterrupted?.()) {
         stoppedByUs = true
         stopPathfinding(bot) // 下一 tick 触发 PathStopped 拒绝
       } else if (Date.now() - started > timeoutMs) {
@@ -106,7 +116,11 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
     }, pollMs)
     timer.unref?.()
     try {
-      await p
+      await Promise.race([p, ended])
+      if (disconnected) {
+        // 断线而非到达：bot 已死无需清理，但统一走失败语义（任务由 teardown 兜底）
+        return { ok: false, reason: 'interrupted', err: new Error('bot disconnected') }
+      }
       succeeded = true
       return { ok: true }
     } catch (err) {
@@ -123,6 +137,7 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
       return { ok: false, reason, err, retryable: err?.name === 'Timeout' }
     } finally {
       clearInterval(timer)
+      bot.removeListener('end', onEnd)
       // 失败路径清理残留 stateGoal（NoPath 后 stateGoal 挂着，等区块更新会重新 A*，
       // 必须清）。用 setGoal(null) 而非 stopPathfinding——stop 的 path_stop 异步触发，
       // 会毒害紧随其后的重试 goto（实测：陈旧 path_stop 打断新 goto → 误判 interrupted）

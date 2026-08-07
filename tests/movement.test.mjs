@@ -91,6 +91,19 @@ test('goto: 墙钟超时（goto 永不 settle）→ timeout + stop', async () =>
   assert.ok(bot.stopCalls >= 1)
 })
 
+test('C2 修复：断线（bot end 事件）→ goto 立即返回 interrupted（goto promise 永不 settle 不再挂死）', async () => {
+  const d = deferredGoto('Disconnect') // goto 永不 settle（断线后 physics tick 停止 → path_stop 永不到达）
+  const bot = makePathBot(d.impl)
+  const move = createMovement(bot, makeLogger(), { pollMs: 10 })
+  const p = move.goto(new goals.GoalBlock(5, 64, 5), { timeoutMs: 60000 })
+  bot.emit('end') // 模拟断线
+  const r = await p
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'interrupted')
+  assert.equal(bot.stopCalls, 0, '断线无需主动 stop（bot 已死）')
+  assert.equal(bot.listenerCount('end'), 0, 'end 监听应清理（防每次断线泄漏）')
+})
+
 test('goto: 谓词中断 → interrupted', async () => {
   const d = deferredGoto('Hang2')
   const bot = makePathBot(d.impl)

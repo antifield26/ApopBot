@@ -72,6 +72,17 @@ test('store: setCounter 与读写往返', (t) => {
   assert.deepEqual(again.counters, { m1: { mined: 5 } }, '重启后（新实例）计数器应可读')
 })
 
+test('C2 修复：process exit 事件同步落盘（防抖窗口内未 flush 的变更不丢）', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 'state.json')
+  const store = createStateStore({ file, debounceMs: 60000 }) // 防抖远未到期
+  store.setCounter('m1', { mined: 3 })
+  process.emit('exit') // 触发 exit 处理器（同步 writeFileSync）
+  assert.ok(fileExists(file), 'exit 时应同步落盘')
+  const disk = JSON.parse(readFileSync(file, 'utf8'))
+  assert.deepEqual(disk.counters.m1, { mined: 3 }, 'exit 前未 flush 的变更应落盘')
+})
+
 test('store: tasks 读副本——外部修改不污染内存态', (t) => {
   const dir = makeTmpDir(t)
   const store = createStateStore({ file: path.join(dir, 's.json') })

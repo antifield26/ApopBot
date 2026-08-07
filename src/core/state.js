@@ -59,6 +59,14 @@ export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logg
     timer.unref?.()
   }
 
+  // 全 exit 路径同步落盘（C2/M 修复）：fatal exit(2)/优雅退出/裸崩溃都触发 'exit'——
+  // 一处覆盖所有调用方，防抖窗口内未 flush 的变更（ad-hoc 任务/计数）在进程消亡前落盘。
+  // 同步 writeFileSync 在 exit 处理器中安全（不允许调度异步工作）。
+  process.on('exit', () => {
+    if (timer) { clearTimeout(timer); timer = null }
+    persist()
+  })
+
   return {
     /** ad-hoc 任务条目（快照恢复用；读副本防外部修改污染内存态） */
     get tasks () {
