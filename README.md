@@ -134,6 +134,7 @@ mineflayer 正式版只支持到 1.21.11（协议 774）；26.1.2（775）支持
 | 现象 | 处理 |
 |---|---|
 | 聊天消息含 `§` 颜色码 → 服务器踢出 `multiplayer.disconnect.illegal_characters` | sendChat 发送层统一剥离（`stripColorCodes`）；源码中的 `§a/§c` 仅为设计标记 |
+| `bot.attack()/useOn()` 序列化报 `Sizeof error: reading 'x'` → 攻击/喂食即断线（PR 分支特性门控 bug：26.1 下 useEntityUsesEntityId=false 回退旧式 use_entity，而 26.1 schema 的 location 为必填 lpVec3） | 项目层 `src/core/entity-actions.js` 直接写正确包：attack 独立包 `{entityId}` + arm_animation、use_entity 新格式 `{target, hand, location, sneaking}`（combat/breed 接入；上游升级时 `tests/entity-actions.test.mjs` 用真实序列化器验证格式） |
 | `bot.entity.health/food` 为 undefined（PR 分支实体元数据未解析 26.1 health 字段） | 状态读取走 `bot.health/bot.food`（update_health 包通道） |
 | pathfinder 2.x 需 `setMovements(new Movements(bot))` 否则寻路中途放弃 | 插件注入时自动设置 |
 | mineflayer 4.x 插件注入在 `inject_allowed` 事件后（registry 就绪时） | 插件句柄通过包装函数在注入时记录 |
