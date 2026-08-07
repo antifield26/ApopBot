@@ -23,6 +23,9 @@ export class MineTask extends BaseTask {
       this._blockIds.add(block.id)
     }
     this._batchMax = o.maxBlocks ?? 64
+    // C4/J 修复：collect 分批上限——collectBlock.collect 无暂停钩子，整批（最多
+    // 64 块）完成前 pause/stop 不生效（数分钟）；批间检查暂停/停止
+    this._collectBatch = 4
     this._radius = o.radius ?? 32
     // collectblock 的 getClosestChest 调 c.distanceTo（Vec3 方法）——配置里的普通对象必须转 Vec3
     this._chestLocations = Array.isArray(o.chestLocations)
@@ -73,8 +76,15 @@ export class MineTask extends BaseTask {
 
       this.log.info({ count: blocks.length }, `mining ${this.options.blockTypes.join(',')}`)
       try {
-        await this.bot.collectBlock.collect(blocks, { chestLocations: this._chestLocations })
-        this.incr('mined', blocks.length)
+        // C4/J：分批 collect，批间响应 pause/stop（在途批次 ≤4 块，暂停延迟有界）
+        for (let i = 0; i < blocks.length; i += this._collectBatch) {
+          if (this._stopRequested) break
+          if (this._pauseRequested) await this._waitIfPaused()
+          if (this._stopRequested) break // 暂停期间 stop：不继续收集
+          const batch = blocks.slice(i, i + this._collectBatch)
+          await this.bot.collectBlock.collect(batch, { chestLocations: this._chestLocations })
+          this.incr('mined', batch.length)
+        }
       } catch (err) {
         if (err?.code === 'NoChests' || /no defined chest locations/i.test(String(err?.message))) {
           // F2：背包满且未配置箱子 → 暂停等待清空，而非 30s 死循环误报路径不可达

@@ -14,7 +14,24 @@ class FakeTask extends BaseTask {
   async run () {
     await super.run()
     this.incr('runs')
+    if (this.options.failRun) throw new Error('run boom')
     await this._internalWait(1000, 'fake-sleep')
+  }
+}
+
+/** 异步 init（拉宽 pause-init 微任务窗口，C4/O 测试用）。 */
+class SlowInitTask extends BaseTask {
+  async init () {
+    super.init()
+    await new Promise(r => setTimeout(r, 30))
+  }
+
+  async run (gen) {
+    await super.run()
+    while (this._alive(gen)) {
+      await this._waitIfPaused()
+      await this._internalWait(1000, 'slow-sleep')
+    }
   }
 }
 
@@ -51,6 +68,54 @@ test('BaseTask init 抛错 → failed', async () => {
   await task.start()
   assert.equal(task.state, 'failed')
   assert.ok(task.lastError.includes('init boom'))
+})
+
+// ---- C4：状态机显式化（per-wait token / pause-init 窗口 / 采纳窗口）----
+
+test('C4/O 修复：pause 落在 init 窗口 → 保持 paused，resume 正常恢复（不再伪死锁）', async () => {
+  const task = new SlowInitTask('t1', 'fake', {}, { bot: {}, logger: makeLogger(), config: {} })
+  const p = task.start() // init 挂起 30ms
+  await new Promise(r => setTimeout(r, 10)) // init 窗口内 pause
+  await task.pause()
+  await new Promise(r => setTimeout(r, 60)) // init 完成、run 启动
+  assert.equal(task.state, 'paused', 'run() 不得覆盖 paused（否则 resume 永远 no-op）')
+  await task.resume()
+  await new Promise(r => setTimeout(r, 10))
+  assert.equal(task.state, 'running', 'resume 应恢复正常运行')
+  await task.stop()
+  await p
+  assert.equal(task.state, 'stopped')
+})
+
+test('C4/P 修复：per-wait token——并发等待互不干扰，唤醒全部生效', async () => {
+  const task = makeTask()
+  const w1 = task._internalWait(5000, 'w1')
+  const w2 = task._internalWait(5000, 'w2')
+  assert.equal(task._internalWaits.size, 2, '两次等待应各自持有 token（单槽会被覆盖）')
+  task._wakeInternalWait()
+  await Promise.all([w1, w2])
+  assert.equal(task._internalWaits.size, 0, '唤醒后 token 应清理')
+})
+
+test('C4/P 修复：旧代际等待到点不清新代 waitingReason', async () => {
+  const task = makeTask()
+  task._runGen = 1
+  const old = task._internalWait(5, 'old-gen') // 5ms 后自己到点
+  task._runGen = 2 // 模拟 stop 超时强制结束 + 立即重启
+  const nw = task._internalWait(5000, 'new-gen')
+  assert.equal(task.waitingReason, 'new-gen')
+  await old // 旧代到点醒来 → finally 应跳过清理（gen 不匹配）
+  assert.equal(task.waitingReason, 'new-gen', '旧代 finally 不得清掉新代 reason')
+  task._wakeInternalWait()
+  await nw
+})
+
+test('C4/F 修复：run 抛错 → start() 返回 null（采纳窗口关闭，不再返回已 reject 的 promise）', async () => {
+  const task = makeTask({ failRun: true })
+  const p = await task.start()
+  assert.equal(p, null, '失败路径应返回 null（runScheduled 的 await p 不再收到 rejection）')
+  assert.equal(task.state, 'failed')
+  assert.ok(task.lastError.includes('run boom'))
 })
 
 test('F4 重启：stopped 后可再次 start（runCount 递增）', async () => {

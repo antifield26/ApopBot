@@ -70,6 +70,39 @@ test('mine run: collect 中断 → 重试等待，stop 打断', async () => {
   assert.equal(task.state, 'stopped')
 })
 
+test('C4/J 修复：pause 打断 collect 批次（批间检查，不再等整批 64 块完成）', async () => {
+  const collectCalls = []
+  const bot = {
+    registry: { blocksByName: { iron_ore: { id: 44 } } },
+    collectBlock: {
+      // 1ms 真实延时：瞬时 resolve 会让循环形成纯微任务链饿死 macrotask（setImmediate
+      // 永不执行 → 测试挂起）——真实 collect 耗时数秒，不存在该问题，fake 需让出事件循环
+      collect: async (blocks) => { await new Promise(r => setTimeout(r, 1)); collectCalls.push(blocks.length) },
+      cancelTask () {}
+    },
+    pathfinder: { stop () {} },
+    findBlocks: () => [0, 1, 2, 3, 4, 5, 6, 7, 8].map(i => new Vec3(i, 64, 0)), // 9 块
+    blockAt: (p) => ({ position: p, type: 44 })
+  }
+  const task = new MineTask('m', 'mine', { blockTypes: ['iron_ore'] }, makeCtx(bot))
+  const p = task.start()
+  const waitMs = (ms) => new Promise(r => setTimeout(r, ms))
+  await waitMs(50) // 足够 2+ 批（每批 collect 1ms + 循环）
+  assert.ok(collectCalls.length >= 1, '应分批 collect')
+  assert.ok(collectCalls.every(n => n <= 4), `每批不得超过 4 块: ${collectCalls}`)
+  await task.pause()
+  await waitMs(30) // 在途批次完成
+  const callsAtPause = collectCalls.length
+  await waitMs(50)
+  assert.equal(collectCalls.length, callsAtPause, '暂停后不应继续收集')
+  await task.resume()
+  await waitMs(50)
+  assert.ok(collectCalls.length > callsAtPause, '恢复后应继续收集')
+  await task.stop()
+  await p
+  assert.equal(task.state, 'stopped')
+})
+
 // ---- FishTask ----
 
 test('fish run: 背包满停止（不再抛竿）', async () => {

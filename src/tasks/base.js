@@ -47,8 +47,11 @@ export class BaseTask {
     this._runGen = 0 // run 代际：start 换代后仍存活的旧 run 协程自弃（防 stop 超时后双 run 并发）
     this._resumeNotify = null
     this._pauseWaiters = [] // _waitIfPaused 的挂起 resolve（stop/pause 唤醒）
-    this._internalWaitNotify = null
-    this._internalWaitTimer = null
+    // C4/P 修复：_internalWait 的 per-wait token 集合——此前单槽
+    // （_internalWaitNotify/_internalWaitTimer）在"stop 超时强制结束 + 立即重启"的
+    // 跨代际场景下会串扰：旧代定时器触发清掉新代的槽 → 新代等待无法被 stop/pause
+    // 唤醒（响应退化为 10s 兜底）。per-wait token 使唤醒只作用于当前代的等待。
+    this._internalWaits = new Set()
   }
 
   get state () {
@@ -76,10 +79,13 @@ export class BaseTask {
 
   /**
    * 主循环。返回的 Promise 在任务结束时 resolve（自然完成/stop/pause 均会退出）。
+   * C4/O 修复（防御）：pause 落在 init 微任务窗口时 state 已置 paused——这里
+   * 不得覆盖回 running，否则 resume() 因 state!=='paused' 直接返回、
+   * _pauseRequested 永不清除 → 任务永久卡在 _waitIfPaused（伪死锁）。
    * @returns {Promise<void>}
    */
   async run () {
-    this._setState('running')
+    if (!this._pauseRequested) this._setState('running')
     this.startedAt = Date.now()
   }
 
@@ -155,37 +161,41 @@ export class BaseTask {
    * 任务内部等待（F3：不触碰 paused 状态）。stop/pause 时提前返回。
    * 竞态守卫：stop() 先于 run 循环到达此处时（fire-and-forget 启动后立即 stop），
    * 立即返回而非挂起——否则 stop() 会空等 STOP_WAIT_TIMEOUT_MS。
+   * C4/P 修复：per-wait token（每次调用自建并登记到实例 Set）——唤醒只作用于
+   * 当前代的等待；旧代协程残留的等待醒来后由代际守卫直接退出，其 finally 也
+   * 只清自己代际的 waitingReason（不串扰新代）。
    * @param {number} ms
    * @param {string} reason 展示原因（如 no-target / inventory-full）
    */
   async _internalWait (ms, reason = 'wait') {
     if (this._stopRequested) return
     this.waitingReason = reason
+    const gen = this._runGen
     try {
       await new Promise((resolve) => {
-        this._internalWaitNotify = () => {
-          clearTimeout(this._internalWaitTimer)
-          resolve()
+        const token = {
+          resolve,
+          timer: setTimeout(() => {
+            this._internalWaits.delete(token)
+            resolve()
+          }, ms)
         }
-        this._internalWaitTimer = setTimeout(() => {
-          this._internalWaitNotify = null
-          resolve()
-        }, ms)
+        this._internalWaits.add(token)
       })
+      if (gen !== this._runGen) return // 代际守卫：旧代残留等待醒来后直接退出
     } finally {
-      this.waitingReason = null
-      this._internalWaitNotify = null
+      // 只清当前代代的 waitingReason——旧代 finally 不得清掉新代设置的 reason
+      if (gen === this._runGen) this.waitingReason = null
     }
   }
 
-  /** 打断当前内部等待（stop/pause 调用）。 */
+  /** 打断所有进行中的内部等待（stop/pause 调用）。 */
   _wakeInternalWait () {
-    if (this._internalWaitNotify) {
-      const n = this._internalWaitNotify
-      this._internalWaitNotify = null
-      clearTimeout(this._internalWaitTimer)
-      n()
+    for (const t of this._internalWaits) {
+      clearTimeout(t.timer)
+      t.resolve()
     }
+    this._internalWaits.clear()
   }
 
   /** 终态重置为 created（F4 重启语义）。 */
@@ -198,6 +208,7 @@ export class BaseTask {
     this.waitingReason = null
     this._runPromise = null
     this._pauseWaiters = []
+    this._internalWaits.clear() // C4：残留 token 一并清（防旧代等待占用槽位）
   }
 
   /**
@@ -221,6 +232,10 @@ export class BaseTask {
       this.lastError = err.message
       this._setState('failed')
       this.log.error({ err: err.message }, 'task failed')
+      // C4/F 修复：失败路径返回 null 而非已 reject 的 _runPromise——
+      // 采纳窗口关闭：startTask/runScheduled 的 await p 不再收到 rejection
+      //（croner 漂浮 rejection → unhandledRejection → fatalExit 停服，链在此断）
+      return null
     }
     return this._runPromise
   }

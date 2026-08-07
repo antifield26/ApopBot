@@ -54,8 +54,15 @@ export class FarmTask extends BaseTask {
       if (mature.length > 0) {
         this.log.info({ count: mature.length }, 'harvesting mature crops')
         try {
-          await this.bot.collectBlock.collect(mature, {})
-          this.incr('harvested', mature.length)
+          // C4/J：分批 collect，批间响应 pause/stop（在途批次 ≤4 块，暂停延迟有界）
+          for (let i = 0; i < mature.length; i += 4) {
+            if (this._stopRequested) break
+            if (this._pauseRequested) await this._waitIfPaused()
+            if (this._stopRequested) break
+            const batch = mature.slice(i, i + 4)
+            await this.bot.collectBlock.collect(batch, {})
+            this.incr('harvested', batch.length)
+          }
         } catch (err) {
           if (err?.code === 'NoChests' || /no defined chest locations/i.test(String(err?.message))) {
             this.log.warn('背包已满（收割），暂停等待清空')

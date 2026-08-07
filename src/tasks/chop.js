@@ -78,8 +78,15 @@ export class ChopTask extends BaseTask {
 
       this.log.info({ count: blocks.length }, 'chopping')
       try {
-        await this.bot.collectBlock.collect(blocks, {})
-        this.incr('chopped', blocks.length)
+        // C4/J：分批 collect，批间响应 pause/stop（在途批次 ≤4 块，暂停延迟有界）
+        for (let i = 0; i < blocks.length; i += 4) {
+          if (this._stopRequested) break
+          if (this._pauseRequested) await this._waitIfPaused()
+          if (this._stopRequested) break
+          const batch = blocks.slice(i, i + 4)
+          await this.bot.collectBlock.collect(batch, {})
+          this.incr('chopped', batch.length)
+        }
       } catch (err) {
         if (err?.code === 'NoChests' || /no defined chest locations/i.test(String(err?.message))) {
           this.log.warn('背包已满（伐木），暂停等待清空')
