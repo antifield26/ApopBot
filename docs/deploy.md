@@ -82,7 +82,7 @@ Get-Content logs\bot.log -Wait             # 实时日志（pino 按天轮转）
 Get-Content logs\nssm-stderr.log -Tail 50  # 启动期 stderr（服务起不来先看这里）
 ```
 
-游戏内命令（op 白名单在 `config.ops`）：`!ping` `!status` `!task list` `!task new <type> <id> [json]` `!task remove <id>` `!task start|stop|pause|resume <id>` `!reload` `!say` `!pos` `!follow <player>|off` `!agent ...`
+游戏内命令（op 白名单在 `config.ops`）：`!ping` `!status` `!task list` `!task new <type> <id> [json]` `!task remove <id>` `!task start|stop|pause|resume <id>` `!reload` `!say` `!pos` `!find <方块> [距离]` `!follow <player>|off` `!agent chat|act|doctor|reset ...`。完整说明见 README 指令列表（含 `!task list` 的排队位置/剩余时长/下次 cron 字段与 `!find` 的 16-256 限幅）。
 
 ## 性能（低配 PC：i7-4720HQ / 8GB DDR3 + 同机 Ollama）
 

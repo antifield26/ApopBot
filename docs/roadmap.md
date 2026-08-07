@@ -1,6 +1,27 @@
-# 项目路线图（2026-08-06 第二轮评估 / 2026-08-07 第三轮评估）
+# 项目路线图（2026-08-06 第二轮 / 2026-08-07 第三轮 / 2026-08-07 第四轮评估）
 
-第二轮评估（3 Explore + 1 Plan + 逐项复核）产出的三档路线图，2026-08-06 全部实施；第三轮评估（3 Explore + 1 Plan + 26 条发现逐条 verdict）的完善档/升级档/重构档已于 2026-08-07 全部实施。本文档记录已完成项、缓做项与明确不做项。
+第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施。本文档记录已完成项、缓做项与明确不做项。
+
+## 第四轮已完成（2026-08-07，commit 93812b8..c1b4cb0）
+
+第四轮重点：既往问题（断线类/踢人类/微任务饿死/goto 挂死/漂浮 rejection）同类残留 + 第三轮新增模块（arbiter/task-schemas/entity-actions）集成死角。**主面确认干净**（§ 踢人、微任务饿死、goto 挂死、fishing/auto-eat 包路径安全），剩余问题集中在集成死角：
+
+### 完善档（A1-A6）
+- **A1 仲裁器 owner 泄漏根治**（本轮最高价值）：exclusive 任务 run 挂死（stop 超时强制结束）→ 释放点唯一挂在 run settle 上 → owner 永不释放 → !follow 永久被拒跨重连不愈；stopTask/stopAll/removeTask 停止后无条件释放 + startTask 代际比对（同 id 重启后旧代晚 settle 不误清新 owner）；顺带修复 base.js start() 返回被新代覆盖的 _runPromise（旧调用方挂到新代）与旧代协程污染新代状态
+- **A2 schema 与 config 校验统一**：chop schema 漂移（blockTypes 必填但代码读 logTypes）→ 改 logTypes 可选；mine 补 area；mine/chop radius 上限 256（同步 findBlocks 枚举防冻结，farm _scanArea 同款钳制）；config 路径任务 options 接入 validateTaskOptions（非法配置启动即报错而非静默不运行）
+- **A3 技能层防线**：follow_player 仲裁器拒绝（命令层有、技能层绕过——R2 根治目标复活）、find_block 告警、move_to 世界边界 ±30000000 + isFinite
+- **A4 实体动作防御补齐**：breed 两次喂食前目标存在检查（combat 同源竞态的另一面）、equip/autoEat 10s 超时（A1 触发面收敛）、useEntityOn pos 缺失明确报错、!task new failed 反馈
+- **A5 承错与生命周期**：queue(teardown)/croner onTrigger/follow tick 三处 catch（漂浮 rejection 与 uncaughtException 纵深防线）、summarize 全局 60s 冷却（死亡播报绕过 manager 侧冷却）、stopTask 清理排队队列、config 任务计数器回灌（快照写了不读 = 数据丢失）、_reset 清孤儿 timer、!agent chat 空文本拦截
+- **A6 文档漂移**：deploy.md 指令表、l2.md summarize 播报说明、本文件
+
+### 升级档（U10-U12，随 A 档同批实施）
+- **U10 运维 webhook 通知**：任务完成/失败、断线重连、死亡重生、fatal 停服推送（企业微信/Server酱，零依赖 fetch POST，5s 超时失败静默）
+- **U11 deploy.ps1 -Update 一键更新**：git pull → npm ci --omit=dev → check:compat → nssm restart
+- **U12 http /metrics 补字段**：bot 当前坐标 + 任务等待原因（运维看"卡在哪"）
+
+## 第三轮善后（2026-08-07，combat 断线根因，commit ecd7241/13ee453/d8bf90a）
+
+部署机实测定位：mineflayer PR 分支在 26.1 特性门控 bug（useEntityUsesEntityId=false 使 bot.attack/useEntity 回退旧式 use_entity 缺 location → 序列化 Sizeof error → 攻击/喂食即断线）。修复：`src/core/entity-actions.js` 项目层写正确包（attack 独立包 + use_entity 新格式），combat/breed 接入，真实序列化器回归测试。
 
 ## 第三轮已完成（2026-08-07，commit 74b619b..8aed83d，共 12 个 commit）
 
@@ -60,9 +81,9 @@ manager.js `TASK_TYPES` + config.js `KNOWN_TASK_TYPES` + `NATURAL_COMPLETION_TYP
 - NoChests 处理 + collect 重试三处重复（可提 `collectWithChestFallback`）
 - `_isArea` 四份重复（chop/combat/breed/farm → BaseTask 方法或 tasks/util.js）
 
-### R3 后续可选增强（第三轮遗留观察）
-- 仲裁器跨重启/热重载状态验证（当前登记随任务重建天然清零，重连期间 !follow 行为需真机验证）
-- L2 主动播报扩展：任务长 idle（waitingReason 持续 N 分钟）经 LLM 播报原因
+### R3 后续可选增强（第四轮遗留观察）
+- L2 主动播报扩展：任务长 idle（waitingReason 持续 N 分钟）经 LLM 播报原因（U7 已做终态播报，idle 播报未做）
+- 死亡播报/任务总结的 webhook 推送模板（U10 已做事件推送，LLM 文案进 webhook 可后续加）
 
 ## 明确不做（及理由）
 
