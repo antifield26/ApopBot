@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Vec3 } from 'vec3'
-import { AgentInterface, _resetSummarizeCooldown } from '../src/l2/agent-interface.js'
+import { AgentInterface, _resetSummarizeCooldown, estimateTokens, applyTokenBudget } from '../src/l2/agent-interface.js'
 import { createSkillRegistry } from '../src/l2/skills.js'
 import { createL2 } from '../src/l2/index.js'
 import { loadConfig } from '../src/core/config.js'
@@ -493,6 +493,98 @@ test('A3 修复: move_to 坐标越界（世界边界 ±30000000）→ 参数校�
   const r3 = await agent.act('op1', 'move_to', { x: Number.NaN, y: 64, z: 0 })
   assert.equal(r3.ok, false)
   assert.ok(r3.result.includes('有限数值'), r3.result)
+})
+
+// ---- L2 进化（A2/A3）：上下文预算裁剪 + 环境感知 ----
+
+test('A2: estimateTokens 估算（CJK×1.0 + ASCII×0.25 + 其他×0.5）', () => {
+  assert.equal(estimateTokens('abc'), 1) // 4 × 0.25 = 1
+  assert.equal(estimateTokens('中文'), 2)
+  assert.equal(estimateTokens(''), 0)
+  assert.ok(estimateTokens('混合 abc 文本') > 0)
+})
+
+test('A2: applyTokenBudget——超预算丢最旧历史轮，工具轮保留', () => {
+  const messages = [
+    { role: 'user', content: '旧历史一（很长很长很长很长很长很长）' },
+    { role: 'assistant', content: '旧历史二' },
+    { role: 'assistant', content: '', toolCalls: [{ id: 't1', name: 'status', arguments: {} }] },
+    { role: 'user', content: '', toolResults: [{ id: 't1', name: 'status', output: '结果' }] },
+    { role: 'user', content: '当前问题' }
+  ]
+  const before = messages.length
+  const trimmed = applyTokenBudget(messages, 0, 5) // 预算极小 → 必裁
+  assert.equal(trimmed, true)
+  assert.ok(messages.length < before, '应丢弃旧轮')
+  assert.ok(messages.some(m => m.toolCalls), '工具调用轮必须保留（配对语义）')
+  assert.equal(messages.at(-1).content, '当前问题', '当前用户消息保留')
+})
+
+test('A2: applyTokenBudget——工具结果动态截短且不低于下限', () => {
+  const long = 'x'.repeat(5000)
+  const messages = [
+    { role: 'assistant', content: '', toolCalls: [{ id: 't1', name: 'status', arguments: {} }] },
+    { role: 'user', content: '', toolResults: [{ id: 't1', name: 'status', output: long }] },
+    { role: 'user', content: 'q' }
+  ]
+  applyTokenBudget(messages, 0, 200) // 极紧预算
+  const out = messages.find(m => m.toolResults).toolResults[0].output
+  assert.ok(out.length < 5000, '应被截短')
+  assert.ok(out.length >= 200, '不得低于下限')
+  assert.ok(out.endsWith('…(截断)'))
+})
+
+test('A2: applyTokenBudget——未超预算不动消息', () => {
+  const messages = [{ role: 'user', content: 'hi' }]
+  assert.equal(applyTokenBudget(messages, 0, 10000), false)
+  assert.deepEqual(messages, [{ role: 'user', content: 'hi' }])
+})
+
+test('A3 修复: environment 技能输出环境快照（makeCtx 缺 time/weather 字段——null 安全）', async () => {
+  const ctx = makeCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('steve', 'environment', {})
+  assert.equal(r.ok, true)
+  assert.ok(r.result.includes('位置'), r.result) // makeCtx bot 有 entity.position
+  assert.ok(r.result.includes('朝向'), r.result) // yaw 存在
+})
+
+test('A3 修复: nearby_entities 输出列表（无实体 → 如实反馈）', async () => {
+  const ctx = makeCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('steve', 'nearby_entities', { maxDistance: 32 })
+  assert.equal(r.ok, true)
+  assert.ok(r.result.includes('没有'), r.result)
+})
+
+test('A3 修复: 环境自动注入——chat 的 system 含环境行', async () => {
+  const ctx = makeCtx()
+  ctx.bot.time = { age: 24000 * 5 + 6000, timeOfDay: 6000, isDay: true }
+  ctx.bot.isRaining = false
+  ctx.bot.game = { dimension: 'minecraft:overworld' }
+  ctx.bot.players = { steve: { username: 'Steve', entity: { position: { x: 5, y: 64, z: 0 } } } }
+  const { agent, provider } = makeAgent(ctx, [{ text: '我在哪？' }])
+  await agent.chat('steve', '你周围的环境？')
+  // 注意 SYSTEM_PROMPT 规则 6 自身含"环境:"字样——用注入行的精确格式 \n环境: 断言
+  assert.ok(provider.calls[0].system.includes('\n环境: '), `system 应含环境行: ${provider.calls[0].system}`)
+  assert.ok(provider.calls[0].system.includes('第6天'), provider.calls[0].system)
+  assert.ok(provider.calls[0].system.includes('overworld'), provider.calls[0].system)
+  // envInjection=false 关闭注入（AgentInterface 的 cfg 是构造参数——直接改实例）
+  const ctx2 = makeCtx()
+  ctx2.bot.time = { age: 1000, timeOfDay: 1000, isDay: true }
+  const { agent: a2, provider: p2 } = makeAgent(ctx2, [{ text: 'x' }])
+  a2.cfg = { ...a2.cfg, envInjection: false }
+  await a2.chat('steve', 'hi')
+  assert.ok(!p2.calls[0].system.includes('\n环境: '), 'envInjection=false 不注入')
+})
+
+test('A2 修复: 预算裁剪生效——provider 有 contextWindow 时超预算消息被裁', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [{ text: 'ok' }])
+  provider.contextWindow = () => 512 // 极紧窗口 → 必触发裁剪
+  await agent.chat('steve', 'x'.repeat(2000))
+  // 不抛错即通过（裁剪在 provider.chat 前执行）；system 仍含环境行
+  assert.ok(provider.calls[0].system.includes('环境:'), provider.calls[0].system)
 })
 
 test('C5/G 修复：find_block maxDistance 越界（16-256 外）→ 参数校验拒绝（防主线程冻结）', async () => {

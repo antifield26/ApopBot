@@ -44,6 +44,10 @@ export function createProvider (cfg, logger) {
   return {
     mode: 'auto',
     _latched: false,
+    /** A2：auto 模式按 ollama 窗口保守裁剪（云大窗口也 fit；兜底 ollama 时输入必 fit）。 */
+    contextWindow () {
+      return ollama.contextWindow()
+    },
     /**
      * 本轮对话内粘滞回退（C7/V）：cloud 失败一次后其余步骤直走 ollama——
      * 云端挂起（防火墙丢包 → 60s 超时）时无粘滞的 maxSteps=5 对话最坏 5×60s 才完成。
@@ -173,10 +177,22 @@ class OllamaProvider {
   constructor (l2, log) {
     this.l2 = l2
     this.log = log
-    this.baseUrl = (l2.ollamaUrl ?? 'http://127.0.0.1:11434').replace(/\/$/, '') + '/v1/chat/completions'
+    // L2 进化（A1）：compat 端点（/v1/chat/completions）不处理 options.num_ctx——
+    // 官方 wont-fix（ollama#2963/#6544），超窗静默截断无报错；native /api/chat
+    // 才接受 options.num_ctx/num_predict。tool_calls 消息格式与 OpenAI 兼容同构，
+    // 转换函数近乎原样复用，仅 URL/options/响应解析变化
+    this.baseUrl = (l2.ollamaUrl ?? 'http://127.0.0.1:11434').replace(/\/$/, '') + '/api/chat'
     this.model = l2.ollamaModel ?? 'qwen3.5:4b'
     this.timeoutMs = l2.ollamaTimeoutMs ?? DEFAULT_TIMEOUT_MS
     this.maxTokens = l2.maxTokens ?? DEFAULT_MAX_TOKENS
+    // 上下文窗口（A2 预算裁剪用）：qwen3.5:4b 默认窗 2048 太小（10 条历史已逼近），
+    // 默认 4096（8GB 机 KV≈+1.5GB 贴近红线但预算裁剪兜底；可降 2048）
+    this.numCtx = l2.ollamaNumCtx ?? 4096
+  }
+
+  /** A2：上下文窗口（agent-interface 预算裁剪用）。 */
+  contextWindow () {
+    return this.numCtx
   }
 
   /** U9：连通性探测（!agent doctor）。 */
@@ -189,7 +205,8 @@ class OllamaProvider {
     const body = {
       model: this.model,
       stream: false,
-      max_tokens: this.maxTokens,
+      // native /api/chat：生成参数在 options（max_tokens → num_predict）
+      options: { num_ctx: this.numCtx, num_predict: this.maxTokens },
       messages: [
         ...(system ? [{ role: 'system', content: system }] : []),
         ...messages.flatMap(toOpenAIMessages)
@@ -215,19 +232,20 @@ class OllamaProvider {
   async _chatOnce (body, signal) {
     const t0 = Date.now()
     const data = await this._post(body, signal)
-    const msg = data.choices?.[0]?.message
+    // native 响应：data.message（非 choices[0].message）；usage 在 prompt_eval_count/eval_count
+    const msg = data.message
     const toolCalls = (msg?.tool_calls ?? []).map((tc, i) => {
       let args = {}
       try { args = JSON.parse(tc.function?.arguments ?? '{}') } catch { /* 参数解析失败按空 */ }
       return { id: tc.id ?? `tc_${i}`, name: tc.function?.name, arguments: args }
     })
-    // token 计量（U5）：usage 结构 prompt_tokens/completion_tokens
+    // token 计量（U5）：prompt_eval_count/eval_count（native 语义）
     return {
       text: msg?.content ?? null,
       toolCalls,
       usage: {
-        inputTokens: data.usage?.prompt_tokens ?? null,
-        outputTokens: data.usage?.completion_tokens ?? null
+        inputTokens: data.prompt_eval_count ?? null,
+        outputTokens: data.eval_count ?? null
       },
       latencyMs: Date.now() - t0
     }

@@ -9,11 +9,16 @@
 // 错误永不向上抛——以友好回复返回（配合 logger.error 留痕）。
 
 import { isOp } from '../commands/permissions.js'
+import { environmentLine } from './environment.js'
 
 // 文本长度上限（低配 4B 模型上下文与聊天消息长度双重约束；B6 从硬编码提为常量）
 const INPUT_MAX_CHARS = 1000 // 用户消息截断
 const REPLY_MAX_CHARS = 250 // 回复截断（与 chat.maxLength 默认一致）
-const TOOL_RESULT_MAX_CHARS = 2000 // 工具结果回填截断（大 JSON 撑爆 4B 上下文）
+const TOOL_RESULT_MAX_CHARS = 2000 // 工具结果回填截断上限（预算裁剪的硬上限）
+// A2：工具结果回填的下限——预算裁剪时也不得低于此（低于则整条丢弃更有意义）
+const TOOL_RESULT_MIN_CHARS = 200
+// A2：上下文预算的尾差缓冲（工具定义 schema/系统提示的估算误差 + 回复预留）
+const BUDGET_RESERVE_TOKENS = 384
 
 // 会话记忆（U2）：按玩家名的多轮上下文，模块级 Map——agent 实例在重连/热重载时
 // 被 feature-layer 重建，模块级存储保证记忆跨代际保留（会话是玩家维度的，不是 bot 维度的）。
@@ -33,6 +38,76 @@ let lastSummarizeAt = 0
 /** 测试钩子：重置 summarize 全局冷却（生产不调用；tests 需要独立验证冷却语义）。 */
 export function _resetSummarizeCooldown () {
   lastSummarizeAt = 0
+}
+
+/**
+ * A2：token 估算（qwen3 BPE 近似，确定性可测，偏保守）——
+ * CJK ×1.0 + ASCII ×0.25 + 其他 ×0.5。字符级截断 ≠ token 级截断的工程折中：
+ * 超窗时宁可多裁一点（历史轮/工具结果），也不让 Ollama 静默截断（信息丢失不可控）。
+ */
+export function estimateTokens (text) {
+  let t = 0
+  for (const ch of String(text ?? '')) {
+    const c = ch.codePointAt(0)
+    if (c >= 0x4e00 && c <= 0x9fff) t += 1 // CJK 统一表意
+    else if (c < 0x80) t += 0.25 // ASCII
+    else t += 0.5
+  }
+  return Math.ceil(t)
+}
+
+function messageTokens (m) {
+  if (m.toolResults?.length) {
+    return m.toolResults.reduce((s, r) => s + estimateTokens(r.output), 0)
+  }
+  if (m.toolCalls?.length) {
+    return estimateTokens(m.content ?? '') + estimateTokens(JSON.stringify(m.toolCalls.map(t => t.name)))
+  }
+  return estimateTokens(m.content ?? '')
+}
+
+/**
+ * A2：上下文预算裁剪——消息序列（fixedTokens + Σ消息）超预算时按序裁剪：
+ * ① 丢最旧的纯文本历史轮（工具轮必须保留配对）→ ② 工具结果统一截短（不低于
+ * TOOL_RESULT_MIN_CHARS，由剩余预算分摊）→ ③ 当前用户消息截到剩余。
+ * 原地修改传入数组（调用方持有副本）；返回是否发生裁剪。
+ */
+export function applyTokenBudget (messages, fixedTokens, budget) {
+  let over = fixedTokens + messages.reduce((s, m) => s + messageTokens(m), 0) - budget
+  if (over <= 0) return false
+  // ① 丢最旧纯文本轮（保留最后一条——当前用户消息留给 ③ 按剩余预算截断）
+  let i = 0
+  while (over > 0 && i < messages.length - 1) {
+    const m = messages[i]
+    if (m.toolCalls || m.toolResults) { i++; continue } // 工具轮不动（配对语义）
+    over -= messageTokens(m)
+    messages.splice(i, 1)
+  }
+  // ② 工具结果统一截短（targetPer 由"除纯文本外"的预算分摊）
+  if (over > 0) {
+    const results = messages.flatMap(m => m.toolResults ?? [])
+    if (results.length > 0) {
+      const textBudget = Math.max(TOOL_RESULT_MIN_CHARS * results.length,
+        budget - fixedTokens - messages.reduce((s, m) => s + (m.toolResults ? 0 : messageTokens(m)), 0))
+      const targetPer = Math.max(TOOL_RESULT_MIN_CHARS, Math.floor(textBudget / results.length))
+      for (const r of results) {
+        if (r.output.length > targetPer) {
+          over -= estimateTokens(r.output) - estimateTokens(r.output.slice(0, targetPer))
+          r.output = r.output.slice(0, targetPer) + '…(截断)'
+        }
+      }
+    }
+  }
+  // ③ 当前用户消息截到剩余（按比例近似，保守多裁）
+  if (over > 0 && messages.length > 0) {
+    const last = messages[messages.length - 1]
+    if (last && !last.toolCalls && !last.toolResults && last.content) {
+      const cur = estimateTokens(last.content)
+      const keep = Math.max(TOOL_RESULT_MIN_CHARS, Math.floor(last.content.length * (1 - over / Math.max(1, cur))))
+      last.content = last.content.slice(0, keep)
+    }
+  }
+  return true
 }
 
 /** 读取会话并刷新 LRU 序（delete+set 移到迭代末尾）。 */
@@ -65,10 +140,10 @@ const SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（mi
 规则：
 1. 回答保持简短（≤250 字符），用 reply 技能说话。
 2. 涉及移动/创建任务/控制行为的操作必须用对应技能完成，不要编造能力。
-3. 危险操作（move_to/run_task/stop_task/follow_player/find_block）只有 op 玩家可用——当前调用者是否是 op 见"当前会话"（技能层会强制校验，无需再向调用者要求验证）。
+3. 危险操作（move_to/run_task/stop_task/follow_player/find_block/explore）只有 op 玩家可用——当前调用者是否是 op 见"当前会话"（技能层会强制校验，无需再向调用者要求验证）。
 4. 状态查询（status/task_status/inventory_summary）可自由使用，回答时引用真实数据。
 5. 找东西用 find_block 技能（如"去找铁矿石"→ find_block(iron_ore)），不要用其他方式编造位置。
-6. 不要角色扮演，不要输出 Markdown，不要虚构玩家或世界状态。`
+6. 不要角色扮演，不要输出 Markdown，不要虚构玩家或世界状态。环境感知以系统消息里的"环境:"行与 environment/nearby_entities 技能结果为准——没感知到的信息（如天气/生物群系/附近实体）如实说不知道，探索过的区域可查 query_map。`
 
 /**
  * 每次对话注入调用者身份：LLM 必须知道"谁在说话、是否有 op 权限"，
@@ -134,9 +209,25 @@ export class AgentInterface {
       // auto provider 的粘滞回退按"本轮对话"重置（C7/V）：云端挂起时其余步骤直走 ollama
       this.provider.resetFallback?.()
       for (let step = 0; step < maxSteps && !finished; step++) {
+        const tools = this.skills.listForTools()
+        // A3：环境自动注入——每次工具轮重新生成（bot 移动后数据新鲜）；开关可关；
+        // 缺失字段 environmentLine 内部兜底（返回空串）
+        const system = buildSystem(user, this.ctx.cfg) + (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`)
+        // A2：上下文预算裁剪（provider 有窗口时）——fixed = system + 工具定义；
+        // 超预算按序裁剪历史/工具结果/用户消息。窗口 null（云端/测试）→ 不裁剪
+        const window = this.provider.contextWindow?.()
+        if (window) {
+          const budget = window - (this.cfg.maxTokens ?? 1024) - BUDGET_RESERVE_TOKENS
+          const fixedTokens = estimateTokens(system) + estimateTokens(JSON.stringify(tools))
+          if (fixedTokens > budget && !this._budgetWarned) {
+            this._budgetWarned = true
+            this.log.warn({ fixedTokens, budget, window }, 'L2 固定 prompt 超出上下文预算（窗口太小或技能过多）——历史将被大量裁剪')
+          }
+          applyTokenBudget(messages, fixedTokens, budget)
+        }
         const res = await this.provider.chat(messages, {
-          tools: this.skills.listForTools(),
-          system: buildSystem(user, this.ctx.cfg),
+          tools,
+          system,
           signal: ac.signal
         })
         // token/耗时计量（U5）：累计本轮全部 provider 调用

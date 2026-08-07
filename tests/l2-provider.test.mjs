@@ -98,18 +98,25 @@ test('CloudProvider: HTTP 错误抛出（不泄露响应体全文）', async () 
   }
 })
 
-test('OllamaProvider: tool_calls 解析与 max_tokens 传参', async () => {
+test('OllamaProvider: tool_calls 解析与 native /api/chat 传参（A1）', async () => {
   const calls = mockFetch(() => ({
     ok: true,
     status: 200,
-    json: async () => ({ choices: [{ message: { content: null, tool_calls: [{ id: 'a', function: { name: 'status', arguments: '{"x":1}' } }] } }] })
+    json: async () => ({
+      message: { role: 'assistant', content: null, tool_calls: [{ id: 'a', type: 'function', function: { name: 'status', arguments: '{"x":1}' } }] },
+      prompt_eval_count: 10,
+      eval_count: 5
+    })
   }))
-  const l2 = { ...l2Base, provider: 'ollama', ollamaUrl: 'http://127.0.0.1:11434', maxTokens: 512 }
+  const l2 = { ...l2Base, provider: 'ollama', ollamaUrl: 'http://127.0.0.1:11434', maxTokens: 512, ollamaNumCtx: 4096 }
   const p = createProvider({ l2 }, makeLogger())
   const res = await p.chat([{ role: 'user', content: 'x' }])
-  assert.equal(calls[0].url, 'http://127.0.0.1:11434/v1/chat/completions')
-  assert.equal(calls[0].body.max_tokens, 512, 'OpenAI 兼容 body 应带 max_tokens')
+  assert.equal(calls[0].url, 'http://127.0.0.1:11434/api/chat', 'native /api/chat（compat 端点不处理 num_ctx）')
+  assert.equal(calls[0].body.options.num_ctx, 4096, 'num_ctx 应进 native options')
+  assert.equal(calls[0].body.options.num_predict, 512, 'max_tokens → native options.num_predict')
   assert.deepEqual(res.toolCalls, [{ id: 'a', name: 'status', arguments: { x: 1 } }])
+  assert.deepEqual(res.usage, { inputTokens: 10, outputTokens: 5 }, 'native prompt_eval_count/eval_count 归一化')
+  assert.equal(p.contextWindow(), 4096, 'contextWindow 应返回配置窗口')
   restoreFetch()
 })
 
@@ -165,7 +172,7 @@ test('U9: auto 模式诊断返回双 provider', async () => {
 test('provider: auto 模式 cloud 失败真实回退 ollama（各调用一次）', async () => {
   const calls = mockFetch((url) => url.includes('anthropic')
     ? { ok: false, status: 500, text: async () => 'cloud down' }
-    : { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'fallback-ok' } }] }) })
+    : { ok: true, status: 200, json: async () => ({ message: { role: 'assistant', content: 'fallback-ok' } }) })
   const l2 = {
     ...l2Base, provider: 'auto',
     cloudBaseUrl: 'https://api.anthropic.com/v1/messages',
@@ -187,7 +194,7 @@ test('provider: auto 模式 cloud 失败真实回退 ollama（各调用一次）
 test('C7/V 修复：auto 粘滞回退——cloud 失败一次后余下步骤直走 ollama（不重复 60s 空等）', async () => {
   const calls = mockFetch((url) => url.includes('anthropic')
     ? { ok: false, status: 500, text: async () => 'cloud down' }
-    : { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) })
+    : { ok: true, status: 200, json: async () => ({ message: { role: 'assistant', content: 'ok' } }) })
   const l2 = {
     ...l2Base, provider: 'auto',
     cloudBaseUrl: 'https://api.anthropic.com/v1/messages',
@@ -230,7 +237,7 @@ test('U5: ollama 网络错误重试一次（2s 退避后成功）+ usage 归一�
   globalThis.fetch = async () => {
     calls++
     if (calls === 1) throw new TypeError('fetch failed')
-    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '重试成功', tool_calls: [] } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }) }
+    return { ok: true, status: 200, json: async () => ({ message: { role: 'assistant', content: '重试成功', tool_calls: [] }, prompt_eval_count: 10, eval_count: 5 }) }
   }
   try {
     const l2 = { ...l2Base, provider: 'ollama', ollamaUrl: 'http://x', ollamaModel: 'm', ollamaTimeoutMs: 5000 }
@@ -238,7 +245,7 @@ test('U5: ollama 网络错误重试一次（2s 退避后成功）+ usage 归一�
     const r = await p.chat([{ role: 'user', content: 'hi' }])
     assert.equal(calls, 2, '网络错误应重试一次')
     assert.equal(r.text, '重试成功')
-    assert.deepEqual(r.usage, { inputTokens: 10, outputTokens: 5 }, 'prompt/completion_tokens 应归一化')
+    assert.deepEqual(r.usage, { inputTokens: 10, outputTokens: 5 }, 'native prompt_eval_count/eval_count 应归一化')
     assert.ok(typeof r.latencyMs === 'number')
   } finally {
     restoreFetch()

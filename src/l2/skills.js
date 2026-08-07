@@ -5,6 +5,7 @@
 import { isOp } from '../commands/permissions.js'
 import { validateTaskOptions } from '../core/task-schemas.js'
 import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
+import { environmentSnapshot, nearbyEntities } from './environment.js'
 
 export function createSkillRegistry (ctx) {
   const skills = new Map()
@@ -173,7 +174,7 @@ export function createSkillRegistry (ctx) {
 
   register({
     name: 'find_block',
-    description: '找到指定方块的地表暴露位置（上方 2 格为天空，排除洞穴/地下/液体上方）并走过去（3 格内）。适合找露头矿、竹子、甘蔗等。',
+    description: '找到指定方块的地表暴露位置（上方 2 格为天空，排除洞穴/地下/液体上方）并走过去（3 格内）。适合找露头矿、竹子、甘蔗（sugar_cane）等。',
     parameters: {
       type: 'object',
       required: ['blockName'],
@@ -208,6 +209,33 @@ export function createSkillRegistry (ctx) {
         return `已到达 ${blockName}: ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}${warn}`
       }
       return `找到 ${blockName} 但${REASON_TEXT[r.reason] ?? '移动失败'}：最近候选 ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}`
+    }
+  })
+
+  // ---- L2 进化（A3）：环境感知 ----
+
+  register({
+    name: 'environment',
+    description: '获取 Bot 当前位置的环境快照（时间/昼夜/天气/维度/生物群系/朝向/附近玩家与实体）。',
+    permission: 'all',
+    handler: async (c) => environmentSnapshot(c.bot)
+  })
+
+  register({
+    name: 'nearby_entities',
+    description: '列出附近实体（按距离升序，可过滤名称/类型）。',
+    parameters: {
+      type: 'object',
+      properties: {
+        filter: { type: 'string', description: '实体名子串或 kind：hostile/passive/neutral/player/projectile/animal' },
+        maxDistance: { type: 'number', min: 1, max: 64, description: '搜索半径 1-64，默认 32' }
+      }
+    },
+    permission: 'all',
+    handler: async (c, { filter, maxDistance }) => {
+      const ents = nearbyEntities(c.bot, { name: filter, kind: filter, maxDistance: maxDistance ?? 32, limit: 10 })
+      if (ents.length === 0) return `附近（${maxDistance ?? 32} 格）没有${filter ? `符合条件的（${filter}）` : ''}实体`
+      return ents.map(e => `${e.name}/${e.kind} 距离${e.dist}m 坐标(${e.pos})`).join('\n')
     }
   })
 
