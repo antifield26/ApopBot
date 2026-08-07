@@ -27,6 +27,25 @@ async function settle (n = 3) {
 
 const AREA1 = { x1: 0, y1: 64, z1: 0, x2: 0, y2: 64, z2: 0 } // 1×1×1 小区域
 
+function makeMineBot () {
+  return {
+    registry: { blocksByName: { iron_ore: { id: 44 } } },
+    collectBlock: { collect: async () => {}, cancelTask () {} },
+    pathfinder: { stop () {} },
+    findBlocks: () => [],
+    blockAt: (p) => ({ position: p, type: 44 })
+  }
+}
+
+test('A2/P1-2: mine/chop radius 纵深钳制 256（同步 findBlocks 枚举防冻结）', async () => {
+  const mine = new MineTask('m', 'mine', { blockTypes: ['iron_ore'], radius: 5000 }, makeCtx(makeMineBot()))
+  await mine.init()
+  assert.equal(mine._radius, 256, 'mine radius 应钳制到 256')
+  const chop = new ChopTask('c', 'chop', { area: AREA1, radius: 1e9 }, makeCtx(makeMineBot()))
+  await chop.init()
+  assert.equal(chop._radius, 256, 'chop radius 应钳制到 256')
+})
+
 // ---- MineTask ----
 
 test('mine run: 背包满（NoChests）→ 等待清空，stop 打断退出', async () => {

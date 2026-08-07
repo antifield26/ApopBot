@@ -67,6 +67,28 @@ function base () {
   return loadConfig({ argv: [], env: {} })
 }
 
+test('A2/F3: config 任务 options 过统一 schema（此前静默放行 → init 抛错被吞 → 任务静默不运行）', () => {
+  // afk intervalMinutes:0（忙循环风险）——旧内联校验放行
+  const bad1 = { ...base(), tasks: [{ id: 'a', type: 'afk', options: { intervalMinutes: 0 } }] }
+  const v1 = validateConfig(bad1)
+  assert.equal(v1.ok, false)
+  assert.ok(v1.errors.some(e => e.includes('intervalMinutes')), v1.errors.join('; '))
+  // combat attackRange:-1（病态行为：dist > -1 恒真永不攻击）——schema min 0.5 拦截
+  const bad2 = { ...base(), tasks: [{ id: 'c', type: 'combat', options: { attackRange: -1 } }] }
+  const v2 = validateConfig(bad2)
+  assert.equal(v2.ok, false)
+  assert.ok(v2.errors.some(e => e.includes('attackRange')), v2.errors.join('; '))
+  // mine 缺 blockTypes（required）
+  const bad3 = { ...base(), tasks: [{ id: 'm', type: 'mine', options: {} }] }
+  assert.equal(validateConfig(bad3).ok, false)
+  // 合法 config 任务不受影响
+  const good = { ...base(), tasks: [{ id: 'g', type: 'mine', options: { blockTypes: ['iron_ore'], radius: 32 } }] }
+  assert.equal(validateConfig(good).ok, true)
+  // A2/F2 联动：area-only chop（代码合法契约）在 config 路径同样放行
+  const chop = { ...base(), tasks: [{ id: 'ch', type: 'chop', options: { area: { x1: 0, y1: 0, z1: 0, x2: 10, y2: 10, z2: 10 } } }] }
+  assert.equal(validateConfig(chop).ok, true, 'area-only chop 应合法（chop 读 logTypes 非 blockTypes）')
+})
+
 test('M6: reconnect.jitter 越界拒绝', () => {
   const bad = { ...base(), reconnect: { ...base().reconnect, jitter: 1.5 } }
   const { ok, errors } = validateConfig(bad)
@@ -114,16 +136,18 @@ test('M6: blockTypes 命名空间前缀拒绝 / area 边界校验', () => {
 })
 
 test('M6: scheduled 无自然完成类型必须配 durationMinutes', () => {
-  const bad = { ...base(), tasks: [{ id: 'a', type: 'afk', schedule: '0 3 * * *' }] }
+  // A2 后 afk 还必须配 intervalMinutes（schema required，afk.js init 同款校验）——
+  // bad 只缺 durationMinutes（intervalMinutes 给全，验证 M6 校验本身）
+  const bad = { ...base(), tasks: [{ id: 'a', type: 'afk', schedule: '0 3 * * *', options: { intervalMinutes: 1 } }] }
   const { ok, errors } = validateConfig(bad)
   assert.equal(ok, false)
   assert.ok(errors.some(e => e.includes('durationMinutes')))
 
-  const good = { ...base(), tasks: [{ id: 'a', type: 'afk', schedule: '0 3 * * *', options: { durationMinutes: 10 } }] }
+  const good = { ...base(), tasks: [{ id: 'a', type: 'afk', schedule: '0 3 * * *', options: { durationMinutes: 10, intervalMinutes: 1 } }] }
   assert.equal(validateConfig(good).ok, true)
 
-  // 有自然完成的类型（mine stopWhenDone）不需要 durationMinutes
-  const mine = { ...base(), tasks: [{ id: 'm', type: 'mine', schedule: '0 3 * * *', options: { stopWhenDone: true } }] }
+  // 有自然完成的类型（mine stopWhenDone）不需要 durationMinutes（blockTypes 仍需）
+  const mine = { ...base(), tasks: [{ id: 'm', type: 'mine', schedule: '0 3 * * *', options: { blockTypes: ['iron_ore'], stopWhenDone: true } }] }
   assert.equal(validateConfig(mine).ok, true)
 })
 

@@ -26,7 +26,9 @@ export class MineTask extends BaseTask {
     // C4/J 修复：collect 分批上限——collectBlock.collect 无暂停钩子，整批（最多
     // 64 块）完成前 pause/stop 不生效（数分钟）；批间检查暂停/停止
     this._collectBatch = 4
-    this._radius = o.radius ?? 32
+    // A2（第四轮）：radius 纵深钳制 256——findBlocks 是同步枚举，无界 radius 在
+    // 稀疏区域冻结主线程（schema 已限 256，此处防未来直传/配置绕过）
+    this._radius = Math.min(256, o.radius ?? 32)
     // collectblock 的 getClosestChest 调 c.distanceTo（Vec3 方法）——配置里的普通对象必须转 Vec3
     this._chestLocations = Array.isArray(o.chestLocations)
       ? o.chestLocations.map(c => new Vec3(c.x, c.y, c.z))

@@ -111,7 +111,9 @@ export class FarmTask extends BaseTask {
     const anchor = new Vec3(
       (area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2, (area.z1 + area.z2) / 2)
     const diag = Math.hypot(area.x2 - area.x1, area.y2 - area.y1, area.z2 - area.z1)
-    const maxDistance = Math.ceil(diag) + 16
+    // A2（第四轮）：扫描半径钳制 256——超大 area 的同步 findBlocks 全量枚举会
+    // 冻结主线程（客户端区块加载上限内无意义；超出即空扫 + 下方告警明示）
+    const maxDistance = Math.min(Math.ceil(diag) + 16, 256)
     // 远距离告警（R）：bot 距区域中心超过扫描半径时扫描必空——明示而非静默 idle
     const botPos = this.bot.entity?.position
     if (botPos) {

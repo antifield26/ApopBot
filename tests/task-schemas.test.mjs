@@ -45,3 +45,29 @@ test('schema: 全部任务类型均有定义（manager TASK_TYPES 一致性防�
     assert.ok(TASK_OPTION_SCHEMAS[t], `缺 ${t} 的 schema`)
   }
 })
+
+// ---- A2（第四轮）：schema 与代码契约对齐 + 无界值限幅 ----
+
+test('A2/F2: chop 用 logTypes（可选）而非 blockTypes——area-only 配置合法', () => {
+  // 此前 schema 必填 blockTypes 但 chop.js 从不读它 → `!task new chop {"area":…}`
+  // 被拒而 config 同配置照跑（命令/配置行为不一致）
+  assert.deepEqual(validateTaskOptions('chop', { area: { x1: 0, y1: 0, z1: 0, x2: 10, y2: 10, z2: 10 } }), { ok: true })
+  assert.deepEqual(validateTaskOptions('chop', { area: {}, logTypes: ['oak_log'] }), { ok: true })
+  const r = validateTaskOptions('chop', { area: {}, logTypes: [] })
+  assert.ok(!r.ok, '空 logTypes 应拒绝（minItems 1）')
+})
+
+test('A2/F7: mine 的 area 可选（与代码 run 内过滤契约一致）', () => {
+  assert.deepEqual(validateTaskOptions('mine', { blockTypes: ['iron_ore'], area: { x1: 0, y1: 0, z1: 0, x2: 10, y2: 10, z2: 10 } }), { ok: true })
+  // 类型仍是 object：非对象拒绝
+  assert.ok(!validateTaskOptions('mine', { blockTypes: ['iron_ore'], area: [1, 2, 3] }).ok)
+})
+
+test('A2/P1-2: mine/chop radius 上限 256（同步 findBlocks 枚举限幅）', () => {
+  assert.deepEqual(validateTaskOptions('mine', { blockTypes: ['iron_ore'], radius: 256 }), { ok: true })
+  const r1 = validateTaskOptions('mine', { blockTypes: ['iron_ore'], radius: 257 })
+  assert.ok(!r1.ok && r1.error.includes('不能大于'), r1.error)
+  const r2 = validateTaskOptions('chop', { area: {}, radius: 1000000 })
+  assert.ok(!r2.ok, 'chop 无界 radius 应拒绝')
+  assert.deepEqual(validateTaskOptions('chop', { area: {}, radius: 256 }), { ok: true })
+})

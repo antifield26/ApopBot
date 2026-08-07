@@ -16,8 +16,14 @@ export const TASK_OPTION_SCHEMAS = {
     type: 'object',
     properties: {
       blockTypes: { type: 'array', items: { type: 'string' }, required: true, minItems: 1 },
+      // A2（第四轮）：mine 的 area 为可选（run 内做区域过滤）——此前 schema 缺失，
+      // 与代码契约不一致（F7）
+      area: { type: 'object' },
       maxBlocks: { type: 'integer', min: 1 },
-      radius: { type: 'integer', min: 1 },
+      // A2：radius 上限 256——bot.findBlocks 是同步八面体枚举（OctahedronIterator），
+      // 无界 radius 在稀疏区域冻结主线程（与 findSurfaceBlocks 的 16-256 限幅一致；
+      // 客户端区块加载上限本就框死可见范围）
+      radius: { type: 'integer', min: 1, max: 256 },
       chestLocations: { type: 'array' },
       stopWhenDone: { type: 'boolean' }
     }
@@ -51,9 +57,12 @@ export const TASK_OPTION_SCHEMAS = {
     type: 'object',
     properties: {
       area: { type: 'object', required: true },
-      blockTypes: { type: 'array', items: { type: 'string' }, required: true, minItems: 1 },
+      // A2（第四轮）：chop 实际读取 logTypes（chop.js:25，缺省正则匹配全部原木/木头），
+      // 从不读 blockTypes——旧 schema 必填 blockTypes 导致 `!task new chop {"area":…}`
+      // 被拒而 config 同配置照跑（命令/配置两路径行为不一致，F2）
+      logTypes: { type: 'array', items: { type: 'string' }, minItems: 1 },
       maxBlocks: { type: 'integer', min: 1 },
-      radius: { type: 'integer', min: 1 },
+      radius: { type: 'integer', min: 1, max: 256 }, // A2：同步枚举限幅（同 mine）
       stopWhenDone: { type: 'boolean' }
     }
   },

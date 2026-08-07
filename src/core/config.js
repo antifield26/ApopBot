@@ -1,6 +1,7 @@
 import { readFileSync, mkdirSync, accessSync, constants as FS_CONST } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { validateTaskOptions } from './task-schemas.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -351,6 +352,12 @@ export function validateConfig (cfg) {
       if (Number.isInteger(a?.y1) && Number.isInteger(a?.y2) && a.y1 > a.y2) errors.push(`${label} area.y1 不能大于 y2`)
       if (Number.isInteger(a?.z1) && Number.isInteger(a?.z2) && a.z1 > a.z2) errors.push(`${label} area.z1 不能大于 z2`)
     }
+    // A2（第四轮）：config 路径任务 options 接入统一 schema 校验（此前只接了
+    // !task new 与 LLM run_task 两个入口——config 非法 options（afk intervalMinutes:0、
+    // combat attackRange:-1 等）静默放行 → init 抛错被 load 逐条容错吞掉 → 任务
+    // 静默不运行、玩家无感知）。失败并入 errors：启动 exit(1) / reload 保留旧配置。
+    const v = validateTaskOptions(t.type, opts)
+    if (!v.ok) errors.push(`${label} ${v.error}`)
   }
   // 未知顶层键（拼写错误会被静默忽略——明确报出）
   const KNOWN_TOP_KEYS = new Set([

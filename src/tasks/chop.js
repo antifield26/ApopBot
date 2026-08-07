@@ -14,7 +14,8 @@ export class ChopTask extends BaseTask {
     const o = this.options
     if (!this._isArea(o.area)) throw new Error('chop 任务需要 options.area（完整 x1..z2 六坐标）')
     this._batchMax = o.maxBlocks ?? 64
-    this._radius = o.radius ?? 48
+    // A2（第四轮）：radius 纵深钳制 256（同步 findBlocks 枚举，同 mine）
+    this._radius = Math.min(256, o.radius ?? 48)
     // 默认巡逻：无树时等待（树会重新长）而非秒完成——与 combat 同款防"指令无效"误判；
     // 一次性伐光显式配 stopWhenDone: true
     this._stopWhenDone = o.stopWhenDone === true
