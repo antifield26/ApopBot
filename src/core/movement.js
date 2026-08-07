@@ -217,6 +217,10 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
 export function findSurfaceBlocks (bot, blockName, { maxDistance = 64, maxCandidates = 64 } = {}) {
   const block = bot.registry?.blocksByName?.[blockName]
   if (!block) throw new Error(`未知方块类型: ${blockName}`)
+  // C5/G 纵深防御：命令层 16-256 已校验，但技能/未来调用方可能直传任意值——
+  // findBlocks 同步无界枚举（OctahedronIterator），超大 maxDistance 冻结主线程分钟级
+  maxDistance = Math.min(256, Math.max(16, Math.floor(maxDistance) || 16))
+  maxCandidates = Math.min(64, Math.max(1, Math.floor(maxCandidates) || 1))
   const found = bot.findBlocks({
     matching: (b) => b.type === block.id, // palette 快路径 matcher 只有 type/name（无 position）
     maxDistance,

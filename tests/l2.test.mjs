@@ -371,3 +371,14 @@ test('skills: find_block 非 op → 权限不足', async () => {
   assert.equal(r.ok, false)
   assert.ok(r.result.includes('权限不足'))
 })
+
+test('C5/G 修复：find_block maxDistance 越界（16-256 外）→ 参数校验拒绝（防主线程冻结）', async () => {
+  const ctx = makeFindCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('op1', 'find_block', { blockName: 'iron_ore', maxDistance: 100000 })
+  assert.equal(r.ok, false)
+  assert.ok(r.result.includes('不能大于'), r.result)
+  const r2 = await agent.act('op1', 'find_block', { blockName: 'iron_ore', maxDistance: 5 })
+  assert.equal(r2.ok, false)
+  assert.ok(r2.result.includes('不能小于'), r2.result)
+})

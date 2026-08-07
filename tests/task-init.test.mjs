@@ -81,6 +81,11 @@ test('AfkTask init: 合法配置通过', async () => {
   assert.equal(task._intervalMs, 300000)
 })
 
+test('C5/I 修复: AfkTask intervalMinutes ≤ 0 报错（1ms 忙循环刷 look 包）', async () => {
+  await assert.rejects(new AfkTask('a1', 'afk', { intervalMinutes: 0 }, makeCtx({})).init(), /intervalMinutes/)
+  await assert.rejects(new AfkTask('a1', 'afk', { intervalMinutes: -1 }, makeCtx({})).init(), /intervalMinutes/)
+})
+
 test('任务完成态: run 自然退出 → completed（stopWhenDone 语义回归）', async () => {
   // 用 FishTask 模拟"自然完成"：durationMinutes 极小 + 假 bot.fish 立即 resolve
   let fishCalls = 0

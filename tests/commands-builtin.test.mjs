@@ -81,6 +81,15 @@ test('!task new 缺参 → 用法提示', async () => {
   assert.equal(calls.addTask.length, 0)
 })
 
+test('C5 修复：!task new 非法 options → 拒绝（afk intervalMinutes 0 不再忙循环）', async () => {
+  const { ctx, bot, calls } = makeCtx()
+  await dispatch(ctx, '!task new afk a1 {"intervalMinutes":0}')
+  assert.ok(lastMsg(bot).includes('参数校验失败'), lastMsg(bot))
+  assert.equal(calls.addTask.length, 0, '校验失败不应创建任务')
+  await dispatch(ctx, '!task new mine m1 {"blockTypes":[]}')
+  assert.ok(lastMsg(bot).includes('参数校验失败'), lastMsg(bot))
+})
+
 test('!task new 合法 → addTask + 成功消息', async () => {
   const { ctx, bot, calls } = makeCtx()
   await dispatch(ctx, '!task new mine gold-mine {"blockTypes":["gold_ore"]}')

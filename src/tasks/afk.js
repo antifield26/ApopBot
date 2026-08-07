@@ -6,7 +6,11 @@ export class AfkTask extends BaseTask {
   async init () {
     super.init()
     const o = this.options
-    if (typeof o.intervalMinutes !== 'number') throw new Error('afk 任务需要 options.intervalMinutes')
+    // C5/I 修复：intervalMinutes ≤ 0 → _internalWait(≤0) 被 setTimeout 钳制为 ~1ms
+    // → 无限近忙循环刷 look 包（可触发服务端包速率踢出 + 高 CPU）
+    if (typeof o.intervalMinutes !== 'number' || !Number.isFinite(o.intervalMinutes) || o.intervalMinutes < 1) {
+      throw new Error('afk 任务需要 options.intervalMinutes（≥1 分钟）')
+    }
     this._intervalMs = o.intervalMinutes * 60 * 1000
   }
 

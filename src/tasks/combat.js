@@ -28,6 +28,10 @@ export class CombatTask extends BaseTask {
     this._minHealth = o.minHealth ?? 8
     this._eatWhenLowHealth = o.eatWhenLowHealth !== false
     this._attackRange = o.attackRange ?? 3.5
+    // 配置陷阱：aggroRange < attackRange 时中间距离的怪既找不到也不打（反复目标丢失）
+    if (o.aggroRange !== undefined && o.attackRange !== undefined && o.aggroRange < o.attackRange) {
+      throw new Error('combat 任务 options.aggroRange 不能小于 attackRange（中间距离的怪将永不攻击）')
+    }
     this._attackCooldownMs = o.attackCooldownMs ?? 400
     this._checkIntervalMs = (o.checkIntervalSeconds ?? 3) * 1000
     this._weaponName = typeof o.weapon === 'string' ? o.weapon : null // null = 自动找剑
@@ -170,7 +174,14 @@ export class CombatTask extends BaseTask {
     // 优于原 fire-and-forget + 固定 10s 睡眠）
     const enemy = this.bot.nearestEntity((e) => e && this._isHostile(e) && e !== this.bot.entity)
     if (enemy) {
-      const away = this.bot.entity.position.minus(enemy.position).normalize().scaled(15).plus(this.bot.entity.position)
+      const awayVec = this.bot.entity.position.minus(enemy.position)
+      // C5/Q 修复：敌人与 bot 同格（实体重叠/贴脸）时零向量 normalize() → Infinity*0
+      // = NaN 目标 → GoalNear(NaN) 寻路异常——直接原地等待（无方向可退）
+      if (awayVec.x * awayVec.x + awayVec.y * awayVec.y + awayVec.z * awayVec.z < 1e-12) {
+        await this._internalWait(10 * 1000, 'retreat-low-health')
+        return
+      }
+      const away = awayVec.normalize().scaled(15).plus(this.bot.entity.position)
       const r = await this._move.gotoPoint(away, { timeoutMs: 10000 })
       if (!r.ok) this.log.warn({ reason: r.reason }, '撤退寻路失败，原地等待')
     }

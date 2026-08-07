@@ -3,6 +3,7 @@
 // execute() 永不抛出——错误以 { ok: false, result: 原因 } 返回，供 LLM 继续决策。
 
 import { isOp } from '../commands/permissions.js'
+import { validateTaskOptions } from '../core/task-schemas.js'
 
 export function createSkillRegistry (ctx) {
   const skills = new Map()
@@ -138,6 +139,9 @@ export function createSkillRegistry (ctx) {
       }
     },
     handler: async (c, { type, id, options }) => {
+      // C5（R3 根治版）：LLM 生成的 ad-hoc options 过 schema（与 !task new 同款入口拦截）
+      const v = validateTaskOptions(type, options)
+      if (!v.ok) throw new Error(`参数校验失败: ${v.error}`)
       c.tasks.addTask({ id, type, options: options ?? {}, notifyChat: true })
       // 等一个事件循环轮：init 抛错在 fire-and-forget 微任务内置 failed——立即查会误判
       await new Promise(r => setImmediate(r))
@@ -170,7 +174,9 @@ export function createSkillRegistry (ctx) {
       required: ['blockName'],
       properties: {
         blockName: { type: 'string', description: '方块名（无命名空间前缀，如 iron_ore/bamboo/sugarcane）' },
-        maxDistance: { type: 'number', description: '搜索半径 16-256，默认 64' }
+        // C5/G：16-256 限幅（与 !find 一致）——LLM 幻觉传超大值会触发 findBlocks
+        // 同步无界枚举冻结主线程（OctahedronIterator 不因区块未加载而停止）
+        maxDistance: { type: 'number', min: 16, max: 256, description: '搜索半径 16-256，默认 64' }
       }
     },
     handler: async (c, { blockName, maxDistance }) => {
@@ -223,7 +229,7 @@ export function createSkillRegistry (ctx) {
   return { register, list, listForTools, execute }
 }
 
-/** 极简 JSONSchema 校验（type + required）。 */
+/** 极简 JSONSchema 校验（type + required + min/max）。 */
 function validateParams (schema, params) {
   if (!schema) return { ok: true }
   params = params ?? {}
@@ -242,6 +248,10 @@ function validateParams (schema, params) {
       array: Array.isArray(v)
     }[def.type]
     if (!ok) return { ok: false, error: `${k} 必须是 ${def.type}` }
+    if ((def.type === 'number' || def.type === 'integer') && typeof v === 'number') {
+      if (def.min !== undefined && v < def.min) return { ok: false, error: `${k} 不能小于 ${def.min}` }
+      if (def.max !== undefined && v > def.max) return { ok: false, error: `${k} 不能大于 ${def.max}` }
+    }
   }
   return { ok: true }
 }

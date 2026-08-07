@@ -303,6 +303,27 @@ test('combat run: 攻击 → entityGone 击杀 → maxTargets 完成', async () 
   assert.ok(task.counters.attacks >= 1, '应至少发起一次攻击')
 })
 
+test('C5/Q 修复：低血撤退——敌人同格（零向量）→ 不构造 NaN 目标，原地等待', async () => {
+  let gotoCalls = 0
+  const bot = new EventEmitter()
+  Object.assign(bot, {
+    pathfinder: { setGoal: () => {}, stop () {}, goto: () => { gotoCalls++; return Promise.resolve() } },
+    entity: { position: new Vec3(0, 64, 0) },
+    health: 2, // 低于 minHealth 8 → 走低血处理
+    autoEat: { eat: async () => { throw new Error('no food') } }, // 进食失败 → 撤退分支
+    inventory: { items: () => [] },
+    nearestEntity: () => ({ type: 'hostile', position: new Vec3(0, 64, 0) }), // 与 bot 同格
+    registry: { entitiesArray: [] }
+  })
+  const task = new CombatTask('cb', 'combat', {}, makeCtx(bot))
+  const p = task.start()
+  await new Promise(r => setTimeout(r, 100))
+  assert.equal(gotoCalls, 0, '零向量不得构造 NaN 撤退目标')
+  assert.equal(task.waitingReason, 'retreat-low-health')
+  await task.stop()
+  await p
+})
+
 // ---- BreedTask ----
 
 test('breed run: 无动物 + stopWhenNoAnimals:true → 自然完成', async () => {

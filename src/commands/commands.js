@@ -2,6 +2,7 @@ import { CommandRegistry } from './registry.js'
 import { isOp } from './permissions.js'
 import { sendChat } from '../core/chat.js'
 import { findSurfaceBlocks, createMovement, REASON_TEXT } from '../core/movement.js'
+import { validateTaskOptions } from '../core/task-schemas.js'
 
 // !find 防重入：行走期间重复 find 拒绝（单 bot 架构，模块级标志）。
 // 重连重建功能层时若残留 true，由 120s 墙钟超时自愈（goto 必然结束）
@@ -63,6 +64,13 @@ export function registerBuiltinCommands (registry, ctx) {
         let options = {}
         if (optionsJson) {
           try { options = JSON.parse(optionsJson) } catch { await sendChat(c.bot, '§c参数必须是 JSON 对象', c.cfg.chat?.maxLength); return }
+        }
+        // C5（R3 根治版）：ad-hoc options 过 schema——此前零校验（负 durationMinutes/
+        // intervalMinutes 0 → 忙循环等全部放行）；未知键放行向前兼容
+        const v = validateTaskOptions(type, options)
+        if (!v.ok) {
+          await sendChat(c.bot, `§c参数校验失败: ${v.error}`, c.cfg.chat?.maxLength)
+          return
         }
         try {
           c.tasks.addTask({ id: newId, type, options, notifyChat: true })
