@@ -15,6 +15,7 @@
 // 移动封装。
 
 import pathfinderPkg from 'mineflayer-pathfinder' // CJS 包：default 导入后解构（ESM named 互操作不可靠）
+import { sendChat } from '../core/chat.js'
 const { goals } = pathfinderPkg
 
 const TICK_MS = 500 // 控制周期
@@ -188,8 +189,9 @@ export function followPlugin (bot) {
     if (target && entity.id === target.id) {
       const name = target.username ?? target.name ?? `实体#${target.id}`
       follow.stop()
-      // 目标掉线/死亡/传送——静默停止会让玩家以为还在跟随，聊天提示（P3）
-      try { bot.chat(`§e已停止跟随 ${name}（目标消失）`) } catch { /* 聊天通道未就绪 */ }
+      // 目标掉线/死亡/传送——静默停止会让玩家以为还在跟随，聊天提示（P3）。
+      // 统一走 sendChat：剥 § 颜色码（裸 bot.chat 的 § 会被 Paper 踢出——P0 回归）
+      sendChat(bot, `§e已停止跟随 ${name}（目标消失）`).catch(() => { /* 聊天通道未就绪 */ })
     }
   })
 

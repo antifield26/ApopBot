@@ -48,6 +48,15 @@ test('sendChat: 无 chat 方法的 bot 返回 0（容错）', async () => {
   assert.equal(await sendChat({}, 'x'), 0)
 })
 
+test('sendChat: 空/纯空白文本不发包（!say 无参或纯 §）', async () => {
+  const sent = []
+  const bot = { chat: (m) => sent.push(m) }
+  assert.equal(await sendChat(bot, ''), 0)
+  assert.equal(await sendChat(bot, '§a'), 0, '纯颜色码剥色后为空')
+  assert.equal(await sendChat(bot, '   '), 0)
+  assert.deepEqual(sent, [], '不得发送空包')
+})
+
 test('stripColorCodes: 剥离 § 颜色码（Paper 26.1.2 非法字符踢出修复）', () => {
   assert.equal(stripColorCodes('§a[status] ok'), '[status] ok')
   assert.equal(stripColorCodes('§c权限不足'), '权限不足')

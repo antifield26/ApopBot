@@ -11,6 +11,7 @@
 import { TaskManager } from '../tasks/manager.js'
 import { createCommandRegistry } from '../commands/commands.js'
 import { createL2 } from '../l2/index.js'
+import { sendChat } from './chat.js'
 
 export function createFeatureLayerManager (ctx, logger) {
   let pending = Promise.resolve()
@@ -75,19 +76,22 @@ export function createFeatureLayerManager (ctx, logger) {
         log().error({ err: err.message }, 'dispatch error')
         return true // 出错不算未知命令
       })
-      // 未知命令静默是"指令无效"体验的一部分——明确反馈（含可用命令提示）
+      // 未知命令静默是"指令无效"体验的一部分——明确反馈（含可用命令提示）。
+      // 统一走 sendChat：剥 § 颜色码 + 分片（Paper 26.1.2 含 § 被踢 → fatal 停服，
+      // 裸 bot.chat 的 § 前缀是 53d3352 引入的 P0 回归——C1 修复）
       if (hit === false) {
         const names = (ctx.commands?.list() ?? []).map(c => `!${c.name}`).join(' ')
-        try { bot.chat(`§c未知命令（可用: ${names}）`) } catch { /* 聊天通道可能未就绪 */ }
+        try { await sendChat(bot, `§c未知命令（可用: ${names}）`, ctx.cfg.chat?.maxLength) } catch { /* 聊天通道可能未就绪 */ }
       }
     }
     bot.on('chat', ctx.chatHandler)
     log().info({ bot: ctx.cfg.username }, 'feature layer ready')
 
-    // 重连恢复通知：玩家可感知 Bot 已回来（首连安静上线，仅重连提示）
+    // 重连恢复通知：玩家可感知 Bot 已回来（首连安静上线，仅重连提示）。
+    // 同上：裸 § 会触发服务端踢出（P0），走 sendChat 剥离
     const s = ctx.conn?.getStatus?.()
     if (s && s.reconnectCount > 0) {
-      try { bot.chat(`§a[bot] 已重新连接（累计重连 ${s.reconnectCount} 次）`) } catch { /* 忽略 */ }
+      try { await sendChat(bot, `§a[bot] 已重新连接（累计重连 ${s.reconnectCount} 次）`, ctx.cfg.chat?.maxLength) } catch { /* 聊天通道可能未就绪 */ }
     }
   }
 

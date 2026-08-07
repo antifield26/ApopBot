@@ -57,7 +57,9 @@ export function chunkText (text, maxLength) {
  */
 export async function sendChat (bot, text, maxLength = 250) {
   if (!bot?.chat) return 0
-  const chunks = chunkText(stripColorCodes(text), maxLength)
+  const clean = stripColorCodes(text)
+  if (!clean.trim()) return 0 // 空/纯空白（!say 无参或纯 §）不发包——空消息行为未验证，避免触发服务端拒绝
+  const chunks = chunkText(clean, maxLength)
   for (let i = 0; i < chunks.length; i++) {
     bot.chat(chunks[i])
     if (i < chunks.length - 1) {

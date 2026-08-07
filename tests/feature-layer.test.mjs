@@ -92,6 +92,31 @@ test('chatHandler：未知命令明确反馈（含可用命令列表，不再静
   await layer.teardown()
 })
 
+test('C1 修复：未知命令反馈走 sendChat（含 § 前缀但发送层剥离——Paper 踢出防护）', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  bot.emit('chat', 'steve', '!fly-away')
+  await new Promise(r => setTimeout(r, 10))
+  const msg = bot.messages.find(m => m.includes('未知命令'))
+  assert.ok(msg, `应反馈未知命令: ${bot.messages}`)
+  assert.ok(!msg.includes('§'), `发送内容不得含 §: ${msg}`)
+  await layer.teardown()
+})
+
+test('C1 修复：重连广播走 sendChat（§ 前缀在发送层剥离）', async () => {
+  const ctx = makeCtx()
+  ctx.conn = { getStatus: () => ({ state: 'connected', reconnectCount: 2 }) }
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  const msg = bot.messages.find(m => m.includes('已重新连接'))
+  assert.ok(msg, `重连应广播: ${bot.messages}`)
+  assert.ok(!msg.includes('§'), `发送内容不得含 §: ${msg}`)
+  await layer.teardown()
+})
+
 test('queue 串行化：重叠操作按序执行', async () => {
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)

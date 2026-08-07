@@ -20,6 +20,8 @@ function makeBot (pos = new Vec3(0, 64, 0), blockAtImpl) {
   bot.setControlState = (k, v) => { bot.controls[k] = v }
   bot.lookAt = async () => {}
   bot.blockAt = blockAtImpl ?? (() => ({ boundingBox: 'empty', name: 'air' })) // 前方默认空（不跳）
+  bot.messages = []
+  bot.chat = (m) => bot.messages.push(m) // C1：entityGone 提示走 sendChat
   followPlugin(bot)
   return bot
 }
@@ -127,6 +129,16 @@ test('follow: entityGone 自动停止跟随', (t) => {
   bot.emit('entityGone', player)
   assert.equal(bot.follow.getTarget(), null)
   assert.equal(bot.controls.forward, false)
+})
+
+test('C1 修复：目标消失提示走 sendChat（不含 §——Paper 踢出防护）', (t) => {
+  const bot = makeBot()
+  const player = { id: 42, username: 'steve', position: new Vec3(5, 64, 0) }
+  bot.follow.setTarget(player)
+  bot.emit('entityGone', player)
+  const msg = bot.messages.find(m => m.includes('已停止跟随'))
+  assert.ok(msg, `应聊天提示: ${bot.messages}`)
+  assert.ok(!msg.includes('§'), `发送内容不得含 §: ${msg}`)
 })
 
 test('follow: 缺 pathfinder 时 setTarget 明确报错', () => {
