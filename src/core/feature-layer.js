@@ -53,8 +53,10 @@ export function createFeatureLayerManager (ctx, logger) {
 
     ctx.tasks = new TaskManager(ctx.cfg, log(), { bot }, ctx.stateStore, () => ctx.agent)
     await ctx.tasks.load(ctx.cfg) // load 内部按条目容错，不抛
-    // U10：webhook 通知（每次重建取最新 cfg——!reload 的 notify 配置即时生效）
-    const notifier = createNotifier(ctx.cfg, log())
+    // U10：webhook 通知。P2-1（第五轮）：必须用 ctx.notifier 实时引用——reload 只
+    // 更新 ctx.notifier（index.js），不重建 feature layer；此处闭包若按值捕获 cfg，
+    // 死亡/重生/重连推送会一直走旧 webhook URL（注释与行为不符的缺陷）
+    const notifier = ctx.notifier ?? createNotifier(ctx.cfg, log())
 
     // A5（第四轮）：config 任务计数器回灌——_snapshotCounters 全量写（含 config 任务），
     // 但 restoreCounters 此前只在下方 ad-hoc 恢复循环调用 → 重建后 config 任务计数归零，

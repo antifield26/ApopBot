@@ -90,6 +90,22 @@ test('explore run: area 裁剪——站点全部在盒外 → 覆盖完成（sto
   await p
 })
 
+test('P2-4 修复: 站点地面 y 采样——悬崖/山顶站点不再用 bot 当前 y', async () => {
+  const bot = makeExploreBot()
+  let blockAtCalls = 0
+  bot.blockAt = (p) => {
+    blockAtCalls++
+    // y=64 处是空气，y=63 处是石头 → 地面 y=64；模拟目标站点 (32, ?, 0) 在悬崖顶
+    return p.y >= 64 ? { boundingBox: 'empty' } : { boundingBox: 'solid' }
+  }
+  const task = new ExploreTask('e5', 'explore', { maxDistance: 32, stopWhenDone: true, checkIntervalSeconds: 0.1 }, makeCtx(bot))
+  await task.init()
+  const ground = task._groundY(32, 0)
+  assert.equal(ground, 64, '地面 y 应为 64（石头顶+1）')
+  assert.ok(blockAtCalls >= 2, '应向下采样多个高度')
+  await task.stop()
+})
+
 test('explore run: 采样记录写入 DiscoveryMap（found 计数）', async () => {
   const bot = makeExploreBot()
   let calls = 0

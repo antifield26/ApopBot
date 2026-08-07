@@ -125,6 +125,12 @@ export function createSkillRegistry (ctx) {
       }
     },
     handler: async (c, { x, y, z }) => {
+      // P2-3（第五轮）：move_to 是唯一动 pathfinder 却无仲裁器防线的危险技能——
+      // exclusive 任务运行中 setGoal 覆盖任务 goal → GoalChanged → 任务误计
+      // unreachable 走回头路（find_block/explore/follow_player 均有防线）
+      if (hasExclusiveActive()) {
+        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法移动（任务结束后可试）`)
+      }
       // 统一移动层阻塞式移动（C2）：到达/失败如实反馈，LLM 不再收到 fire-and-forget 假成功
       const { Vec3 } = await import('vec3')
       const { createMovement, REASON_TEXT } = await import('../core/movement.js')

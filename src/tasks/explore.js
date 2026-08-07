@@ -1,4 +1,5 @@
 import { BaseTask } from './base.js'
+import { Vec3 } from 'vec3'
 import { createMovement, stopPathfinding } from '../core/movement.js'
 import { spiralWaypoints, sampleResources, scanEntities, SPIRAL_STEP, notifyValuableFound } from '../core/explore.js'
 import * as discovery from '../core/discovery.js'
@@ -78,9 +79,25 @@ export class ExploreTask extends BaseTask {
     this.log.info({ counters: this.counters }, 'explore task finished')
   }
 
+  /**
+   * 站点地面 y 采样（P2-4，第五轮）：从 bot 当前 y 向下找第一个非空方块——
+   * 此前用 bot 当前 y 作站点高度，悬崖/山顶/峡谷壁站点高差 >3 → 大量 NoPath
+   * 计入 unreachable 跳过（探索效率损失）。每站 1-2 次 blockAt，代价极小。
+   */
+  _groundY (x, z) {
+    try {
+      const start = Math.floor(this.bot.entity?.position?.y ?? 64)
+      for (let y = start; y > start - 48; y--) {
+        const b = this.bot.blockAt(new Vec3(x, y, z)) // 26.1 blockAt 必须 Vec3 实例
+        if (b && b.boundingBox !== 'empty') return y + 1 // 站在方块上面
+      }
+    } catch { /* 区块未加载——回落当前 y */ }
+    return Math.floor(this.bot.entity?.position?.y ?? 64)
+  }
+
   /** 一站：寻路到达 → 采样记录资源 → 实体扫描 → 锚点登记 → 节奏等待。 */
   async _visitStation (gen, wp) {
-    const r = await this._move.gotoPoint({ x: wp.x, y: this.bot.entity?.position?.y ?? 64, z: wp.z }, {
+    const r = await this._move.gotoPoint({ x: wp.x, y: this._groundY(wp.x, wp.z), z: wp.z }, {
       range: 3,
       timeoutMs: 45000,
       isInterrupted: () => this._stopRequested || this._pauseRequested
@@ -94,8 +111,9 @@ export class ExploreTask extends BaseTask {
       if (found.length) {
         this.incr('discovered', found.length)
         for (const f of found) this.incr(`res:${f.name}`)
-        // D：重要资源 webhook 推送（节流 10 分钟/类型；失败静默）
-        notifyValuableFound(this.ctx.config, this.log, found)
+        // D：重要资源 webhook 推送（节流 10 分钟/类型；失败静默）。
+        // P2-2：实时配置（reload 后构造时冻结的 ctx.config 是旧引用）
+        notifyValuableFound(this.ctx.getConfig?.() ?? this.ctx.config, this.log, found)
       }
       const ents = scanEntities(this.bot)
       if (ents.counts.hostile > 0) this.log.info({ hostile: ents.hostile }, '站点附近有敌对实体（只记录不接触）')

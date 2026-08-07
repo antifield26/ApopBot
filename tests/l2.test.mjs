@@ -651,6 +651,68 @@ test('C1 修复: explore 技能单步探索（exclusive 任务运行中被拒）
   }
 })
 
+// ---- 第五轮完善档：P1 filter / P2-3 防线 / F1-b busy / P2-5 估算 ----
+
+test('P1 修复: nearby_entities filter 命中（OR 语义 + e.type 比对——此前 AND+大写 kind 恒失效）', async () => {
+  const zombie = { id: 1, name: 'zombie', type: 'hostile', position: new Vec3(5, 64, 0) }
+  const cow = { id: 2, name: 'cow', type: 'animal', position: new Vec3(8, 64, 0) }
+  const ctx = makeCtx({ bot: {
+    ...makeCtx().bot,
+    entities: new Map([[1, zombie], [2, cow]]),
+    entity: { position: new Vec3(0, 64, 0) }
+  } }, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  // filter='hostile'（type 值）→ 命中 zombie（此前被 name 检查拦截恒空）
+  const r1 = await agent.act('op1', 'nearby_entities', { filter: 'hostile', maxDistance: 32 })
+  assert.equal(r1.ok, true)
+  assert.ok(r1.result.includes('zombie'), `hostile 过滤应命中 zombie: ${r1.result}`)
+  assert.ok(!r1.result.includes('cow'), 'cow 不应被命中')
+  // filter='zombie'（name 子串）→ 命中 zombie（此前被 kind 检查拦截恒空）
+  const r2 = await agent.act('op1', 'nearby_entities', { filter: 'zombie', maxDistance: 32 })
+  assert.ok(r2.result.includes('zombie'), `zombie 过滤应命中: ${r2.result}`)
+})
+
+test('P2-3 修复: move_to 在 exclusive 任务运行中被拒（唯一漏网的危险技能）', async () => {
+  const arb = await import('../src/core/arbiter.js')
+  try {
+    const ctx = makeCtx({}, { ops: ['op1'] })
+    const { agent } = makeAgent(ctx, [])
+    arb.setExclusiveOwner('g1')
+    const r = await agent.act('op1', 'move_to', { x: 10, y: 64, z: 10 })
+    assert.equal(r.ok, false)
+    assert.ok(r.result.includes('exclusive 任务 g1'), r.result)
+  } finally {
+    arb.setExclusiveOwner(null)
+  }
+})
+
+test('P2-3 修复: act 在 busy 时被拒（!agent act 不得打进进行中 chat 工具循环）', async () => {
+  const ctx = makeCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  agent.busy = true // 模拟 chat 工具循环进行中
+  const r = await agent.act('op1', 'status', {})
+  assert.equal(r.ok, false)
+  assert.ok(r.result.includes('处理中'), r.result)
+})
+
+test('F1-b 修复: busy 反馈附带已进行秒数', async () => {
+  const ctx = makeCtx()
+  const { agent } = makeAgent(ctx, [])
+  agent.busy = true
+  agent._busySince = Date.now() - 5000 // 已进行 5s
+  const { reply } = await agent.chat('steve', 'hi')
+  assert.ok(reply.includes('5s'), `应附带已进行秒数: ${reply}`)
+  assert.ok(reply.includes('处理中'), reply)
+})
+
+test('P2-5 修复: messageTokens 工具轮计入参数 JSON（估算不再系统性偏低）', async () => {
+  const { messageTokens } = await import('../src/l2/agent-interface.js')
+  assert.ok(typeof messageTokens === 'function')
+  const small = messageTokens({ role: 'assistant', content: '', toolCalls: [{ name: 'status', arguments: {} }] })
+  const big = messageTokens({ role: 'assistant', content: '', toolCalls: [{ name: 'run_task', arguments: { type: 'mine', id: 'x', options: { blockTypes: ['iron_ore'], area: { x1: 0, y1: 0, z1: 0, x2: 10, y2: 10, z2: 10 } } } }] })
+  assert.ok(big > small, `参数大的调用估算应更大: ${small} vs ${big}`)
+})
+
 test('A2 修复: 预算裁剪生效——provider 有 contextWindow 时超预算消息被裁', async () => {
   const ctx = makeCtx()
   const { agent, provider } = makeAgent(ctx, [{ text: 'ok' }])

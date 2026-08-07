@@ -66,7 +66,15 @@ export class TaskManager {
   }
 
   _makeTaskCtx () {
-    return { bot: this.ctx.bot, logger: this.log, config: this.cfg }
+    return {
+      bot: this.ctx.bot,
+      logger: this.log,
+      config: this.cfg,
+      // P2-2（第五轮）：实时配置 getter——任务构造时冻结的 config 引用在 reload 后
+      // 是旧 cfg（explore 任务的重要资源 webhook 推送走旧 URL）；任务内取配置
+      // 一律经 getConfig?.() ?? config
+      getConfig: () => this.cfg
+    }
   }
 
   _createEntry (entry) {

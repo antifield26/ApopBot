@@ -56,12 +56,16 @@ export function estimateTokens (text) {
   return Math.ceil(t)
 }
 
-function messageTokens (m) {
+/** 消息 token 估算（预算裁剪用；导出供测试验证工具参数计入）。 */
+export function messageTokens (m) {
   if (m.toolResults?.length) {
     return m.toolResults.reduce((s, r) => s + estimateTokens(r.output), 0)
   }
   if (m.toolCalls?.length) {
-    return estimateTokens(m.content ?? '') + estimateTokens(JSON.stringify(m.toolCalls.map(t => t.name)))
+    // P2-5（第五轮）：工具参数 JSON 计入估算——此前只计名字，参数大的调用
+    //（run_task 的 options）真实用量被低估 → 预算裁剪误判不裁
+    return estimateTokens(m.content ?? '') +
+      estimateTokens(JSON.stringify(m.toolCalls.map(t => ({ name: t.name, arguments: t.arguments }))))
   }
   return estimateTokens(m.content ?? '')
 }
@@ -193,8 +197,14 @@ export class AgentInterface {
     if (now < until) {
       return { reply: `请求冷却中（${Math.ceil((until - now) / 1000)}s 后重试）` }
     }
-    if (this.busy) return { reply: '上一个请求仍在处理中，请稍候' }
+    if (this.busy) {
+      // F1-b（第五轮）：busy 阻塞可长达 60-120s（move_to/find_block 工具执行）——
+      // 附带已进行秒数让玩家知道不是卡死
+      const elapsed = this._busySince ? Math.round((now - this._busySince) / 1000) : 0
+      return { reply: `上一个请求仍在处理中（已进行 ${elapsed}s），请稍候` }
+    }
     this.busy = true
+    this._busySince = now
     putBounded(this.cooldowns, user, now + cooldownMs)
     const ac = new AbortController()
     this._abort = ac
@@ -221,7 +231,9 @@ export class AgentInterface {
           const fixedTokens = estimateTokens(system) + estimateTokens(JSON.stringify(tools))
           if (fixedTokens > budget && !this._budgetWarned) {
             this._budgetWarned = true
-            this.log.warn({ fixedTokens, budget, window }, 'L2 固定 prompt 超出上下文预算（窗口太小或技能过多）——历史将被大量裁剪')
+            // P2-5（第五轮）：warn 带具体数字——2048 窗口下 fixed > budget 是结构性
+            // 不可收敛（裁剪三步后仍超窗，依赖 Ollama 静默截断）：提示调参方向
+            this.log.warn({ fixedTokens, budget, window }, `L2 固定 prompt（system+技能定义）超出上下文预算（window ${window}）——历史/工具结果将被全部裁剪后仍可能超窗。建议 l2.ollamaNumCtx=4096 或减少 maxTokens/技能数`)
           }
           applyTokenBudget(messages, fixedTokens, budget)
         }
@@ -281,6 +293,9 @@ export class AgentInterface {
    * @returns {Promise<{ ok: boolean, result: unknown }>}
    */
   async act (user, name, params) {
+    // P2-3（第五轮）：act 直调技能不经 busy 门——!agent act move_to 可打进进行中
+    // chat 工具循环（两个控制流并发改 pathfinder/装备状态）。busy 时拒绝
+    if (this.busy) return { ok: false, result: '上一个请求仍在处理中，请稍候' }
     return this.skills.execute(name, params, user)
   }
 

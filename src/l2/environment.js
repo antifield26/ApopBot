@@ -70,26 +70,39 @@ export function nearbyPlayers (bot, limit = 5) {
 }
 
 /**
- * 附近实体列表（过滤 bot 自身；按距离升序；kind 作标签——player 的 kind 不可靠，
- * 玩家由 nearbyPlayers 覆盖）。
+ * 附近实体列表（过滤 bot 自身；按距离升序）。
+ * 过滤语义（第五轮 P1 修复）：name 与 kind/type 是 **OR**——filter 字符串可以是
+ * 实体名子串（zombie）或 26.1 的 type（hostile/passive/animal/projectile/player/mob）。
+ * 此前 AND 语义 + e.kind 大写分类（'Hostile mobs'）导致过滤恒失效（P1-1 实测）。
+ * 玩家由 nearbyPlayers 覆盖（entity.kind 对 player 不可靠）；绝不读实体 health。
  * @param {{ name?: string, kind?: string, maxDistance?: number }} opts
  */
 export function nearbyEntities (bot, { name, kind, maxDistance = 64, limit = 10 } = {}) {
   try {
     const me = bot?.entity
     const nameFilter = name?.toLowerCase()
+    const typeFilter = kind?.toLowerCase()
+    // bot.entities 是 Map（combat.js 用 .values 判定）——Object.values(Map) 恒空，
+    // 必须双形态遍历（第五轮 P1 实测：此前整个 nearby_entities 技能恒空）
+    const entities = bot?.entities
+    const all = entities instanceof Map ? [...entities.values()] : Object.values(entities ?? {})
     const list = []
-    for (const e of Object.values(bot?.entities ?? {})) {
+    for (const e of all) {
       if (!e || e === me || !e.position) continue
       if (maxDistance && me?.position && distance(me, e) > maxDistance) continue
-      if (nameFilter && !String(e.name ?? '').toLowerCase().includes(nameFilter)) continue
-      if (kind && e.kind !== kind && !(kind === 'player' && e.type === 'player')) continue
+      const nameHit = nameFilter && String(e.name ?? '').toLowerCase().includes(nameFilter)
+      const typeHit = typeFilter && (e.type === typeFilter || (typeFilter === 'player' && e.type === 'player'))
+      if (nameFilter || typeFilter) {
+        if (!nameHit && !typeHit) continue // OR：任一命中即通过
+      }
       list.push(e)
     }
     return list
       .map(e => ({
         name: e.name ?? 'unknown',
-        kind: e.kind ?? e.type ?? '?',
+        // 输出 type 而非 kind：kind 是数据表 category（大写分类，26.1 实测 'Hostile mobs'），
+        // 对 LLM 决策无意义且与 filter 语义不一致
+        kind: e.type ?? '?',
         type: e.type ?? '?',
         dist: distance(me, e),
         pos: fmtPos(e.position)

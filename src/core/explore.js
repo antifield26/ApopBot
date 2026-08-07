@@ -55,13 +55,14 @@ export function sampleResources (bot) {
   return found
 }
 
-/** 实体扫描（半径 64；返回分类计数与敌对名单——26.1 entity.type 可退化，kind 作标签）。 */
+/** 实体扫描（半径 64；返回分类计数与敌对名单——26.1 entity.type 是唯一可靠分类，
+ * e.kind 是数据表大写 category（'Hostile mobs'），第五轮 P1 修复前敌对检测是死代码）。 */
 export function scanEntities (bot) {
   const hostile = []
   const counts = { hostile: 0, passive: 0, neutral: 0, player: 0, other: 0 }
   for (const e of nearbyEntities(bot, { maxDistance: 64, limit: 50 })) {
-    const kind = e.kind
-    if (kind === 'hostile') { counts.hostile++; hostile.push(`${e.name}(${e.dist}m)`) } else if (counts[kind] !== undefined) counts[kind]++
+    const type = e.type
+    if (type === 'hostile') { counts.hostile++; hostile.push(`${e.name}(${e.dist}m)`) } else if (counts[type] !== undefined) counts[type]++
     else counts.other++
   }
   return { counts, hostile: hostile.slice(0, 8) }
