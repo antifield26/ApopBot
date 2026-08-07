@@ -52,6 +52,11 @@ export function createProvider (cfg, logger) {
     resetFallback () {
       this._latched = false
     },
+    /** U9：双 provider 连通性诊断（!agent doctor）。 */
+    async diagnose () {
+      const [c, o] = await Promise.all([cloud.diagnose(), ollama.diagnose()])
+      return { mode: 'auto', providers: [c, o] }
+    },
     async chat (messages, opts = {}) {
       if (this._latched) return ollama.chat(messages, opts)
       try {
@@ -62,6 +67,19 @@ export function createProvider (cfg, logger) {
         return ollama.chat(messages, opts)
       }
     }
+  }
+}
+
+/**
+ * 连通性探测（U9：!agent doctor）——短超时 5s 的裸 GET。
+ * 端点可达即视为连通（405/404 是方法/路径问题而非网络问题，status 供用户判断）。
+ */
+async function diagnoseEndpoint (baseUrl) {
+  try {
+    const res = await fetch(baseUrl, { signal: AbortSignal.timeout(5000) })
+    return { ok: true, endpoint: baseUrl, status: res.status }
+  } catch (err) {
+    return { ok: false, endpoint: baseUrl, error: err.message }
   }
 }
 
@@ -84,6 +102,15 @@ class CloudProvider {
     this.model = l2.model ?? 'claude-sonnet-5'
     this.timeoutMs = l2.cloudTimeoutMs ?? DEFAULT_TIMEOUT_MS
     this.maxTokens = l2.maxTokens ?? DEFAULT_MAX_TOKENS
+  }
+
+  /** U9：连通性探测（缺 key 不发请求，明确报未配置）。 */
+  async diagnose () {
+    if (!this.apiKey) {
+      return { ok: false, label: 'cloud', endpoint: this.baseUrl, error: `未配置 API key（环境变量 ${this.l2.cloudApiKeyEnv ?? 'ANTHROPIC_API_KEY'}）` }
+    }
+    const r = await diagnoseEndpoint(this.baseUrl)
+    return { ...r, label: 'cloud' }
   }
 
   async chat (messages, { tools = [], system = '', signal } = {}) {
@@ -150,6 +177,12 @@ class OllamaProvider {
     this.model = l2.ollamaModel ?? 'qwen3.5:4b'
     this.timeoutMs = l2.ollamaTimeoutMs ?? DEFAULT_TIMEOUT_MS
     this.maxTokens = l2.maxTokens ?? DEFAULT_MAX_TOKENS
+  }
+
+  /** U9：连通性探测（!agent doctor）。 */
+  async diagnose () {
+    const r = await diagnoseEndpoint(this.baseUrl)
+    return { ...r, label: 'ollama' }
   }
 
   async chat (messages, { tools = [], system = '', signal } = {}) {

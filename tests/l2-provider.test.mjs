@@ -113,6 +113,55 @@ test('OllamaProvider: tool_calls 解析与 max_tokens 传参', async () => {
   restoreFetch()
 })
 
+test('U9: diagnose 端点可达即连通（405 是方法错不是网络错）', async () => {
+  mockFetch(() => ({ ok: false, status: 405, text: async () => 'method not allowed' }))
+  const l2 = { ...l2Base, cloudBaseUrl: 'https://api.anthropic.com/v1/messages' }
+  process.env.ANTHROPIC_API_KEY = 'sk-test'
+  try {
+    const p = createProvider({ l2 }, makeLogger())
+    const r = await p.diagnose()
+    assert.equal(r.ok, true, '端点可达即连通')
+    assert.equal(r.status, 405)
+    assert.equal(r.label, 'cloud')
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY
+    restoreFetch()
+  }
+})
+
+test('U9: diagnose cloud 缺 key → 明确不可达且不发请求', async () => {
+  let called = false
+  mockFetch(() => { called = true; return { ok: true, status: 200 } })
+  const l2 = { ...l2Base, cloudApiKeyEnv: 'NONEXISTENT_KEY_XYZ' }
+  const p = createProvider({ l2 }, makeLogger())
+  const r = await p.diagnose()
+  assert.equal(r.ok, false)
+  assert.ok(r.error.includes('API key'), r.error)
+  assert.equal(called, false, '缺 key 不应发网络请求')
+  restoreFetch()
+})
+
+test('U9: auto 模式诊断返回双 provider', async () => {
+  mockFetch(() => ({ ok: false, status: 405, text: async () => 'x' }))
+  const l2 = {
+    ...l2Base, provider: 'auto',
+    cloudBaseUrl: 'http://cloud',
+    cloudApiKeyEnv: 'ANTHROPIC_API_KEY',
+    ollamaUrl: 'http://ollama'
+  }
+  process.env.ANTHROPIC_API_KEY = 'k'
+  try {
+    const p = createProvider({ l2 }, makeLogger())
+    const r = await p.diagnose()
+    assert.ok(Array.isArray(r.providers) && r.providers.length === 2, 'auto 应诊断双 provider')
+    assert.ok(r.providers.every(x => x.ok))
+    assert.equal(r.mode, 'auto')
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY
+    restoreFetch()
+  }
+})
+
 test('provider: auto 模式 cloud 失败真实回退 ollama（各调用一次）', async () => {
   const calls = mockFetch((url) => url.includes('anthropic')
     ? { ok: false, status: 500, text: async () => 'cloud down' }

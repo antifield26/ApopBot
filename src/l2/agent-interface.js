@@ -212,6 +212,15 @@ export class AgentInterface {
     this._abort?.abort()
   }
 
+  /** U9：provider 连通性诊断（!agent doctor，只读）。 */
+  async diagnose () {
+    if (!this.provider?.diagnose) {
+      return [{ ok: false, label: 'provider', error: 'provider 不支持诊断' }]
+    }
+    const r = await this.provider.diagnose()
+    return Array.isArray(r) ? r : [r]
+  }
+
   /** 清空指定玩家的会话记忆（!agent reset）。 */
   reset (user) {
     SESSIONS.delete(user)

@@ -300,7 +300,7 @@ export function registerBuiltinCommands (registry, ctx) {
 
   registry.register({
     name: 'agent',
-    usage: '!agent chat <text> | !agent act <name> [json] | !agent reset',
+    usage: '!agent chat <text> | !agent act <name> [json] | !agent doctor | !agent reset',
     description: 'L2 LLM 层（需配置 l2.enabled=true；chat 全员可用，act 需 op）',
     // C7/Y 修复：permission all——此前默认 op 使 buildSystem 的"普通玩家"分支
     // 是死代码（!agent chat 在权限门就被拒）；技能层 isOp 仍是危险操作最终防线
@@ -315,6 +315,18 @@ export function registerBuiltinCommands (registry, ctx) {
         // 清空调用者会话记忆（U2：多轮上下文误入歧途时重置）
         c.agent.reset(sender)
         await sendChat(c.bot, '§a已清空会话记忆', c.cfg.chat?.maxLength)
+      } else if (action === 'doctor') {
+        // U9：provider 连通性诊断（只读，全员可用）
+        try {
+          const results = await c.agent.diagnose()
+          const mode = c.agent.provider?.mode ?? '?'
+          const latency = c.agent.usage?.latencyMs
+          const lines = results.map(r =>
+            `${r.label}: ${r.ok ? `连通${r.status ? ` (${r.status})` : ''}` : `不可达（${r.error}）`}`)
+          await sendChat(c.bot, `§a[doctor] 模式=${mode} 最近延迟=${latency ?? 'n/a'}ms；${lines.join('；')}`, c.cfg.chat?.maxLength)
+        } catch (err) {
+          await sendChat(c.bot, `§c诊断失败: ${err.message}`, c.cfg.chat?.maxLength)
+        }
       } else if (action === 'act') {
         // act 直调技能（可移动/控制任务），入口即做 op 校验
         if (!isOp(sender, c.cfg)) {
@@ -329,7 +341,7 @@ export function registerBuiltinCommands (registry, ctx) {
         const out = typeof result === 'string' ? result : JSON.stringify(result)
         await sendChat(c.bot, ok ? `§a${name}: ${out}` : `§c${name} 执行失败: ${out}`, c.cfg.chat?.maxLength)
       } else {
-        await sendChat(c.bot, '§c用法: !agent chat <text> | !agent act <name> [json]', c.cfg.chat?.maxLength)
+        await sendChat(c.bot, '§c用法: !agent chat <text> | !agent act <name> [json] | !agent doctor | !agent reset', c.cfg.chat?.maxLength)
       }
     }
   })
