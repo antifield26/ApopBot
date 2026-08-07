@@ -10,6 +10,9 @@ import { withTimeout } from '../util/promise-timeout.js'
 import { sendChat } from '../core/chat.js'
 import { setExclusiveOwner, getExclusiveOwner } from '../core/arbiter.js'
 
+// U7：任务终态 LLM 总结的全局冷却（防多任务同时完成时刷屏）
+const SUMMARY_COOLDOWN_MS = 60000
+
 /** 递归按键名排序（热重载 diff 不因用户重排键序而误判变更）。 */
 function sortKeys (v) {
   if (Array.isArray(v)) return v.map(sortKeys)
@@ -45,13 +48,17 @@ export class TaskManager {
    * @param {{ bot: import('mineflayer').Bot }} ctx 运行上下文
    * @param {object} [stateStore] 运行状态快照（U1）：ad-hoc 条目 + 计数器持久化
    */
-  constructor (cfg, logger, ctx, stateStore = null) {
+  constructor (cfg, logger, ctx, stateStore = null, getAgent = null) {
     this.cfg = cfg
     this.log = logger.child({ module: 'tasks' })
     this.ctx = ctx
     this.tasks = new Map() // id → { entry, task, cron }
     this._pendingExclusive = [] // 被 exclusive 互斥拒绝的任务（冲突任务终态后按序补启动）
     this._stateStore = stateStore
+    // U7：LLM 主动播报的 agent 获取器（feature-layer 传 () => ctx.agent——
+    // agent 随重建变化，不能构造时固化）
+    this._getAgent = getAgent ?? null
+    this._lastSummaryAt = 0
   }
 
   _makeTaskCtx () {
@@ -306,6 +313,28 @@ export class TaskManager {
     // 统一走 sendChat：剥 § 颜色码 + 256 分片（裸 bot.chat 超长会被服务端截断/拒绝）
     sendChat(this.ctx.bot, `[任务 ${rec.entry.id}] ${state}${counters}`, this.cfg.chat?.maxLength)
       .catch(err => this.log.warn({ err: err.message }, '完成通知发送失败'))
+    // U7：终态经 LLM 一句话总结（附加层——固定模板之后；全局 1 分钟冷却防刷屏；
+    // 无 agent/失败/冷却中静默跳过，绝不阻塞任务流程）
+    this._broadcastSummary(rec, state)
+  }
+
+  /** U7：任务终态 LLM 一句话总结。 */
+  _broadcastSummary (rec, state) {
+    if (!state || (!state.includes('completed') && !state.includes('failed'))) return
+    const agent = this._getAgent?.()
+    if (!agent?.summarize) return
+    const now = Date.now()
+    if (now - this._lastSummaryAt < SUMMARY_COOLDOWN_MS) return
+    this._lastSummaryAt = now
+    const counters = Object.keys(rec.task.counters).length ? JSON.stringify(rec.task.counters) : ''
+    agent.summarize(
+      `任务 ${rec.entry.id} (${rec.entry.type}) ${state}${counters ? `，计数 ${counters}` : ''}。用一句话向服务器玩家总结（成果或原因），简洁。`
+    ).then((s) => {
+      if (s) {
+        sendChat(this.ctx.bot, `[任务 ${rec.entry.id}] ${s}`, this.cfg.chat?.maxLength)
+          .catch(() => {})
+      }
+    }).catch(() => { /* 附加层：失败静默，模板已发 */ })
   }
 
   /**

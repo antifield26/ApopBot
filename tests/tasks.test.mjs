@@ -316,6 +316,38 @@ test('C6/N 修复：removeTask 清理快照计数器 + restoreCounters 回灌', 
   await mgr.stopAll()
 })
 
+test('U7 修复：任务终态经 LLM 一句话总结（附加层）+ 冷却防刷屏', async () => {
+  const summaries = []
+  const agent = { summarize: async (p) => { summaries.push(p); return '挖了 5 个铁' } }
+  const bot = { chat: (m) => { bot.messages.push(m) }, messages: [] }
+  const mgr = new TaskManager({ tasks: [], chat: { maxLength: 250 } }, makeLogger(), { bot }, null, () => agent)
+  mgr.addTask({ id: 'a1', type: 'afk', options: { intervalMinutes: 1 } })
+  await settle(3)
+  const rec = mgr.tasks.get('a1')
+  rec.task.counters = { wiggles: 5 }
+  mgr._notify(rec, 'completed')
+  await settle(3)
+  assert.ok(summaries.length >= 1, '终态应触发 LLM 总结')
+  assert.ok(bot.messages.some(m => m.includes('挖了 5 个铁')), `总结应广播: ${bot.messages}`)
+  // 冷却期内不重复总结；非终态（stopped）不总结
+  mgr._notify(rec, 'failed: boom')
+  await settle(3)
+  assert.equal(summaries.length, 1, '冷却期内不应重复总结')
+  await mgr.stopAll()
+})
+
+test('U7 修复：无 agent 时总结静默跳过（任务流程不受影响）', async () => {
+  const bot = { chat: (m) => { bot.messages.push(m) }, messages: [] }
+  const mgr = new TaskManager({ tasks: [], chat: { maxLength: 250 } }, makeLogger(), { bot })
+  mgr.addTask({ id: 'a1', type: 'afk', options: { intervalMinutes: 1 } })
+  await settle(3)
+  const rec = mgr.tasks.get('a1')
+  mgr._notify(rec, 'completed') // getAgent null → 直接跳过
+  await settle(3)
+  assert.ok(bot.messages.some(m => m.includes('[任务 a1] completed')), '模板通知仍应发送')
+  await mgr.stopAll()
+})
+
 test('C8/S 修复：exclusive 任务运行期间仲裁器登记，终态清除', async () => {
   const arb = await import('../src/core/arbiter.js')
   const bot = makeCombatBot()

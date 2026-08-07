@@ -49,7 +49,7 @@ export function createFeatureLayerManager (ctx, logger) {
     if (!ctx.plugins) ctx.plugins = ctx.conn?.plugins ?? null
     log().info('rebuilding feature layer (tasks/commands/agent)')
 
-    ctx.tasks = new TaskManager(ctx.cfg, log(), { bot }, ctx.stateStore)
+    ctx.tasks = new TaskManager(ctx.cfg, log(), { bot }, ctx.stateStore, () => ctx.agent)
     await ctx.tasks.load(ctx.cfg) // load 内部按条目容错，不抛
 
     // U1 恢复：快照中的 ad-hoc 任务（配置里已存在的以配置文件为准，不重复添加）
