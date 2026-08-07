@@ -9,6 +9,8 @@
 #   .\scripts\deploy.ps1 -Smoke       部署后跑冒烟快速档（connect,spawn,chat）
 #   .\scripts\deploy.ps1 -NoRestart   同步后不重启服务
 #   .\scripts\deploy.ps1 -SkipTests   跳过 npm test
+#   .\scripts\deploy.ps1 -Update      U11 一键更新：git pull → 完整部署流程（依赖哈希变化
+#                                     自动触发 npm ci + check:compat + 测试）→ 重启服务
 #
 # 前置要求:
 #   - Node.js >= 22 LTS   winget install --id OpenJS.NodeJS.LTS
@@ -30,7 +32,8 @@ param(
   [switch]$Restart,
   [switch]$Stop,
   [switch]$Remove,
-  [switch]$SkipTests
+  [switch]$SkipTests,
+  [switch]$Update
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,6 +101,21 @@ if ($Restart) {
   & nssm restart $serviceName
   if ($LASTEXITCODE -ne 0) { Write-Error 'nssm restart 失败'; exit 1 }
   exit 0
+}
+
+# U11：一键更新——git pull 拉取最新代码后走完整部署流程（依赖哈希变化自动触发
+# npm ci；check:compat 与 npm test 拦版本不匹配；最后重启服务）。消除"目录与服务端
+# 版本不同步"的人为错误（此前更新 = 手动 git pull + 重跑脚本两步）
+if ($Update) {
+  Write-Host '=== [0/5] 更新代码（git pull）==='
+  & git fetch origin
+  if ($LASTEXITCODE -ne 0) { Write-Error 'git fetch 失败（网络/认证？）；请手动 git pull 排查'; exit 1 }
+  & git pull --ff-only
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error 'git pull 失败——本地有未提交改动或已分叉？git status 查看后手动处理（可先 git stash）'
+    exit 1
+  }
+  Write-Host '代码已更新，继续完整部署流程（依赖/协议门禁/测试随后自动执行）'
 }
 
 # ---- 预检 ----

@@ -54,6 +54,7 @@ powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1          # 部署 + 
 powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Smoke   # 部署后冒烟快速档（connect,spawn,chat）
 powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Status  # 只读状态（无需管理员）
 powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Restart # 仅重启服务
+powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Update  # U11 一键更新：git pull → 完整部署流程 → 重启（消除手动 git pull + 重跑两步）
 ```
 
 deploy.ps1 流程：预检（node ≥22、非 Store 存根、nssm 存在）→ 补 config.json → 依赖哈希门控 `npm ci --omit=dev` → `check:compat` + `npm test` → 服务不存在则 `nssm install` → **重跑全部 `nssm set`（幂等，参数变更即生效）** → 启动/重启。`nssm set` 不自动提权，故变更操作必须在管理员 shell 中执行。
