@@ -105,6 +105,21 @@ test('C1 修复：未知命令反馈走 sendChat（含 § 前缀但发送层剥�
   await layer.teardown()
 })
 
+test('C6/N 修复：重建时回灌快照计数器（U1 承诺兑现——此前只写不读）', async () => {
+  const ctx = makeCtx()
+  ctx.stateStore = {
+    tasks: [{ id: 'restored-1', type: 'mine', options: { blockTypes: ['iron_ore'] } }],
+    counters: { 'restored-1': { mined: 7 } }
+  }
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  const st = ctx.tasks.getStatus().find(t => t.id === 'restored-1')
+  assert.ok(st, 'ad-hoc 任务应恢复')
+  assert.equal(st.counters.mined, 7, '计数器应回灌（此前每次重启归零）')
+  await layer.teardown()
+})
+
 test('C2 修复：死亡 → 暂停全部任务 + 停止跟随 + 自动重生', async () => {
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)

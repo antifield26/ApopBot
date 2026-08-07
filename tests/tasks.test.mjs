@@ -295,6 +295,27 @@ test('F5 修复：reload 移除/变更任务时 cron 定时器停止', async () 
   }
 })
 
+test('C6/N 修复：removeTask 清理快照计数器 + restoreCounters 回灌', async () => {
+  const stateStore = {
+    counters: {},
+    setCounter (id, c) { this.counters[id] = { ...c } },
+    deleteCounter (id) { delete this.counters[id] },
+    setTasks () {}, flush () {}
+  }
+  const mgr = new TaskManager({ tasks: [] }, makeLogger(), { bot: { chat () {} } }, stateStore)
+  mgr.addTask({ id: 'ad1', type: 'afk', options: { intervalMinutes: 1 }, notifyChat: false })
+  await settle(3)
+  mgr._snapshotCounters()
+  assert.ok(stateStore.counters.ad1, '快照应写入计数器')
+  await mgr.removeTask('ad1')
+  assert.equal(stateStore.counters.ad1, undefined, 'removeTask 应清理计数器（不残留）')
+  // 重建回灌路径（feature-layer doRebuild 调用）
+  mgr.addTask({ id: 'ad1', type: 'afk', options: { intervalMinutes: 1 }, notifyChat: false })
+  mgr.restoreCounters('ad1', { wiggles: 3 })
+  assert.equal(mgr.getStatus().find(t => t.id === 'ad1').counters.wiggles, 3, '回灌后遥测应保留')
+  await mgr.stopAll()
+})
+
 test('addTask/removeTask 运行时增删', async () => {
   const mgr = makeManager()
   mgr.addTask({ id: 'ad1', type: 'afk', options: { intervalMinutes: 1 } })

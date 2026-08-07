@@ -102,6 +102,9 @@ async function reload () {
 
   const logChanged = JSON.stringify(newCfg.log) !== JSON.stringify(ctx.cfg.log)
   const l2Changed = JSON.stringify(newCfg.l2) !== JSON.stringify(ctx.cfg.l2)
+  // K 修复：http 变更检测必须在赋值前计算——原比较在 ctx.cfg = newCfg 之后，
+  // 两侧恒等 → statusServer 的 stop/start 永不执行（http 热重载死代码，必须重启）
+  const httpChanged = JSON.stringify(newCfg.http) !== JSON.stringify(ctx.cfg.http)
   ctx.cfg = newCfg
   ctx.conn.updateCfg(newCfg)
 
@@ -122,7 +125,7 @@ async function reload () {
   }
 
   // HTTP 状态端点配置变化 → 重启监听（getCfg 闭包取最新配置）
-  if (JSON.stringify(newCfg.http) !== JSON.stringify(ctx.cfg.http)) {
+  if (httpChanged) {
     statusServer.stop()
     statusServer.start()
   }

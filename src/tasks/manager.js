@@ -120,6 +120,7 @@ export class TaskManager {
         await this.stopTask(id)
         this.tasks.get(id)?.cron?.stop() // F5：cron 定时器必须随任务移除而停止
         this.tasks.delete(id)
+        this._stateStore?.deleteCounter?.(id) // C6/N：reload 移除同样清理计数器
       }
     }
     // 新增或变化的
@@ -356,7 +357,8 @@ export class TaskManager {
 
   /** 快照持久化：ad-hoc 条目 + 全量计数器（U1）。 */
   _syncStateTasks () {
-    this._stateStore?.setTasks(
+    // 可选调用：stateStore 可能为 null 或缺方法（测试/降级路径）——不得抛错打断任务流程
+    this._stateStore?.setTasks?.(
       [...this.tasks.values()].filter(r => r.entry.adHoc === true).map(r => r.entry)
     )
   }
@@ -365,7 +367,7 @@ export class TaskManager {
   _snapshotCounters () {
     if (!this._stateStore) return
     for (const [id, rec] of this.tasks) {
-      this._stateStore.setCounter(id, rec.task.counters)
+      this._stateStore.setCounter?.(id, rec.task.counters)
     }
   }
 
@@ -396,8 +398,18 @@ export class TaskManager {
     await rec.task.stop()
     this.tasks.delete(id)
     this._pendingExclusive = this._pendingExclusive.filter(r => r !== rec)
+    // C6/N：计数器随任务移除清理（此前快照只写不删 → state.json 垃圾数据无限增长）
+    this._stateStore?.deleteCounter?.(id)
     this.log.info({ task: id }, 'ad-hoc task removed')
     this._syncStateTasks()
+  }
+
+  /** 快照计数器回灌（C6/N：重建后 ad-hoc 任务的遥测跨重启保留——此前只写不读）。 */
+  restoreCounters (id, counters) {
+    const rec = this.tasks.get(id)
+    if (rec && counters && typeof counters === 'object') {
+      rec.task.counters = { ...counters }
+    }
   }
 
   getStatus () {

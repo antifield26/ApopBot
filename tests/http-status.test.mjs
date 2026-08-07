@@ -111,3 +111,20 @@ test('热重载：stop 后改配置再 start（新端口生效）', async (t) =>
   assert.ok(port2, '重启后应重新监听')
   assert.notEqual(port2, port1)
 })
+
+// C6/K 回归守卫：http 变更检测必须在 ctx.cfg 赋值之前计算——原实现比较在赋值后
+// 两侧恒等，statusServer 的 stop/start 永不执行（http 热重载死代码，必须重启生效）。
+// 该 bug 无法经单元测试直接复现（index.js 是入口，import 即连接），用源码顺序守卫。
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+test('C6/K 回归：httpChanged 计算在 ctx.cfg = newCfg 之前（热重载死代码守卫）', () => {
+  const src = readFileSync(fileURLToPath(new URL('../src/index.js', import.meta.url)), 'utf8')
+  const lines = src.split('\n')
+  const httpIdx = lines.findIndex(l => l.includes('const httpChanged'))
+  const assignIdx = lines.findIndex(l => /^\s*ctx\.cfg = newCfg$/.test(l))
+  assert.ok(httpIdx !== -1, '应存在 httpChanged 计算')
+  assert.ok(assignIdx !== -1, '应存在 ctx.cfg 赋值语句（行首，非注释）')
+  assert.ok(httpIdx < assignIdx,
+    `httpChanged（行 ${httpIdx + 1}）必须在赋值（行 ${assignIdx + 1}）之前——否则两侧恒等热重载永不生效`)
+})

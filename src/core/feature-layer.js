@@ -58,6 +58,8 @@ export function createFeatureLayerManager (ctx, logger) {
       if (configIds.has(entry.id)) continue
       try {
         ctx.tasks.addTask(entry)
+        // C6/N：计数器回灌——快照此前只写不读（重启后遥测归零，U1 承诺未兑现）
+        ctx.tasks.restoreCounters(entry.id, ctx.stateStore?.counters?.[entry.id])
         log().info({ task: entry.id }, 'restored ad-hoc task from state snapshot')
       } catch (err) {
         log().warn({ task: entry.id, err: err.message }, 'ad-hoc 任务恢复失败')

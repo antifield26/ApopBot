@@ -83,6 +83,20 @@ test('C2 修复：process exit 事件同步落盘（防抖窗口内未 flush 的
   assert.deepEqual(disk.counters.m1, { mined: 3 }, 'exit 前未 flush 的变更应落盘')
 })
 
+test('C6/N 修复: deleteCounter 移除计数器（removeTask 后快照不残留垃圾数据）', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 'state.json')
+  const store = createStateStore({ file })
+  store.setCounter('m1', { mined: 5 })
+  store.setCounter('g1', { kills: 2 })
+  store.deleteCounter('m1')
+  store.flush()
+  const disk = JSON.parse(readFileSync(file, 'utf8'))
+  assert.deepEqual(disk.counters, { g1: { kills: 2 } }, '删除后不应残留')
+  store.deleteCounter('nonexistent') // 幂等
+  store.flush()
+})
+
 test('store: tasks 读副本——外部修改不污染内存态', (t) => {
   const dir = makeTmpDir(t)
   const store = createStateStore({ file: path.join(dir, 's.json') })

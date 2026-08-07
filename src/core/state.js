@@ -86,6 +86,14 @@ export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logg
       last.counters = { ...last.counters, [id]: { ...counters } }
       schedule()
     },
+    /** 删除单任务计数器（任务移除时清理，防快照无限增长——C6/N）。 */
+    deleteCounter (id) {
+      if (!(id in last.counters)) return
+      const next = { ...last.counters }
+      delete next[id]
+      last.counters = next
+      schedule()
+    },
     /** 立即落盘（优雅退出/测试）。 */
     flush () {
       if (timer) { clearTimeout(timer); timer = null }
