@@ -98,9 +98,39 @@ test('chat: cooldown 阻止连续请求', async () => {
   const ctx = makeCtx()
   const { agent } = makeAgent(ctx, [{ text: 'a' }, { text: 'b' }])
   await agent.chat('steve', 'hi')
-  agent.cooldownUntil = Date.now() + 5000 // 手动设置冷却
+  agent.cooldowns.set('steve', Date.now() + 5000) // 手动设置冷却
   const r2 = await agent.chat('steve', 'again')
   assert.ok(r2.reply.includes('冷却'), '冷却期内应拒绝')
+})
+
+test('C7/T 修复：冷却按玩家——一个玩家的冷却不挡其他玩家', async () => {
+  const ctx = makeCtx()
+  const { agent } = makeAgent(ctx, [{ text: 'a' }, { text: 'b' }])
+  await agent.chat('steve', 'hi')
+  agent.cooldowns.set('steve', Date.now() + 5000)
+  const r1 = await agent.chat('steve', 'again')
+  assert.ok(r1.reply.includes('冷却'), '同玩家冷却期内应拒绝')
+  const r2 = await agent.chat('alex', 'hi2')
+  assert.ok(!r2.reply.includes('冷却'), '其他玩家不受全局冷却影响')
+  assert.equal(r2.reply, 'b')
+})
+
+test('C7/U 修复：maxSteps 耗尽 → 显式文案（不再返回无回复占位污染会话）', async () => {
+  const ctx = makeCtx()
+  const script = Array.from({ length: 10 }, () => ({ text: null, toolCalls: [{ id: 't', name: 'status', arguments: {} }] }))
+  const p = makeFakeProvider(script)
+  const skills = createSkillRegistry(ctx)
+  const agent = new AgentInterface(ctx, { provider: p, skills, config: { ...l2cfg, maxSteps: 3 } })
+  const { reply } = await agent.chat('steve', '循环')
+  assert.ok(reply.includes('最大工具步数'), reply)
+})
+
+test('C7/T 修复：会话 LRU 上限——超过 32 个玩家驱逐最久未访问（不无限增长）', async () => {
+  const ctx = makeCtx()
+  const { agent } = makeAgent(ctx, Array.from({ length: 40 }, () => ({ text: 'r', toolCalls: [] })))
+  for (let i = 0; i < 35; i++) await agent.chat(`user${i}`, 'hi')
+  assert.ok(agent.sessionCount() <= 32, `会话数应封顶 32（实际 ${agent.sessionCount()}）`)
+  for (let i = 0; i < 35; i++) agent.reset(`user${i}`) // 清理模块级 Map
 })
 
 test('chat: busy 拒并发', async () => {

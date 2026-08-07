@@ -43,11 +43,22 @@ export function createProvider (cfg, logger) {
   if (mode === 'ollama') return ollama
   return {
     mode: 'auto',
+    _latched: false,
+    /**
+     * 本轮对话内粘滞回退（C7/V）：cloud 失败一次后其余步骤直走 ollama——
+     * 云端挂起（防火墙丢包 → 60s 超时）时无粘滞的 maxSteps=5 对话最坏 5×60s 才完成。
+     * agent-interface 每轮 chat() 开头调用 resetFallback 重置粘滞。
+     */
+    resetFallback () {
+      this._latched = false
+    },
     async chat (messages, opts = {}) {
+      if (this._latched) return ollama.chat(messages, opts)
       try {
         return await cloud.chat(messages, opts)
       } catch (err) {
-        log.warn({ err: err.message }, 'cloud provider 失败，回退 ollama')
+        this._latched = true
+        log.warn({ err: err.message }, 'cloud provider 失败，本轮对话余下步骤回退 ollama')
         return ollama.chat(messages, opts)
       }
     }

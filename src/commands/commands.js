@@ -278,7 +278,10 @@ export function registerBuiltinCommands (registry, ctx) {
   registry.register({
     name: 'agent',
     usage: '!agent chat <text> | !agent act <name> [json] | !agent reset',
-    description: 'L2 LLM 层（需配置 l2.enabled=true；act 需 op）',
+    description: 'L2 LLM 层（需配置 l2.enabled=true；chat 全员可用，act 需 op）',
+    // C7/Y 修复：permission all——此前默认 op 使 buildSystem 的"普通玩家"分支
+    // 是死代码（!agent chat 在权限门就被拒）；技能层 isOp 仍是危险操作最终防线
+    permission: 'all',
     handler: async (c, args, sender) => {
       if (!c.agent) { await sendChat(c.bot, '§cL2 未启用（配置 l2.enabled=true 后重启）', c.cfg.chat?.maxLength); return }
       const [action, ...rest] = args

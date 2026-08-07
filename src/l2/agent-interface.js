@@ -19,8 +19,37 @@ const TOOL_RESULT_MAX_CHARS = 2000 // 工具结果回填截断（大 JSON 撑爆
 // 被 feature-layer 重建，模块级存储保证记忆跨代际保留（会话是玩家维度的，不是 bot 维度的）。
 // 上限 MAX_HISTORY_MESSAGES 条（含本轮），先出后入裁剪；只存 user/assistant 纯文本轮，
 // 不存工具调用中间轮（长且不必要）。act 直调不污染会话。
+// 会话数上限 MAX_SESSIONS（C7/T）：Map 迭代序 = 插入序，访问时 delete+set 刷新为
+// 最新（LRU），超上限驱逐最久未访问的会话——此前每说过一句话的玩家永久驻留一条。
 const MAX_HISTORY_MESSAGES = 10
+const MAX_SESSIONS = 32
 const SESSIONS = new Map()
+
+/** 读取会话并刷新 LRU 序（delete+set 移到迭代末尾）。 */
+function getSession (user) {
+  const v = SESSIONS.get(user)
+  if (v !== undefined) {
+    SESSIONS.delete(user)
+    SESSIONS.set(user, v)
+  }
+  return v
+}
+
+/** 写入会话（LRU 上限驱逐最久未访问者）。 */
+function setSession (user, history) {
+  if (SESSIONS.has(user)) SESSIONS.delete(user)
+  SESSIONS.set(user, history)
+  if (SESSIONS.size > MAX_SESSIONS) {
+    SESSIONS.delete(SESSIONS.keys().next().value)
+  }
+}
+
+/** 有界 Map（按玩家冷却同款 LRU 上限）。 */
+function putBounded (map, key, value) {
+  if (map.has(key)) map.delete(key)
+  map.set(key, value)
+  if (map.size > MAX_SESSIONS) map.delete(map.keys().next().value)
+}
 
 const SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（minecraft-bot）。
 规则：
@@ -55,7 +84,8 @@ export class AgentInterface {
     this.cfg = deps.config ?? {}
     this.log = ctx.logger.child({ module: 'l2' })
     this.busy = false
-    this.cooldownUntil = 0
+    // 按玩家冷却（C7/T）：此前全局单值——一个 op 的请求冷却挡住所有玩家的 !agent chat
+    this.cooldowns = new Map()
     this._abort = null
     // LLM 计量（U5）：本次对话累计 tokens + 最近一次请求耗时（/metrics 用）
     this.usage = { inputTokens: 0, outputTokens: 0, latencyMs: null }
@@ -74,22 +104,26 @@ export class AgentInterface {
   async chat (user, text) {
     const now = Date.now()
     const cooldownMs = this.cfg.cooldownMs ?? 5000
-    if (now < this.cooldownUntil) {
-      return { reply: `请求冷却中（${Math.ceil((this.cooldownUntil - now) / 1000)}s 后重试）` }
+    const until = this.cooldowns.get(user) ?? 0
+    if (now < until) {
+      return { reply: `请求冷却中（${Math.ceil((until - now) / 1000)}s 后重试）` }
     }
     if (this.busy) return { reply: '上一个请求仍在处理中，请稍候' }
     this.busy = true
-    this.cooldownUntil = now + cooldownMs
+    putBounded(this.cooldowns, user, now + cooldownMs)
     const ac = new AbortController()
     this._abort = ac
     try {
       // 会话注入：历史（裁剪后）+ 本轮用户消息（history 是副本，工具循环内 push 不污染存储）
-      const history = (SESSIONS.get(user) ?? []).slice(-MAX_HISTORY_MESSAGES)
+      const history = (getSession(user) ?? []).slice(-MAX_HISTORY_MESSAGES)
       const userMsg = String(text).slice(0, INPUT_MAX_CHARS)
       const messages = [...history, { role: 'user', content: userMsg }]
       const maxSteps = this.cfg.maxSteps ?? 5
+      let finished = false
       let reply = '（无回复）'
-      for (let step = 0; step < maxSteps; step++) {
+      // auto provider 的粘滞回退按"本轮对话"重置（C7/V）：云端挂起时其余步骤直走 ollama
+      this.provider.resetFallback?.()
+      for (let step = 0; step < maxSteps && !finished; step++) {
         const res = await this.provider.chat(messages, {
           tools: this.skills.listForTools(),
           system: buildSystem(user, this.ctx.cfg),
@@ -104,6 +138,7 @@ export class AgentInterface {
         const calls = res.toolCalls?.slice(0, 4) ?? []
         if (calls.length === 0) {
           reply = res.text ?? '（无回复）'
+          finished = true
           break
         }
         // 执行工具调用并把结果送回给 LLM
@@ -120,10 +155,15 @@ export class AgentInterface {
         messages.push({ role: 'assistant', content: res.text ?? '', toolCalls: calls })
         messages.push({ role: 'user', content: '', toolResults: results })
       }
+      if (!finished) {
+        // C7/U 修复：maxSteps 耗尽——此前返回"（无回复）"占位且写入会话污染下一轮；
+        // 显式文案提示重试
+        reply = `已达最大工具步数（${maxSteps}），请重试`
+      }
       // 回写会话：本轮 user 轮 + 最终 assistant 轮（纯文本，裁剪到上限）
       history.push({ role: 'user', content: userMsg })
       history.push({ role: 'assistant', content: reply.slice(0, REPLY_MAX_CHARS) })
-      SESSIONS.set(user, history.slice(-MAX_HISTORY_MESSAGES))
+      setSession(user, history.slice(-MAX_HISTORY_MESSAGES))
       return { reply: reply.slice(0, REPLY_MAX_CHARS) }
     } catch (err) {
       if (err.name === 'AbortError') return { reply: '请求已中止' }

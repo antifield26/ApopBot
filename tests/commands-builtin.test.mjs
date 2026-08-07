@@ -178,6 +178,12 @@ test('!agent chat → 调用 agent.chat 并透传回复', async () => {
   assert.ok(lastMsg(bot).includes('echo:你好'))
 })
 
+test('C7/Y 修复：!agent chat 非 op 可用（permission all；危险操作仍由技能层强制）', async () => {
+  const { ctx, bot } = makeCtx()
+  await dispatch(ctx, '!agent chat 你好', 'creeper')
+  assert.ok(lastMsg(bot).includes('echo:你好'), lastMsg(bot))
+})
+
 test('!agent act 非 op → 权限不足', async () => {
   const { ctx, bot } = makeCtx()
   await dispatch(ctx, '!agent act status', 'creeper')

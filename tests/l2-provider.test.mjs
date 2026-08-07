@@ -135,6 +135,32 @@ test('provider: auto 模式 cloud 失败真实回退 ollama（各调用一次）
   }
 })
 
+test('C7/V 修复：auto 粘滞回退——cloud 失败一次后余下步骤直走 ollama（不重复 60s 空等）', async () => {
+  const calls = mockFetch((url) => url.includes('anthropic')
+    ? { ok: false, status: 500, text: async () => 'cloud down' }
+    : { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) })
+  const l2 = {
+    ...l2Base, provider: 'auto',
+    cloudBaseUrl: 'https://api.anthropic.com/v1/messages',
+    cloudApiKeyEnv: 'ANTHROPIC_API_KEY',
+    ollamaUrl: 'http://127.0.0.1:11434'
+  }
+  process.env.ANTHROPIC_API_KEY = 'sk-test'
+  try {
+    const p = createProvider({ l2 }, makeLogger())
+    await p.chat([{ role: 'user', content: 'x' }]) // cloud 失败 → 回退 ollama，粘滞
+    const before = calls.length // cloud + ollama = 2
+    await p.chat([{ role: 'user', content: 'y' }])
+    assert.equal(calls.length, before + 1, '粘滞后第二次 chat 应直走 ollama（不再打 cloud）')
+    p.resetFallback()
+    await p.chat([{ role: 'user', content: 'z' }])
+    assert.equal(calls.length, before + 1 + 2, 'resetFallback 后应重新尝试 cloud（cloud 失败再回退）')
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY
+    restoreFetch()
+  }
+})
+
 test('provider: ollamaTimeoutMs 生效（超时被 abort）', async () => {
   mockFetch((url, opts) => new Promise((resolve, reject) => {
     opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
