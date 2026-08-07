@@ -9,7 +9,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 - **重连自愈**：每次 spawn 全量重建功能层（任务/命令/LLM 重新绑定新 bot，一次重连后一切照常）
 - **任务系统**：7 种任务——挖矿（区域+背包满暂停）、钓鱼、AFK 防踢、**种植收割、伐木、战斗巡逻、养殖**；cron 调度（run-completion 语义，防重叠+时长上限）、热重载（SIGHUP/改配置/`!reload` 同一队列）
 - **聊天命令**：`!ping` `!status` `!task`（含 `!task new/remove` 临时任务）`!reload` `!say` `!pos` `!follow` `!find`（地表方块定位）`!agent`（chat/doctor/reset 全员可用，act 需 op），op 白名单 + 速率限制 + 256 字符自动分片（见下方指令列表）
-- **生产设施**：pino 结构化日志（按天轮转）、NSSM Windows 服务（自启+崩溃重启+fatal 停止等人工）、PowerShell 一键部署（`scripts/deploy.ps1`）、兼容性门禁、冒烟测试
+- **生产设施**：pino 结构化日志（按天轮转）、NSSM Windows 服务（自启+崩溃重启+fatal 停止等人工）、PowerShell 一键部署/一键更新（`scripts/deploy.ps1 -Update`）、兼容性门禁、冒烟测试、webhook 运维通知（企业微信/Server酱）、只读 HTTP 状态端点（/health /metrics，含坐标/等待原因）
 
 ## 指令列表
 
@@ -116,6 +116,7 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 | `chat.maxLength` | `250` | 聊天分片上限（服务端上限 256） |
 | `chat.commandCooldownMs` | `750` | op 命令冷却（防刷屏） |
 | `scheduleTimezone` | `Asia/Shanghai` | cron 调度时区 |
+| `notify.webhook` | `''` | 运维通知（U10）：任务终态/断线重连/死亡重生/fatal 停服推送企业微信或 Server酱（URL 自动识别；空=关闭；零依赖，失败静默） |
 | `l2` | `enabled: false` | LLM 层：`provider: auto\|cloud\|ollama`，密钥只走环境变量；默认 Ollama 模型 `qwen3.5:4b` |
 
 环境变量示例：`MCBOT_USERNAME=bot2 MCBOT_OP_WHITELIST=steve,alex npm start`
