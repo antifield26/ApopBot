@@ -17,7 +17,10 @@ export function loadState (file = DEFAULT_FILE) {
   try {
     return normalize(JSON.parse(readFileSync(file, 'utf8')))
   } catch {
-    return { tasks: [], counters: {} }
+    // 修复（本地测试冷启动暴露）：漏 memory 键 → createStateStore 的 memory getter
+    // JSON.parse(JSON.stringify(undefined)) 抛 '"undefined" is not valid JSON' →
+    // feature layer rebuild 失败（生产机 state.json 已存在所以从未触发）
+    return { tasks: [], counters: {}, memory: {} }
   }
 }
 
@@ -80,7 +83,7 @@ export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logg
     },
     /** 探索记忆快照（B1：discovery.js 用；深拷贝防外部修改污染内存态） */
     get memory () {
-      return JSON.parse(JSON.stringify(last.memory))
+      return JSON.parse(JSON.stringify(last.memory ?? {})) // ?? {} 防御：历史快照/异常态缺 memory 键
     },
     /** 全量更新探索记忆（discovery 修改后调用；5s 防抖合并落盘） */
     setMemory (memory) {

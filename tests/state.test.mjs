@@ -15,14 +15,22 @@ function makeTmpDir (t) {
 
 test('loadState: 文件不存在 → 空态', (t) => {
   const dir = makeTmpDir(t)
-  assert.deepEqual(loadState(path.join(dir, 'missing.json')), { tasks: [], counters: {} })
+  assert.deepEqual(loadState(path.join(dir, 'missing.json')), { tasks: [], counters: {}, memory: {} })
 })
 
 test('loadState: 损坏 JSON → 空态（不抛错）', (t) => {
   const dir = makeTmpDir(t)
   const file = path.join(dir, 'bad.json')
   writeFileSync(file, '{ not json')
-  assert.deepEqual(loadState(file), { tasks: [], counters: {} })
+  assert.deepEqual(loadState(file), { tasks: [], counters: {}, memory: {} })
+})
+
+test('修复: 文件不存在（冷启动）→ memory getter 不抛（回归："undefined" is not valid JSON）', (t) => {
+  // 本地测试冷启动暴露：loadState catch 分支此前漏 memory 键 → feature layer 重建时
+  // importSnapshot(ctx.stateStore.memory) 触发 getter → JSON.parse(undefined) 抛错
+  const dir = makeTmpDir(t)
+  const store = createStateStore({ file: path.join(dir, 'missing.json') })
+  assert.deepEqual(store.memory, {}, 'memory getter 应返回空对象而非抛错')
 })
 
 test('loadState: 形状防御——tasks 非数组/条目缺 id 过滤', (t) => {
