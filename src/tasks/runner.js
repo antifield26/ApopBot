@@ -49,6 +49,11 @@ export class ScriptTask extends BaseTask {
     if (!this.scriptDef?.script?.steps || !Array.isArray(this.scriptDef.script.steps)) {
       throw new Error(`任务类型 ${this.type} 脚本定义缺失 steps`)
     }
+    // 脚本级 init 钩子（原任务 init 校验的等价迁移：options 语义/插件依赖/
+    // 未知方块类型等——在脚本定义里显式声明）
+    if (typeof this.scriptDef.init === 'function') {
+      await this.scriptDef.init(this)
+    }
   }
 
   async run (gen) {
@@ -151,7 +156,12 @@ export class ScriptRunner {
     if (!entry.ok) {
       this.task.log.warn({ op: step.op, result: entry.result }, '脚本动作失败（软失败，由脚本条件处理）')
     } else if (step.count) {
-      this.task.incr(step.count)
+      // count 支持两种形态：'name'（成功 +1）或 {name, field}（从结果取数值，
+      // 如 collect_blocks 的 collected——原任务每批 incr(batch.length) 的等价迁移）
+      const by = typeof step.count === 'object'
+        ? (Number(entry.result?.[step.count.field]) || 0)
+        : 1
+      if (by > 0) this.task.incr(typeof step.count === 'object' ? step.count.name : step.count, by)
     }
   }
 
@@ -197,23 +207,28 @@ export class ScriptRunner {
   /** 参数模板求值（递归）：$引用 / ${options} / {expr}。 */
   resolveValue (v) {
     if (typeof v === 'string') {
-      if (v.startsWith('$')) return resolveRef(v, this)
+      // ${options} 优先于 $引用（'${x}' 也以 $ 开头——顺序错误会把 options
+      // 引用误判为结果引用 → 解析为 undefined）
       if (v.includes('${')) {
-        // 整串 ${key} → 保留原始类型（数字/布尔直传）；混合串 → 字符串化内插
+        // 整串 ${key} → 保留原始类型（数字/布尔直传）；混合串 → 字符串化内插。
+        // 查找链：任务 options → 脚本 defaultOptions（如 mine 的 radius 缺省 32）
+        const lookup = (k) => this.task.options[k] !== undefined ? this.task.options[k] : this.task.scriptDef.defaultOptions?.[k]
         const only = v.match(/^\$\{([^}]+)\}$/)
         if (only) {
-          const val = this.task.options[only[1]]
+          const val = lookup(only[1])
           return val === undefined ? undefined : val
         }
         return v.replace(/\$\{([^}]+)\}/g, (_, k) => {
-          const val = this.task.options[k]
+          const val = lookup(k)
           return val === undefined ? '' : String(val)
         })
       }
+      // $引用（结果链）——在 ${options} 之后判断（'${x}' 不以结果引用解析）
+      if (v.startsWith('$')) return resolveRef(v, this)
       return v
     }
     if (v && typeof v === 'object' && !Array.isArray(v) && 'expr' in v) {
-      return evalExpr(v.expr, this.task.options)
+      return evalExpr(v.expr, this.task.options, this.task.scriptDef.defaultOptions)
     }
     if (Array.isArray(v)) return v.map(x => this.resolveValue(x))
     if (v && typeof v === 'object') {
@@ -280,10 +295,10 @@ function getPath (obj, path) {
  * 先把 ${key} 替换为 options 数值，再校验剩余字符只含数字/四则/括号/空白，
  * 最后 Function 求值（输入经白名单钳制，无任意代码执行面）。
  */
-function evalExpr (expr, options) {
+function evalExpr (expr, options, defaultOptions = null) {
   let s = String(expr)
   s = s.replace(/\$\{([^}]+)\}/g, (_, k) => {
-    const val = options[k]
+    const val = options[k] !== undefined ? options[k] : defaultOptions?.[k]
     if (typeof val !== 'number') throw new Error(`表达式引用 ${k} 不是数字（options.${k}=${JSON.stringify(val)}）`)
     return String(val)
   })

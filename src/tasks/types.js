@@ -3,23 +3,23 @@
 // NATURAL_COMPLETION_TYPES（完成语义），靠 tests/config.test.mjs 一致性断言防漂移。
 // 统一为 name → { factory, naturalCompletion } 单点定义，两处从注册表派生。
 
-import { MineTask } from './mine.js'
 import { FarmTask } from './farm.js'
-import { ChopTask } from './chop.js'
 import { CombatTask } from './combat.js'
 import { BreedTask } from './breed.js'
 import { ExploreTask } from './explore.js'
-// v1.0.0 C6+：afk/fish 已脚本化（ScriptTask + scripts/*.js）——其余任务 C7-C10 逐个切换
+// v1.0.0 C6+：任务脚本化重构——已切换类型经 ScriptTask + scripts/*.js
 import { ScriptTask } from './runner.js'
 import afkScript from './scripts/afk.js'
 import fishScript from './scripts/fish.js'
+import mineScript from './scripts/mine.js'
+import chopScript from './scripts/chop.js'
 
 export const TASK_TYPES = {
-  mine: { factory: (id, options, ctx) => new MineTask(id, 'mine', options, ctx), naturalCompletion: true },
+  mine: { factory: (id, options, ctx) => new ScriptTask(id, 'mine', options, ctx, mineScript), naturalCompletion: true },
   fish: { factory: (id, options, ctx) => new ScriptTask(id, 'fish', options, ctx, fishScript), naturalCompletion: false },
   afk: { factory: (id, options, ctx) => new ScriptTask(id, 'afk', options, ctx, afkScript), naturalCompletion: false },
   farm: { factory: (id, options, ctx) => new FarmTask(id, 'farm', options, ctx), naturalCompletion: true },
-  chop: { factory: (id, options, ctx) => new ChopTask(id, 'chop', options, ctx), naturalCompletion: true },
+  chop: { factory: (id, options, ctx) => new ScriptTask(id, 'chop', options, ctx, chopScript), naturalCompletion: true },
   combat: { factory: (id, options, ctx) => new CombatTask(id, 'combat', options, ctx), naturalCompletion: true },
   breed: { factory: (id, options, ctx) => new BreedTask(id, 'breed', options, ctx), naturalCompletion: true },
   explore: { factory: (id, options, ctx) => new ExploreTask(id, 'explore', options, ctx), naturalCompletion: false } // L2 进化 C2：螺旋探索

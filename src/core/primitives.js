@@ -187,11 +187,24 @@ export function createPrimitiveRegistry (ctx) {
         .map(p => ({ p, d: me ? dist2(p, me) : 0 }))
         .sort((a, b) => a.d - b.d)
         .map(x => x.p)
-      // 区域过滤（可选）
-      const filtered = area && isArea(area)
-        ? sorted.filter(([x, y, z]) => x >= area.x1 && x <= area.x2 && y >= area.y1 && y <= area.y2 && z >= area.z1 && z <= area.z2)
-        : sorted
-      return { blockNames: matchedNames, candidates: filtered.slice(0, 50) }
+      // 区域过滤（可选）+ 中心距离告警（mine.js 同款：bot 距区域中心超过扫描半径时
+      // 区域必然扫不到——明示而非静默空扫）
+      if (area && isArea(area)) {
+        const me = c.bot.entity?.position
+        if (me) {
+          const d = Math.hypot(me.x - (area.x1 + area.x2) / 2, me.z - (area.z1 + area.z2) / 2)
+          if (d > (maxDistance ?? 64)) {
+            c.logger.warn({ dist: Math.round(d), maxDistance: maxDistance ?? 64 }, 'bot 距区域中心超出扫描半径——请靠近区域或调整 area/maxDistance')
+          }
+        }
+        return {
+          blockNames: matchedNames,
+          candidates: sorted
+            .filter(([x, y, z]) => x >= area.x1 && x <= area.x2 && y >= area.y1 && y <= area.y2 && z >= area.z1 && z <= area.z2)
+            .slice(0, 50)
+        }
+      }
+      return { blockNames: matchedNames, candidates: sorted.slice(0, 50) }
     }
   })
 
@@ -418,10 +431,19 @@ export function createPrimitiveRegistry (ctx) {
     cooldownMs: ACTION_COOLDOWN_MS,
     handler: async (c, { positions, blockNames, blockName, area, maxBlocks, chestLocations }, runtime) => {
       if (!c.bot?.collectBlock?.collect) throw new Error('collectBlock 插件不可用（配置 mineflayerPlugins.collectBlock=true）')
-      // 解析候选：优先 positions；否则按名称扫描
+      // 解析候选：优先 positions；否则按名称扫描。
+      // 契约（26.1.2 实测，mine.js 同款修复）：collectblock 的 Targets.getClosest()
+      // 访问 target.position（Block/Entity 契约）——positions 必须经 blockAt 转
+      // Block（裸 Vec3 无 position 字段 → 收集异常）
+      const toBlocks = (pts) => pts
+        .map(p => {
+          const b = c.bot.blockAt?.(new Vec3(p[0], p[1], p[2]))
+          return b ?? new Vec3(p[0], p[1], p[2]) // blockAt 缺失兜底（不阻塞收集）
+        })
+        .filter(Boolean)
       let targets = []
       if (Array.isArray(positions) && positions.length) {
-        targets = positions.map(p => new Vec3(p[0], p[1], p[2]))
+        targets = toBlocks(positions)
       } else {
         const names = blockNames ?? (blockName ? [blockName] : null)
         if (!names?.length) throw new Error('collect_blocks 需要 positions 或 blockNames')
@@ -435,9 +457,13 @@ export function createPrimitiveRegistry (ctx) {
         if (area && isArea(area)) {
           found = found.filter(p => p.x >= area.x1 && p.x <= area.x2 && p.y >= area.y1 && p.y <= area.y2 && p.z >= area.z1 && p.z <= area.z2)
         }
-        targets = found.map(p => new Vec3(p.x, p.y, p.z))
+        targets = toBlocks(found)
       }
       if (targets.length === 0) return { collected: 0, inventoryFull: false }
+      // chestLocations 转 Vec3（collectblock 的 getClosestChest 调 c.distanceTo——配置普通对象必须转）
+      const chests = Array.isArray(chestLocations)
+        ? chestLocations.map(c => new Vec3(c[0] ?? c.x, c[1] ?? c.y, c[2] ?? c.z))
+        : undefined
       // 分批 ≤4（C4/J：批间 pause/stop 响应延迟有界——与 mine/chop 任务同款语义）
       let collected = 0
       const cap = Math.min(maxBlocks ?? 16, targets.length)
@@ -445,7 +471,7 @@ export function createPrimitiveRegistry (ctx) {
         if (runtime?.signal?.aborted) return { collected, stopped: true }
         const batch = targets.slice(i, i + 4)
         try {
-          await withTimeout(c.bot.collectBlock.collect(batch, { chestLocations: chestLocations ?? undefined }), 120000, 'collect timeout')
+          await withTimeout(c.bot.collectBlock.collect(batch, { chestLocations: chests }), 120000, 'collect timeout')
           collected += batch.length
         } catch (err) {
           if (err.code === 'NoChests') return { collected, inventoryFull: true } // F2：背包满（无箱子可存）

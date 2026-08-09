@@ -78,7 +78,7 @@ test('DSL: 模板求值——$引用 / ${options} / {expr}', async () => {
     entity: { position: { x: 0, y: 64, z: 0 } },
     registry: { blocksByName: { iron_ore: { id: 44 } } },
     findBlocks: ({ matching }) => (matching({ type: 44 }) ? [new Vec3(5, 63, 0)] : []),
-    blockAt: () => ({ boundingBox: 'empty', name: 'air' }),
+    blockAt: (p) => ({ boundingBox: 'empty', name: 'air', position: p }), // Block 契约：collectblock 读 target.position
     collectBlock: { collect: async (batch) => { seen.push(batch); return { collected: batch.length } } },
     chat: () => { seen.push('chat') },
     once: () => {},
@@ -89,9 +89,10 @@ test('DSL: 模板求值——$引用 / ${options} / {expr}', async () => {
   await task.start()
   assert.equal(task.state, 'completed')
   assert.equal(seen[0].length, 1, '$blocks.candidates 结果引用解析')
-  assert.equal(seen[0][0].x, 5)
-  assert.equal(seen[0][0].y, 63)
-  assert.equal(seen[0][0].z, 0)
+  // collect_blocks 按 Block 契约转 blockAt（collectblock 读 target.position）
+  assert.equal(seen[0][0].position.x, 5)
+  assert.equal(seen[0][0].position.y, 63)
+  assert.equal(seen[0][0].position.z, 0)
 })
 
 test('DSL: 软失败——动作失败记录 lastResult，if last.ok:false 分支可处理', async () => {
@@ -236,4 +237,115 @@ test('fish 脚本: 抛竿失败 → 软失败 + 5s 等待后重试（不中断�
   await task.stop()
   assert.ok(fishCalls >= 1, 'fish 至少调用一次')
   assert.ok(task.state === 'running' || task.state === 'stopped', `失败不应 fail 任务（当前 ${task.state}）`)
+})
+
+// ---- mine/chop 脚本（v1.0.0 C7）----
+
+function makeCollectBot (opts = {}) {
+  const collects = []
+  const mined = new Set() // 已挖位置（fake 世界状态——collect 后候选消失）
+  const pool = [
+    { p: new Vec3(10, 63, 0), type: 44 }, // iron_ore
+    { p: new Vec3(10, 64, 0), type: 55 }, // oak_log
+    { p: new Vec3(12, 64, 0), type: 55 }, // oak_log
+    { p: new Vec3(14, 64, 0), type: 56 }  // oak_wood
+  ]
+  const bot = {
+    entity: { position: { x: 0, y: 64, z: 0 } },
+    registry: { blocksByName: { iron_ore: { id: 44 }, oak_log: { id: 55 }, oak_wood: { id: 56 } } },
+    findBlocks: ({ matching }) => pool
+      .filter(c => matching({ type: c.type }) && !mined.has(c.p.x + ',' + c.p.y + ',' + c.p.z))
+      .map(c => c.p),
+    blockAt: (p) => {
+      if (opts.emptyWorld === true) return null
+      // 地表语义：y≥64 是空气（isSurfaceAt 要求上方 2 格空/透明——
+      // iron_ore@63 上方 64/65；oak_log@64 上方 65/66）
+      if (p.y >= 64) return { boundingBox: 'empty', name: 'air', position: p }
+      return { boundingBox: 'solid', name: 'ore', position: p, type: p.y === 63 ? 44 : 55 }
+    },
+    collectBlock: {
+      collect: async (batch, _opts) => {
+        collects.push(batch)
+        for (const b of batch) mined.add(b.position.x + ',' + b.position.y + ',' + b.position.z)
+        if (opts.noChests === true) {
+          const err = new Error('No chests')
+          err.code = 'NoChests'
+          throw err
+        }
+        return { collected: batch.length }
+      },
+      cancelTask: () => {}
+    },
+    pathfinder: { stop: () => {} },
+    once: () => {},
+    removeListener: () => {}
+  }
+  return { bot, collects }
+}
+
+test('mine 脚本: 扫描→收集循环（counters.mined 累计）', async () => {
+  const { bot, collects } = makeCollectBot()
+  const ctx = makeCtx(bot)
+  const { default: mineScript } = await import('../src/tasks/scripts/mine.js')
+  const task = makeTask(mineScript, { blockTypes: ['iron_ore'], stopWhenDone: true }, ctx)
+  await task.start()
+  assert.equal(task.state, 'completed', 'stopWhenDone + 挖空 → 完成')
+  assert.ok(collects.length >= 1, 'collect 被调用')
+  assert.ok(task.counters.mined >= 1, `mined 计数: ${task.counters.mined}`)
+})
+
+test('mine 脚本: 无目标 + stopWhenDone=false → 5min 等待（不完成）', async () => {
+  const { bot } = makeCollectBot({ emptyWorld: true })
+  const ctx = makeCtx(bot)
+  const { default: mineScript } = await import('../src/tasks/scripts/mine.js')
+  const task = makeTask(mineScript, { blockTypes: ['iron_ore'] }, ctx)
+  task.start()
+  await new Promise(r => setTimeout(r, 30))
+  assert.ok(task.state === 'running', '无目标且未 stopWhenDone → 保持运行（5min no-target 等待）')
+  assert.ok(task.waitingReason === 'no-target' || task.waitingReason === 'script-wait', `等待原因: ${task.waitingReason}`)
+  await task.stop()
+})
+
+test('mine 脚本: NoChests → inventoryFull → 5min 等待（不误判失败）', async () => {
+  const { bot } = makeCollectBot({ noChests: true })
+  const ctx = makeCtx(bot)
+  const { default: mineScript } = await import('../src/tasks/scripts/mine.js')
+  const task = makeTask(mineScript, { blockTypes: ['iron_ore'], stopWhenDone: true }, ctx)
+  task.start()
+  await new Promise(r => setTimeout(r, 30))
+  assert.ok(task.state === 'running', '背包满 → 等待清空而非完成')
+  assert.ok((task.counters.mined ?? 0) === 0, 'inventoryFull 不计 mined')
+  await task.stop()
+})
+
+test('mine 脚本: init 校验——未知方块类型报错（failed）', async () => {
+  const { bot } = makeCollectBot()
+  const ctx = makeCtx(bot)
+  const { default: mineScript } = await import('../src/tasks/scripts/mine.js')
+  const task = makeTask(mineScript, { blockTypes: ['not_a_block'] }, ctx)
+  await task.start()
+  assert.equal(task.state, 'failed', 'init 校验失败 → failed')
+  assert.ok(task.lastError.includes('未知方块类型'), task.lastError)
+})
+
+test('chop 脚本: 缺省正则（/_log$|_wood$/）扫描全部原木', async () => {
+  const { bot, collects } = makeCollectBot()
+  const ctx = makeCtx(bot)
+  const { default: chopScript } = await import('../src/tasks/scripts/chop.js')
+  const task = makeTask(chopScript, { stopWhenDone: true }, ctx)
+  await task.start()
+  assert.equal(task.state, 'completed', 'chop 完成')
+  assert.ok(collects.length >= 1)
+  assert.ok(task.counters.chopped >= 3, `chopped 计数（oak_log×2 + oak_wood×1）: ${task.counters.chopped}`)
+})
+
+test('chop 脚本: 显式 logTypes 只伐指定类型', async () => {
+  const { bot, collects } = makeCollectBot()
+  const ctx = makeCtx(bot)
+  const { default: chopScript } = await import('../src/tasks/scripts/chop.js')
+  const task = makeTask(chopScript, { logTypes: ['oak_log'], stopWhenDone: true }, ctx)
+  await task.start()
+  assert.equal(task.state, 'completed')
+  assert.ok(collects.length >= 1)
+  assert.equal(task.counters.chopped, 2, '只伐 oak_log×2（不伐 oak_wood）')
 })
