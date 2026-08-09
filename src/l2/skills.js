@@ -4,6 +4,8 @@
 
 import { isOp } from '../commands/permissions.js'
 import { validateTaskOptions } from '../core/task-schemas.js'
+// 第六轮 C3：run_task 的类型提示从注册表生成（不再硬编码类型串）
+import { TASK_TYPES } from '../tasks/types.js'
 import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
 import { environmentSnapshot } from './environment.js'
 // 第六轮 C2：nearbyEntities 归位 core（skills 是组合层，可从 core 直接取）
@@ -168,7 +170,7 @@ export function createSkillRegistry (ctx) {
       type: 'object',
       required: ['type', 'id'],
       properties: {
-        type: { type: 'string', description: 'mine/fish/afk/farm/chop/combat/breed/explore' },
+        type: { type: 'string', description: Object.keys(TASK_TYPES).join('/') },
         id: { type: 'string', description: '任务唯一 id' },
         options: { type: 'object', description: '任务 options（如 area/blockTypes/durationMinutes）' }
       }

@@ -256,11 +256,13 @@ export function assertLogDirWritable (cfg) {
   }
 }
 
-// 任务类型表（与 src/tasks/manager.js 的 TASK_TYPES 同步维护；tests 有一致性断言防漂移）
-export const KNOWN_TASK_TYPES = ['mine', 'fish', 'afk', 'farm', 'chop', 'combat', 'breed', 'explore']
+// 任务类型表（第六轮 C3 单一来源）：src/tasks/types.js 注册表派生——
+// 此前 manager TASK_TYPES + 本文件两表三处手工同步（tests 一致性断言防漂移）
+import { TASK_TYPES } from '../tasks/types.js'
+export const KNOWN_TASK_TYPES = Object.keys(TASK_TYPES)
 // 有自然完成语义的任务类型（scheduled 时无需 durationMinutes；afk/fish 必须配——
 // fish 语义同 afk：到点停止，缺 durationMinutes 应在配置校验期报错而非运行时）
-const NATURAL_COMPLETION_TYPES = ['mine', 'farm', 'chop', 'combat', 'breed']
+const NATURAL_COMPLETION_TYPES = Object.keys(TASK_TYPES).filter(k => TASK_TYPES[k].naturalCompletion)
 const ROTATE_FREQUENCIES = ['hourly', 'daily', 'weekly', 'monthly', 'custom']
 const AREA_KEYS = ['x1', 'y1', 'z1', 'x2', 'y2', 'z2']
 

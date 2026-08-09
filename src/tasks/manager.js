@@ -1,11 +1,3 @@
-import { MineTask } from './mine.js'
-import { FishTask } from './fish.js'
-import { AfkTask } from './afk.js'
-import { FarmTask } from './farm.js'
-import { ChopTask } from './chop.js'
-import { CombatTask } from './combat.js'
-import { BreedTask } from './breed.js'
-import { ExploreTask } from './explore.js'
 import { createTaskSchedule } from './scheduled.js'
 import { withTimeout } from '../util/promise-timeout.js'
 import { sendChat } from '../core/chat.js'
@@ -24,17 +16,8 @@ function sortKeys (v) {
   return v
 }
 
-// 任务类型工厂表（与 src/core/config.js 的 KNOWN_TASK_TYPES 同步维护；tests 有一致性断言）
-export const TASK_TYPES = {
-  mine: (id, options, ctx) => new MineTask(id, 'mine', options, ctx),
-  fish: (id, options, ctx) => new FishTask(id, 'fish', options, ctx),
-  afk: (id, options, ctx) => new AfkTask(id, 'afk', options, ctx),
-  farm: (id, options, ctx) => new FarmTask(id, 'farm', options, ctx),
-  chop: (id, options, ctx) => new ChopTask(id, 'chop', options, ctx),
-  combat: (id, options, ctx) => new CombatTask(id, 'combat', options, ctx),
-  breed: (id, options, ctx) => new BreedTask(id, 'breed', options, ctx),
-  explore: (id, options, ctx) => new ExploreTask(id, 'explore', options, ctx) // L2 进化 C2：螺旋探索
-}
+// 任务类型注册表（第六轮 C3 单一来源）：src/tasks/types.js——工厂 + 自然完成语义
+import { TASK_TYPES } from './types.js'
 
 const RUNNING_STATES = ['init', 'running', 'paused']
 
@@ -78,9 +61,9 @@ export class TaskManager {
   }
 
   _createEntry (entry) {
-    const factory = TASK_TYPES[entry.type]
-    if (!factory) throw new Error(`未知任务类型: ${entry.type}`)
-    const task = factory(entry.id, entry.options ?? {}, this._makeTaskCtx())
+    const def = TASK_TYPES[entry.type]
+    if (!def) throw new Error(`未知任务类型: ${entry.type}`)
+    const task = def.factory(entry.id, entry.options ?? {}, this._makeTaskCtx())
     return { entry, task, cron: null }
   }
 

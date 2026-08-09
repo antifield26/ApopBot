@@ -270,10 +270,13 @@ test('B2: scheduled fish 缺 durationMinutes 在配置校验期报错（与 afk 
   assert.ok(errors.some(e => e.includes('durationMinutes')), `应报缺 durationMinutes: ${errors.join('; ')}`)
 })
 
-test('B3: KNOWN_TASK_TYPES 与 TASK_TYPES 键集一致（双处同步不漂移）', async () => {
+test('B3: KNOWN_TASK_TYPES 与 TASK_TYPES 键集一致（第六轮 C3 后为单一来源派生——保留断言防回退）', async () => {
   const { KNOWN_TASK_TYPES } = await import('../src/core/config.js')
-  const { TASK_TYPES } = await import('../src/tasks/manager.js')
+  const { TASK_TYPES } = await import('../src/tasks/types.js')
   assert.deepEqual([...KNOWN_TASK_TYPES].sort(), Object.keys(TASK_TYPES).sort())
+  // C3：自然完成语义也来自注册表（NATURAL_COMPLETION_TYPES 非导出——经 scheduled 校验间接断言）
+  assert.ok(TASK_TYPES.afk.naturalCompletion === false, 'afk 无自然完成')
+  assert.ok(TASK_TYPES.mine.naturalCompletion === true, 'mine 有自然完成')
 })
 
 test('B7: 无 --config 时存在 config/config.json 则合并（README 复制即用生效）', async () => {
