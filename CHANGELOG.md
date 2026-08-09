@@ -3,6 +3,10 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 **版本单一来源 = package.json**（`node scripts/release.mjs [patch|minor|major]` bump，check:compat 交叉校验 package.json ↔ lockfile）。
 
+## [Unreleased]
+
+- **L2 预设切换 DeepSeek**：`l2.model` 默认 `deepseek-v4-flash`、`l2.cloudBaseUrl` 默认 `https://api.deepseek.com/anthropic`（Anthropic 兼容端点——裸域名补全会落到 OpenAI 路由 404）；新增 `l2.thinking`（默认 `disabled`：显式发 `thinking:{type:"disabled"}` 且**不传 reasoning_effort**——DeepSeek 端点将两者视为互斥 400）/ `l2.effort`（默认 `low`，`thinking: enabled` 时注入 `reasoning_effort`）。ENV_MAP 新增 `MCBOT_L2_THINKING`/`MCBOT_L2_EFFORT`；l2 白名单同步扩展，向后兼容
+
 ## [1.0.0] - 2026-08-09
 
 v1.0.0 革命性重构（第七轮）：依赖供应链根治 + LLM 直接操作协议 + 任务脚本化统一执行层 + 持久化/版本化/可观测性。

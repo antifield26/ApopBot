@@ -43,13 +43,13 @@ winget install --id Git.Git                                                     
   "host": "mc.antifield.work",
   "username": "mcbot",
   "ops": ["steve", "alex"],
-  "l2": { "enabled": true, "model": "claude-sonnet-5" }
+  "l2": { "enabled": true, "model": "deepseek-v4-flash" }
 }
 ```
 
 - `host` 指向服务端域名 `mc.antifield.work`（DNS 指向 Pi 的当前 IP；Pi 换 IP 只改 DNS，Bot 重连时自动解析新地址，DNS 解析失败归类为 network_error 自动退避重连而非 fatal）。`localhost` 仅限开发机连本机服务端
 - `username: mcbot` 已在服务端白名单；smoke 用 `config/smoke.json` 以 mcbot-test 身份登录（同样需白名单）
-- L2 仅云端 Anthropic 兼容 API（v1.0.0）；API key 走 `l2.cloudApiKeyEnv` 指定环境变量（service.env 注入），见 [docs/l2.md](l2.md)
+- L2 仅云端 Anthropic 兼容 API（v1.0.0），预设 DeepSeek（`deepseek-v4-flash`，端点 `api.deepseek.com/anthropic`）；API key 走 `l2.cloudApiKeyEnv` 指定环境变量（service.env 注入），见 [docs/l2.md](l2.md)
 
 ## 部署（管理员 PowerShell）
 

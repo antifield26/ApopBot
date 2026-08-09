@@ -39,21 +39,29 @@ const BUILTIN_DEFAULTS = {
     autoEat: true,
     armorManager: true
   },
-  // L2 LLM 层（v1.0.0 C2：单 Provider——仅云端 Anthropic 兼容 API，non-reasoning 模式；
-  // 本地 Ollama/auto 已移除，l2 键白名单强制，残留旧键启动即报错）。
+  // L2 LLM 层（v1.0.0 C2：单 Provider——仅云端 Anthropic 兼容 API；
+  // 预设 DeepSeek：Anthropic 兼容端点 api.deepseek.com/anthropic（裸域名 + /v1/messages
+  // 是 OpenAI 兼容路由，Anthropic 协议会 404）；本地 Ollama/auto 已移除，
+  // l2 键白名单强制，残留旧键启动即报错）。
   // 所有密钥只从环境变量读取（l2.cloudApiKeyEnv 指定变量名），绝不进配置文件。
   l2: {
     enabled: false,
-    model: 'claude-sonnet-5',
-    cloudBaseUrl: 'https://api.anthropic.com/v1/messages',
+    model: 'deepseek-v4-flash',
+    cloudBaseUrl: 'https://api.deepseek.com/anthropic',
     cloudApiKeyEnv: 'ANTHROPIC_API_KEY',
     // U13（第五轮）：默认 8——动作技能就位后真实链条（observe→act×3→reply）
     // 打满上限前留有工具步给观察/反思；v1.0.0 起 act 单步含 ≤8 动作数组
     maxSteps: 8,
     cooldownMs: 5000,
-    // 生成超时/长度（non-reasoning 云端：1024 tokens 足够动作数组+回复）
+    // 生成超时/长度（thinking 关闭：1024 tokens 足够动作数组+回复）
     cloudTimeoutMs: 60000,
     maxTokens: 1024,
+    // 思考模式与推理强度（DeepSeek 预设：thinking=disabled + effort=low 低延迟快速输出）。
+    // thinking=disabled 时 provider 显式发 thinking:{type:'disabled'} 且**不传**
+    // reasoning_effort——DeepSeek Anthropic 兼容端点将两者视为互斥（400）；
+    // thinking=enabled 时按 effort（low/medium/high/max）注入 reasoning_effort。
+    thinking: 'disabled',
+    effort: 'low',
     // 第六轮 C10：云端上下文窗口——云端同样走预算守卫（window − maxTokens − reserve），
     // 是动作数组/观察结果回填的容量基础；32k 上下文端点请调低
     cloudMaxContextWindow: 65536,
@@ -99,6 +107,8 @@ const ENV_MAP = {
   MCBOT_L2_CLOUD_TIMEOUT_MS: ['l2', 'cloudTimeoutMs'],
   MCBOT_L2_CLOUD_MAX_CONTEXT_WINDOW: ['l2', 'cloudMaxContextWindow'],
   MCBOT_L2_MAX_ACTIONS_PER_CALL: ['l2', 'maxActionsPerCall'],
+  MCBOT_L2_THINKING: ['l2', 'thinking'],
+  MCBOT_L2_EFFORT: ['l2', 'effort'],
   MCBOT_L2_ENV_INJECTION: ['l2', 'envInjection'],
   MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
   MCBOT_CHAT_COMMAND_COOLDOWN_MS: ['chat', 'commandCooldownMs'],
@@ -328,13 +338,20 @@ export function validateConfig (cfg) {
       errors.push(`l2.maxActionsPerCall 必须是 ≥1 的整数，当前: ${cfg.l2.maxActionsPerCall}`)
     }
     if (typeof cfg.l2.envInjection !== 'boolean') errors.push('l2.envInjection 必须是布尔值')
+    if (cfg.l2.thinking !== undefined && !['enabled', 'disabled'].includes(cfg.l2.thinking)) {
+      errors.push(`l2.thinking 必须是 enabled 或 disabled，当前: ${cfg.l2.thinking}`)
+    }
+    if (cfg.l2.effort !== undefined && !['low', 'medium', 'high', 'max'].includes(cfg.l2.effort)) {
+      errors.push(`l2.effort 必须是 low/medium/high/max，当前: ${cfg.l2.effort}`)
+    }
   }
   // 第七轮 C2：l2 子键白名单（config 契约冻结）——v1.0.0 移除本地 provider 后，
   // 存量配置里残留的 ollama/provider 键必须显式报错给迁移指引，不静默忽略
   if (cfg.l2) {
     const L2_KNOWN_KEYS = new Set([
       'enabled', 'model', 'cloudBaseUrl', 'cloudApiKeyEnv', 'maxSteps', 'cooldownMs',
-      'cloudTimeoutMs', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'envInjection'
+      'cloudTimeoutMs', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'envInjection',
+      'thinking', 'effort'
     ])
     for (const key of Object.keys(cfg.l2)) {
       if (!L2_KNOWN_KEYS.has(key)) {

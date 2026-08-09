@@ -15,6 +15,11 @@ test('内置默认值：生产基线', () => {
   // v1.0.0 C2：单 provider（云端）——l2 不再有 provider 键，残留旧键校验期报错
   assert.equal('provider' in cfg.l2, false, 'BUILTIN 默认 l2 不应含 provider 键（v1.0.0 移除本地 provider）')
   assert.equal(cfg.l2.maxActionsPerCall, 8, 'v1.0.0 C3：单次 act 动作数组上限默认 8')
+  // 预设 DeepSeek：模型/端点/思考模式/推理强度
+  assert.equal(cfg.l2.model, 'deepseek-v4-flash', '预设模型 deepseek-v4-flash')
+  assert.equal(cfg.l2.cloudBaseUrl, 'https://api.deepseek.com/anthropic', '预设 DeepSeek Anthropic 兼容端点')
+  assert.equal(cfg.l2.thinking, 'disabled', '预设 thinking=disabled')
+  assert.equal(cfg.l2.effort, 'low', '预设 effort=low')
   assert.equal(cfg.reconnect.baseMs, 5000)
   assert.ok(cfg.log.dir.endsWith('logs'))
 })
@@ -236,12 +241,17 @@ test('l2 数值/模型校验（maxSteps/超时/maxActionsPerCall）', () => {
     [{ maxSteps: 'abc' }, 'l2.maxSteps'],
     [{ cloudTimeoutMs: 0 }, 'cloudTimeoutMs'],
     [{ maxActionsPerCall: 0 }, 'l2.maxActionsPerCall'],
-    [{ maxTokens: 0 }, 'maxTokens']
+    [{ maxTokens: 0 }, 'maxTokens'],
+    [{ thinking: 'adaptive' }, 'l2.thinking'],
+    [{ effort: 'ultra' }, 'l2.effort']
   ]) {
     const { ok, errors } = validateConfig({ ...base, l2: { ...base.l2, ...patch } })
     assert.equal(ok, false, JSON.stringify(patch))
     assert.ok(errors.some(e => e.includes(kw)), `${kw} 未报错: ${JSON.stringify(errors)}`)
   }
+  // 合法值放行（enabled 门内）
+  const good = validateConfig({ ...base, l2: { ...base.l2, thinking: 'enabled', effort: 'high' } })
+  assert.equal(good.ok, true, good.errors.join('; '))
 })
 
 test('MCBOT_TASKS_FILE 任务文件合并（内部键加载后删除）', () => {

@@ -150,8 +150,8 @@
   },
   "l2": {
     "enabled": false,
-    "model": "claude-sonnet-5",
-    "cloudBaseUrl": "https://api.anthropic.com/v1/messages",
+    "model": "deepseek-v4-flash",
+    "cloudBaseUrl": "https://api.deepseek.com/anthropic",
     "cloudApiKeyEnv": "ANTHROPIC_API_KEY",
     "maxSteps": 8,
     "cooldownMs": 5000,
@@ -160,6 +160,8 @@
     "envInjection": true,
     "cloudTimeoutMs": 60000,
     "maxTokens": 1024,
-    "_comment": "v1.0.0：仅云端 Anthropic 兼容 API（non-reasoning 模式），本地 Ollama/auto 已移除。API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（如 ANTHROPIC_API_KEY），绝不写进配置文件；cloudMaxContextWindow 是云端预算守卫（32k 上下文端点调低到 32768）；maxActionsPerCall 是单次 act 动作数组上限（每轮动作预算 = maxSteps × maxActionsPerCall）"
+    "thinking": "disabled",
+    "effort": "low",
+    "_comment": "预设 DeepSeek（Anthropic 兼容端点——裸域名会补到 OpenAI 路由 404，必须带 /anthropic）。API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（默认 ANTHROPIC_API_KEY，可改 DEEPSEEK_API_KEY 等），绝不写进配置文件；cloudMaxContextWindow 是云端预算守卫（32k 上下文端点调低到 32768）；maxActionsPerCall 是单次 act 动作数组上限（每轮动作预算 = maxSteps × maxActionsPerCall）；thinking=disabled（默认）显式关思考且不传 reasoning_effort（DeepSeek 端点两者互斥 400），enabled 时按 effort（low/medium/high/max）注入"
   }
 }

@@ -69,6 +69,37 @@ test('CloudProvider: model/max_tokens/tools 传参正确', async () => {
   }
 })
 
+test('DeepSeek 预设：thinking=disabled 显式发送且不带 reasoning_effort（端点 400 冲突）', async () => {
+  const calls = mockFetch(() => ({ ok: true, status: 200, json: async () => ({ content: [] }) }))
+  const l2 = { ...l2Base, thinking: 'disabled', effort: 'low' }
+  process.env.ANTHROPIC_API_KEY = 'sk-test'
+  try {
+    const p = createProvider({ l2 }, makeLogger())
+    await p.chat([{ role: 'user', content: 'x' }])
+    assert.deepEqual(calls[0].body.thinking, { type: 'disabled' })
+    assert.equal('reasoning_effort' in calls[0].body, false,
+      'disabled 不得带 reasoning_effort（DeepSeek 400: thinking options type cannot be disabled when reasoning_effort is set）')
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY
+    restoreFetch()
+  }
+})
+
+test('thinking=enabled + effort 注入 reasoning_effort', async () => {
+  const calls = mockFetch(() => ({ ok: true, status: 200, json: async () => ({ content: [] }) }))
+  const l2 = { ...l2Base, thinking: 'enabled', effort: 'high' }
+  process.env.ANTHROPIC_API_KEY = 'sk-test'
+  try {
+    const p = createProvider({ l2 }, makeLogger())
+    await p.chat([{ role: 'user', content: 'x' }])
+    assert.deepEqual(calls[0].body.thinking, { type: 'enabled' })
+    assert.equal(calls[0].body.reasoning_effort, 'high')
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY
+    restoreFetch()
+  }
+})
+
 test('CloudProvider: tool_use block 解析', async () => {
   mockFetch(() => ({
     ok: true,

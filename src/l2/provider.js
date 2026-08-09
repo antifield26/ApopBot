@@ -7,8 +7,12 @@
 // 归一化：内部 messages 为 { role: 'user'|'assistant', content, toolCalls?, toolResults? }；
 // 转 Anthropic Messages API 的 tool_use/tool_result block 结构。
 //
-// non-reasoning 模式（v1.0.0 决策）：不传 thinking budget——模型直接输出可执行结果，
-// 保证低延迟与高输出质量；提示词相应直白（见 agent-interface.js CORE_SYSTEM_PROMPT）。
+// thinking/effort（预设 DeepSeek）：l2.thinking='disabled'（默认）显式发
+// thinking:{type:'disabled'}，但**不传** reasoning_effort——DeepSeek Anthropic 兼容端点
+// 校验严格，将两者视为互斥（400: thinking options type cannot be disabled when
+// reasoning_effort is set；官方 Anthropic 端点会忽略矛盾字段而 DeepSeek 拒绝）。
+// l2.thinking='enabled' 时发 thinking:{type:'enabled'} + reasoning_effort: l2.effort
+// （low/medium/high/max）。提示词相应直白（见 agent-interface.js CORE_SYSTEM_PROMPT）。
 //
 // 安全：API key 只从环境变量读取（l2.cloudApiKeyEnv），绝不进配置文件、绝不写入日志。
 // 实现依赖 Node 22 全局 fetch，零新增依赖。
@@ -58,12 +62,14 @@ class CloudProvider {
     this.l2 = l2
     this.log = log
     this.apiKey = process.env[l2.cloudApiKeyEnv] ?? process.env.ANTHROPIC_API_KEY
-    // baseUrl 兼容两种写法：完整端点（.../v1/messages）或 base URL（如 DeepSeek 的
-    // https://api.deepseek.com/anthropic，实测 404，需自动补全路径）
-    this.baseUrl = (l2.cloudBaseUrl ?? 'https://api.anthropic.com/v1/messages').replace(/\/+$/, '')
+    // baseUrl 兼容两种写法：完整端点（.../v1/messages）或 base URL（预设 DeepSeek
+    // https://api.deepseek.com/anthropic——Anthropic 兼容路由；裸域名会补到 OpenAI 路由 404）
+    this.baseUrl = (l2.cloudBaseUrl ?? 'https://api.deepseek.com/anthropic').replace(/\/+$/, '')
     // 只对不含 /messages 结尾的端点自动补全（避免 https://host/v1 → /v1/v1/messages 双路径）
     if (!/\/messages$/.test(this.baseUrl)) this.baseUrl += '/v1/messages'
-    this.model = l2.model ?? 'claude-sonnet-5'
+    this.model = l2.model ?? 'deepseek-v4-flash'
+    this.thinking = l2.thinking ?? 'disabled'
+    this.effort = l2.effort ?? 'low'
     this.timeoutMs = l2.cloudTimeoutMs ?? DEFAULT_TIMEOUT_MS
     this.maxTokens = l2.maxTokens ?? DEFAULT_MAX_TOKENS
     // 第六轮 C10：云端上下文窗口（预算守卫用）——l2.cloudMaxContextWindow 可配
@@ -93,9 +99,16 @@ class CloudProvider {
     const body = {
       model: this.model,
       max_tokens: this.maxTokens,
-      // non-reasoning：不传 thinking budget（Anthropic 默认即非推理模式）
       system,
       messages: messages.map(toAnthropicMessage)
+    }
+    // thinking/effort（预设 DeepSeek）：disabled 显式关思考但不带 reasoning_effort
+    // （DeepSeek 端点两者互斥 400，见文件头注释）；enabled 时按 effort 注入
+    if (this.thinking === 'enabled') {
+      body.thinking = { type: 'enabled' }
+      body.reasoning_effort = this.effort
+    } else {
+      body.thinking = { type: 'disabled' }
     }
     if (tools.length > 0) {
       body.tools = tools.map(({ name, description, parameters }) => ({

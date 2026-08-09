@@ -38,7 +38,7 @@ minecraft-bot (Node.js ≥22, ESM)
 ├── src/plugins/              mineflayer 生态插件装载（pathfinder→collectBlock→autoEat→armorManager→follow（条件装载））
 ├── src/l2/                   LLM 层（l2.enabled=false 时零依赖；单 Provider 见 docs/l2.md）
 │   ├── agent-interface.js    chat 工具循环（act 动作数组 + 观察工具）+ 反思钩子（经验沉淀）
-│   ├── provider.js           云端 Anthropic 兼容 API（non-reasoning）
+│   ├── provider.js           云端 Anthropic 兼容 API（预设 DeepSeek，thinking=disabled）
 │   ├── sessions.js           会话落盘（data/sessions.json）
 │   ├── experience.js         经验记忆库（data/experience.json）
 │   └── index.js              createL2 组装

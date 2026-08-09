@@ -4,7 +4,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 
 ## 功能
 
-- **分层架构**：L1 精简生产核心（默认）+ L2 LLM 智能体层（可选启用，**单 Provider：云端 Anthropic 兼容 API，non-reasoning 模式**）
+- **分层架构**：L1 精简生产核心（默认）+ L2 LLM 智能体层（可选启用，**单 Provider：云端 Anthropic 兼容 API——预设 DeepSeek（deepseek-v4-flash，Anthropic 兼容端点），thinking=disabled 低延迟模式**）
 - **连接守护**：断线原因分类（LoginGuard 思想）、指数退避重连（5s→300s）、10s 防抖防崩溃循环、spawn 超时兜底；名字冲突/白名单/版本不匹配/消息违规（illegal）算致命，其余退避重连
 - **重连自愈**：每次 spawn 全量重建功能层（任务/命令/LLM 重新绑定新 bot，一次重连后一切照常）
 - **任务系统**：8 种任务全部**脚本化**（动作原语脚本，与 LLM 共用执行层——挖矿、钓鱼、AFK 防踢、种植收割、伐木、战斗巡逻、养殖、螺旋探索）；BaseTask 状态机外壳保留（暂停/恢复/取消/调度/防重叠）；cron 调度（防重叠+时长上限）、热重载（SIGHUP/改配置/`!reload` 同一队列）
@@ -119,7 +119,7 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 | `chat.commandCooldownMs` | `750` | op 命令冷却（防刷屏） |
 | `scheduleTimezone` | `Asia/Shanghai` | cron 调度时区 |
 | `notify.webhook` | `''` | 运维通知（U10）：任务终态/断线重连/死亡重生/fatal 停服推送企业微信或 Server酱（URL 自动识别；空=关闭；零依赖，失败静默） |
-| `l2` | `enabled: false` | LLM 层：单 Provider（云端 Anthropic 兼容 API，non-reasoning）；密钥只走 `l2.cloudApiKeyEnv` 指定环境变量；残留旧键（provider/ollama 系）启动即报错（契约冻结） |
+| `l2` | `enabled: false` | LLM 层：单 Provider，预设 DeepSeek（`deepseek-v4-flash` + Anthropic 兼容端点 `api.deepseek.com/anthropic`，`thinking: disabled`/`effort: low`——disabled 时不传 reasoning_effort，DeepSeek 端点两者互斥 400）；密钥只走 `l2.cloudApiKeyEnv` 指定环境变量；残留旧键（provider/ollama 系）启动即报错（契约冻结） |
 
 环境变量示例：`MCBOT_USERNAME=bot2 MCBOT_OP_WHITELIST=steve,alex npm start`
 
