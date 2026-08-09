@@ -105,7 +105,8 @@ export class ScriptRunner {
         exclusiveClass: 'flow',
         guardText: '',
         timeoutMs: 30000,
-        handler
+        // 第四参注入任务实例（有状态算法如 explore 螺旋用）
+        handler: async (ctx, args, runtime) => handler(ctx, args, runtime, this.task)
       })
     }
   }

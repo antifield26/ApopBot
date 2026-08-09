@@ -506,7 +506,6 @@ test('addTask/removeTask 运行时增删', async () => {
 
 import { EventEmitter } from 'node:events'
 import { Vec3 } from 'vec3'
-import { CombatTask } from '../src/tasks/combat.js'
 
 function makeCombatBot () {
   const bot = new EventEmitter()

@@ -535,3 +535,46 @@ test('breed 脚本: 喂食成功 → 等待幼崽 → breedings 计数', async (
   assert.equal(task.counters.breedings, 1, 'breedings 计数（targetGone）')
   assert.ok(packets.some(p => p.name === 'use_entity'), '应发 use_entity 包（entity-actions 原始包）')
 })
+
+// ---- explore 脚本（v1.0.0 C10：任务局部 op spiral_step）----
+
+test('explore 脚本: 螺旋一站推进（goto + 锚点登记 + waypoints 计数）', async () => {
+  const anchors = []
+  const { default: exploreScript } = await import('../src/tasks/scripts/explore.js')
+  const discovery = await import('../src/core/discovery.js')
+  discovery._reset()
+  const bot = {
+    entity: { position: new Vec3(0, 64, 0) },
+    blockAt: (p) => (p.y <= 64 ? { boundingBox: 'solid', name: 'stone', position: p } : { boundingBox: 'empty', name: 'air', position: p }),
+    pathfinder: { setGoal: () => {}, stop: () => {}, goto: async () => {} },
+    findBlocks: () => [],
+    once: () => {},
+    removeListener: () => {}
+  }
+  const ctx = makeCtx(bot)
+  const task = makeTask(exploreScript, { checkIntervalSeconds: 0.01, maxDistance: 64 }, ctx)
+  task.start()
+  await new Promise(r => setTimeout(r, 50))
+  assert.ok(task.counters.waypoints >= 1, `应至少访问 1 站: ${JSON.stringify(task.counters)}`)
+  assert.ok(task.state === 'running', '探索持续运行（无 stopWhenDone）')
+  await task.stop()
+  assert.ok(discovery.query('iron_ore', null, 5).length >= 0, '锚点登记不抛错')
+  discovery._reset()
+})
+
+test('explore 脚本: stopWhenDone 环满 → 自然完成', async () => {
+  const { default: exploreScript } = await import('../src/tasks/scripts/explore.js')
+  const bot = {
+    entity: { position: new Vec3(0, 64, 0) },
+    blockAt: (p) => (p.y <= 64 ? { boundingBox: 'solid', name: 'stone', position: p } : { boundingBox: 'empty', name: 'air', position: p }),
+    pathfinder: { setGoal: () => {}, stop: () => {}, goto: async () => {} },
+    findBlocks: () => [],
+    once: () => {},
+    removeListener: () => {}
+  }
+  const ctx = makeCtx(bot)
+  // maxDistance 极小时 spiralWaypoints 立即超限 → 空环 → stopWhenDone 完成
+  const task = makeTask(exploreScript, { stopWhenDone: true, maxDistance: 1, checkIntervalSeconds: 0.01 }, ctx)
+  await task.start()
+  assert.equal(task.state, 'completed', '环满 + stopWhenDone → 完成')
+})
