@@ -125,12 +125,10 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 
 ## 依赖 pin 说明（重要）
 
-mineflayer 正式版只支持到 1.21.11（协议 774）；26.1.2（775）支持链部分已合入上游。本项目：
-- `minecraft-data 3.112.0`（npm 正式版，已含 775）
-- **git SHA 固定引用 ×2**：`mineflayer`（PR #3902）、`minecraft-protocol`（PR #1487），不可变
-- **官方版本覆盖 ×2**：`prismarine-chunk 1.41.0` / `prismarine-physics 1.11.1`（2026-07-31 已官方发布 26.1 支持；mineflayer PR 分支声明 fork 可变分支名，故以 overrides 强制官方版）
-- `.npmrc`：`legacy-peer-deps`（npm 无法解析 git 依赖版本）+ `allow-git`（npm 12+ 供应链安全默认禁 git 依赖）
-- 每次部署前 `npm run check:compat` 门禁；上游合并后 `npm run migrate-upstream` 一键回切
+mineflayer 正式版只支持到 1.21.11（协议 774）；26.1.2（775）上游 PR（#3902/#1487）未合并。本项目（v1.0.0）：
+- **全部官方 npm 版**：`mineflayer 4.37.1` / `minecraft-protocol 1.66.2` / `minecraft-data 3.113.0`（已含 775）/ `prismarine-chunk 1.41.0` / `prismarine-physics 1.11.1`（已含 26.1）
+- **26.1.2 适配 = 本地补丁**：`patches/` 的 patch-package 补丁（postinstall 自动应用，`npm ci` 零手工步骤）——供应链 100% 干净（零 git 依赖、npm audit 正常）
+- 门禁：`npm run check:compat`（含 3.7 补丁哨兵——补丁缺失/未应用即 FAIL）；上游合并后删补丁 + 更新版本号回切（见 docs/upstream-migration.md）
 
 ## 26.1.2 实测兼容性备忘（PaperMC 26.1.2 真机验证）
 

@@ -49,7 +49,7 @@ minecraft-bot (Node.js ≥22, ESM)
 
 | 层 | 来源 | 决策 |
 |---|---|---|
-| 协议层 | **mineflayer**（PrismarineJS） | 唯一协议级 headless 实现、27 版本集成测试、MIT。直接依赖 PR #3902 分支获得 775 支持 |
+| 协议层 | **mineflayer**（PrismarineJS） | 唯一协议级 headless 实现、27 版本集成测试、MIT。官方 npm 4.37.1 + 本地补丁获得 775 支持（v1.0.0：PR #3902 适配经 patches/ 承载） |
 | 生产模式 | **mindcraft**（借鉴，不依赖） | LoginGuard 断线分类 → 本项目 `reconnect.js`；10s 崩溃保护 → `minGapMs` + 服务管理器重启语义（NSSM `AppExit 2 Exit` / systemd `StartLimitBurst`）；配置分层 → `config.js`。mindcraft 锁定 mineflayer 4.33.0 + patch-package，不适合生产依赖 |
 | 任务/技能 | **Voyager**（借鉴思想） | control_primitives 原子技能思想 → 本项目任务系统（7 种任务）作为 L2 agent 的技能层 |
 | 寻路 | **baritone**（仅参考） | 客户端 Mod 无法 headless 集成；本项目用 mineflayer-pathfinder + collectblock 达成类似能力 |
