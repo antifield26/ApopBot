@@ -231,24 +231,22 @@ test('C7/Y 修复：!agent chat 非 op 可用（permission all；危险操作仍
   assert.ok(lastMsg(bot).includes('echo:你好'), lastMsg(bot))
 })
 
-test('U9: !agent doctor 回显模式/延迟/双 provider 连通性', async () => {
+test('U9: !agent doctor 回显模式/延迟/单 provider 连通性（v1.0.0 仅云端）', async () => {
   const { ctx, bot } = makeCtx({
     agent: {
       chat: async () => ({ reply: 'x' }),
       act: async () => ({ ok: true, result: 'x' }),
       diagnose: async () => [
-        { label: 'cloud', ok: true, status: 405 },
-        { label: 'ollama', ok: false, error: 'ECONNREFUSED' }
+        { label: 'cloud', ok: true, status: 405 }
       ],
-      provider: { mode: 'auto' },
+      provider: { mode: 'cloud' },
       usage: { latencyMs: 123 }
     }
   })
   await dispatch(ctx, '!agent doctor')
   const msg = lastMsg(bot)
-  assert.ok(msg.includes('auto'), msg)
+  assert.ok(msg.includes('cloud'), msg)
   assert.ok(msg.includes('cloud: 连通'), msg)
-  assert.ok(msg.includes('ollama: 不可达'), msg)
   assert.ok(msg.includes('123ms'), msg)
 })
 

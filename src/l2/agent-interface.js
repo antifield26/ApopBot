@@ -141,8 +141,9 @@ function putBounded (map, key, value, max = MAX_SESSIONS) {
   if (map.size > max) map.delete(map.keys().next().value)
 }
 
-// 核心层（第六轮 C10 分层）：所有 provider 共用——低配 4B 模型也 hold 得住的紧凑规则。
-// 云端扩展层（CLOUD_EXTENSION）只随 cloud/auto 的 cloud 侧下发，Ollama 精简。
+// v1.0.0 C2：单 Provider（云端 non-reasoning）——原 CORE（核心层）与 CLOUD_EXTENSION
+// （云端扩展层）机械合并为单一完整提示词（C4 将按动作协议重写内容）；分层标记/
+// 剥除逻辑随 Ollama/auto 一起移除。
 const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（minecraft-bot）。
 规则：
 1. 回答保持简短（≤250 字符），用 reply 技能说话。
@@ -153,17 +154,11 @@ const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手
 6. 意图→技能示例（玩家口语与你该做的）："附近有什么矿"→ query_map 查记忆或 find_block；"挖这块石头/挖掉 X 坐标"→ move_to 靠近后 dig；"放一块石头/种棵树"→ equip 取方块后 place；"打那个僵尸"→ attack（filter=zombie）；"帮我采木头/挖矿"→ run_task chop/mine；"我饿了/吃点东西"→ use_item；"拿出剑"→ equip；"跟着我/跟随我"→ follow_player（name=当前会话玩家名——"我"指说话玩家，绝不是 Bot 自己）；不确定用什么技能时先调 list_skills。
 7. 不要角色扮演，不要输出 Markdown，不要虚构玩家或世界状态。环境感知以系统消息里的"环境:"行与 environment/nearby_entities 技能结果为准——没感知到的信息（如天气/生物群系/附近实体）如实说不知道，探索过的区域可查 query_map。`
 
-/**
- * 云端扩展层分隔标记（provider.js 的回退剥除按它切分——Ollama 回退步绝不收到
- * 扩展层；导出供 stripCloudExtension 与测试使用）。
- */
-export const CLOUD_EXTENSION_MARKER = '\n\n===== 高级能力（云端扩展） =====\n'
+// v1.0.0 C2：云端扩展层内容机械并入核心层（原 A-D 节合并为第 8 条规则）——
+// 单 provider 无分层必要；C4 将按"动作协议"整体重写。
+const CLOUD_EXTENSION = `
 
-// 云端扩展层：纯增量指导（不重复、不矛盾核心 7 条规则），约 1.8k 字符 ≈ 900 tokens，
-// 64k 云端窗口占比可忽略；内容为多步意图示例/技能选择策略/任务规划与异常恢复。
-// auto 回退到 Ollama 时由 provider 包装器剥除（ollama 从不见此节——4B 上下文装不下）。
-const CLOUD_EXTENSION = `${CLOUD_EXTENSION_MARKER}本节为高级能力指引，仅在云端模型启用；本地模型可忽略此节内容。
-
+8. 高级能力（v1.0.0：原云端扩展层合并）：
 A. 多步意图示例（"玩家说→技能链"）：
 - "帮我建个树屋"→ 先 inventory_summary 确认木材 → equip 木材 → move_to 目标 → place×N 逐层搭建 → reply 汇报进度。搭完一层再查一次位置，不要一次放空。
 - "挖点铁做个镐"→ find_block(iron_ore) 或 query_map 查记忆 → move_to 靠近 → dig×N → 装备/制作由玩家完成 → 汇报获得数量。
@@ -177,17 +172,15 @@ D. 安全边界（重申）：exclusive 任务运行期间移动/挖掘/放置/�
 /**
  * 每次对话注入调用者身份：LLM 必须知道"谁在说话、是否有 op 权限"，
  * 否则面对危险操作请求只会回复"需要验证 op 身份"（实测反馈——身份此前未进上下文）。
- * 第六轮 C10：withExtension=true（cloud/auto 的 cloud 侧）时拼接云端扩展层——
- * 每轮 system 重新生成，auto 粘滞回退后自然切回精简（provider.kind() 动态判定）。
+ * v1.0.0 C2：单 provider（云端），withExtension 分支移除，恒拼接完整提示词。
  * @param {string} user 消息来源玩家
  * @param {object} cfg
- * @param {boolean} [withExtension] 是否下发云端扩展层
  */
-function buildSystem (user, cfg, withExtension = false) {
+function buildSystem (user, cfg) {
   const auth = isOp(user, cfg)
     ? `${user} 是 op 白名单成员——危险操作可直接执行，无需再要求验证`
     : `${user} 是普通玩家——危险操作（move_to/run_task/stop_task/follow_player）必须拒绝并说明权限不足`
-  return `${CORE_SYSTEM_PROMPT}\n\n当前会话：${auth}` + (withExtension ? CLOUD_EXTENSION : '')
+  return `${CORE_SYSTEM_PROMPT}\n\n当前会话：${auth}` + CLOUD_EXTENSION
 }
 
 export class AgentInterface {
@@ -248,8 +241,6 @@ export class AgentInterface {
       const maxSteps = this.cfg.maxSteps ?? 5
       let finished = false
       let reply = '（无回复）'
-      // auto provider 的粘滞回退按"本轮对话"重置（C7/V）：云端挂起时其余步骤直走 ollama
-      this.provider.resetFallback?.()
       for (let step = 0; step < maxSteps && !finished; step++) {
         const tools = this.skills.listForTools()
         // A3：环境自动注入——每次工具轮重新生成（bot 移动后数据新鲜）；开关可关；
@@ -260,11 +251,8 @@ export class AgentInterface {
         if (toolCalls.length) {
           toolLog = `\n最近工具操作: ${toolCalls.slice(-3).map(c => `${c.name}${c.result ? `→${c.result}` : ''}`).join('；')}`
         }
-        // 第六轮 C10：provider 感知的分层提示词——cloud/auto 的 cloud 侧带扩展层，
-        // ollama 只发核心层。每轮重新生成（bot 移动后环境行新鲜 + auto 粘滞回退后
-        // kind() 切换自然生效）；fake provider 无 kind 按 cloud 处理（扩展层下发）
-        const kind = typeof this.provider.kind === 'function' ? this.provider.kind() : (this.provider.kind ?? 'cloud')
-        const system = buildSystem(user, this.ctx.cfg, kind === 'cloud') +
+        // v1.0.0 C2：单 provider（云端）——恒拼接完整提示词（分层分支已移除）
+        const system = buildSystem(user, this.ctx.cfg) +
           (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`) + toolLog
         // A2：上下文预算裁剪（provider 有窗口时）——fixed = system + 工具定义；
         // 超预算按序裁剪历史/工具结果/用户消息。窗口 null（云端/测试）→ 不裁剪
@@ -276,7 +264,7 @@ export class AgentInterface {
             this._budgetWarned = true
             // P2-5（第五轮）：warn 带具体数字——2048 窗口下 fixed > budget 是结构性
             // 不可收敛（裁剪三步后仍超窗，依赖 Ollama 静默截断）：提示调参方向
-            this.log.warn({ fixedTokens, budget, window }, `L2 固定 prompt（system+技能定义）超出上下文预算（window ${window}）——历史/工具结果将被全部裁剪后仍可能超窗。建议 l2.ollamaNumCtx=4096 或减少 maxTokens/技能数`)
+            this.log.warn({ fixedTokens, budget, window }, `L2 固定 prompt（system+技能定义）超出上下文预算（window ${window}）——历史/工具结果将被全部裁剪后仍可能超窗。建议调高 l2.cloudMaxContextWindow 或减少 maxTokens/工具数`)
           }
           applyTokenBudget(messages, fixedTokens, budget)
         }

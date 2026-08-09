@@ -4,7 +4,7 @@ import { createSkillRegistry } from './skills.js'
 
 /**
  * L2 层入口。l2.enabled=false 时返回 null（零额外依赖，不加载任何 LLM 相关代码路径）。
- * 启用时组装：双 Provider（auto=cloud 优先回退 ollama）+ 技能注册表 + Agent 接口。
+ * 启用时组装：单 Provider（v1.0.0 C2：仅云端 non-reasoning）+ 技能注册表 + Agent 接口。
  */
 export function createL2 (cfg, ctx) {
   if (!cfg.l2?.enabled) return null

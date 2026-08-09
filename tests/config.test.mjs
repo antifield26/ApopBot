@@ -12,7 +12,9 @@ test('内置默认值：生产基线', () => {
   assert.equal(cfg.port, 25565)
   assert.equal(cfg.auth, 'offline')
   assert.equal(cfg.l2.enabled, false)
-  assert.equal(cfg.l2.provider, 'auto', 'BUILTIN 默认 provider 不应被 default.json 覆盖为 null（M4 回归）')
+  // v1.0.0 C2：单 provider（云端）——l2 不再有 provider 键，残留旧键校验期报错
+  assert.equal('provider' in cfg.l2, false, 'BUILTIN 默认 l2 不应含 provider 键（v1.0.0 移除本地 provider）')
+  assert.equal(cfg.l2.maxActionsPerCall, 8, 'v1.0.0 C3：单次 act 动作数组上限默认 8')
   assert.equal(cfg.reconnect.baseMs, 5000)
   assert.ok(cfg.log.dir.endsWith('logs'))
 })
@@ -151,26 +153,25 @@ test('M6: scheduled 无自然完成类型必须配 durationMinutes', () => {
   assert.equal(validateConfig(mine).ok, true)
 })
 
-test('M6: l2.enabled 时 provider 非法拒绝', () => {
-  const bad = { ...base(), l2: { ...base().l2, enabled: true, provider: 'bogus' } }
-  const { ok, errors } = validateConfig(bad)
-  assert.equal(ok, false)
-  assert.ok(errors.some(e => e.includes('provider')))
+test('M6: l2 残留旧键（provider/ollama 系）显式拒绝（v1.0.0 C2 契约冻结）', () => {
+  for (const key of ['provider', 'ollamaUrl', 'ollamaModel', 'ollamaTimeoutMs', 'ollamaNumCtx']) {
+    const bad = { ...base(), l2: { ...base().l2, [key]: key === 'provider' ? 'auto' : 'x' } }
+    const { ok, errors } = validateConfig(bad)
+    assert.equal(ok, false, `${key} 应被拒绝`)
+    assert.ok(errors.some(e => e.includes('l2 未知键')), `${key} 应报 l2 未知键: ${JSON.stringify(errors)}`)
+  }
 })
 
 test('M6: L2 环境变量映射与数值转换', () => {
-  const cfg = loadConfig({
-    argv: [],
-    env: {
-      MCBOT_L2_PROVIDER: 'ollama',
-      MCBOT_L2_MAX_STEPS: '3',
-      MCBOT_L2_COOLDOWN_MS: '1000',
-      MCBOT_CHAT_MAX_LENGTH: '200',
-      MCBOT_SCHEDULE_TIMEZONE: 'UTC'
-    }
-  })
-  assert.equal(cfg.l2.provider, 'ollama')
+  const cfg = loadConfig({ argv: [], env: {
+    MCBOT_L2_MAX_STEPS: '3',
+    MCBOT_L2_COOLDOWN_MS: '1000',
+    MCBOT_L2_MAX_ACTIONS_PER_CALL: '4',
+    MCBOT_CHAT_MAX_LENGTH: '200',
+    MCBOT_SCHEDULE_TIMEZONE: 'UTC'
+  } }, { skipProdConfig: true })
   assert.equal(cfg.l2.maxSteps, 3)
+  assert.equal(cfg.l2.maxActionsPerCall, 4, '数字键经 parseEnv 数值化')
   assert.equal(cfg.l2.cooldownMs, 1000)
   assert.equal(cfg.chat.maxLength, 200)
   assert.equal(cfg.scheduleTimezone, 'UTC')
@@ -228,14 +229,13 @@ test('畸形形状配置不抛 TypeError（reconnect:null / chat:null）', () =>
   assert.equal(r2.ok, false)
 })
 
-test('l2 数值/模型校验（maxSteps/超时/ollamaModel）', () => {
+test('l2 数值/模型校验（maxSteps/超时/maxActionsPerCall）', () => {
   const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
   const base = { ...cfg, l2: { ...cfg.l2, enabled: true } }
   for (const [patch, kw] of [
     [{ maxSteps: 'abc' }, 'l2.maxSteps'],
-    [{ ollamaTimeoutMs: -1 }, 'ollamaTimeoutMs'],
     [{ cloudTimeoutMs: 0 }, 'cloudTimeoutMs'],
-    [{ ollamaModel: '' }, 'ollamaModel'],
+    [{ maxActionsPerCall: 0 }, 'l2.maxActionsPerCall'],
     [{ maxTokens: 0 }, 'maxTokens']
   ]) {
     const { ok, errors } = validateConfig({ ...base, l2: { ...base.l2, ...patch } })
@@ -270,18 +270,16 @@ test('P1-4 修复：顶层 _comment 放行（config.example.json 复制为 confi
   assert.equal(ok, true, `含顶层 _comment 的配置应通过校验: ${errors.join('; ')}`)
 })
 
-test('B2: ENV_MAP 覆盖 l2.maxTokens/cloudTimeoutMs/ollamaTimeoutMs', () => {
+test('B2: ENV_MAP 覆盖 l2.maxTokens/cloudTimeoutMs（v1.0.0 删 ollama 键）', () => {
   const cfg = loadConfig({
     argv: [],
     env: {
       MCBOT_L2_MAX_TOKENS: '2048',
-      MCBOT_L2_CLOUD_TIMEOUT_MS: '30000',
-      MCBOT_L2_OLLAMA_TIMEOUT_MS: '45000'
+      MCBOT_L2_CLOUD_TIMEOUT_MS: '30000'
     }
   })
   assert.equal(cfg.l2.maxTokens, 2048)
   assert.equal(cfg.l2.cloudTimeoutMs, 30000)
-  assert.equal(cfg.l2.ollamaTimeoutMs, 45000)
 })
 
 test('B2: scheduled fish 缺 durationMinutes 在配置校验期报错（与 afk 一致）', () => {

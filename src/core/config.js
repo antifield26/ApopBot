@@ -5,6 +5,10 @@ import { validateTaskOptions } from './task-schemas.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
+// 第七轮 C2：配置契约版本（v1.0.0 冻结）——l2 子键白名单为契约的一部分，
+// 未知键/已移除键（ollama 系）显式报错；升级大版本配置时同步提升
+export const CONFIG_SCHEMA_VERSION = 2
+
 // 内置默认值（合并基准：offline、localhost、26.1.2；生产部署经 config.json 覆盖 host 等）
 const BUILTIN_DEFAULTS = {
   mcVersion: '26.1.2',
@@ -35,31 +39,26 @@ const BUILTIN_DEFAULTS = {
     autoEat: true,
     armorManager: true
   },
-  // L2 LLM 层：provider = auto（云端优先，失败回退 Ollama）| cloud | ollama。
+  // L2 LLM 层（v1.0.0 C2：单 Provider——仅云端 Anthropic 兼容 API，non-reasoning 模式；
+  // 本地 Ollama/auto 已移除，l2 键白名单强制，残留旧键启动即报错）。
   // 所有密钥只从环境变量读取（l2.cloudApiKeyEnv 指定变量名），绝不进配置文件。
   l2: {
     enabled: false,
-    provider: 'auto',
     model: 'claude-sonnet-5',
     cloudBaseUrl: 'https://api.anthropic.com/v1/messages',
     cloudApiKeyEnv: 'ANTHROPIC_API_KEY',
-    ollamaUrl: 'http://127.0.0.1:11434',
-    ollamaModel: 'qwen3.5:4b',
-    // U13（第五轮）：默认 8——动作技能就位后真实链条（find_block→move→dig×3→
-    // inventory→reply）7 步打满原 5 步上限；4B 每步生成很短，成本增量小
+    // U13（第五轮）：默认 8——动作技能就位后真实链条（observe→act×3→reply）
+    // 打满上限前留有工具步给观察/反思；v1.0.0 起 act 单步含 ≤8 动作数组
     maxSteps: 8,
     cooldownMs: 5000,
-    // 生成超时/长度可配置（低配机 Ollama 仅 10-30 tok/s，默认 60s 防长回复误超时）
+    // 生成超时/长度（non-reasoning 云端：1024 tokens 足够动作数组+回复）
     cloudTimeoutMs: 60000,
-    ollamaTimeoutMs: 60000,
     maxTokens: 1024,
-    // L2 进化（A1/A2）：Ollama 上下文窗口（native /api/chat 的 options.num_ctx——
-    // compat 端点不支持，官方 wont-fix）与预算裁剪配合：输入按 window−maxTokens−384
-    // 预算裁剪，超窗不再静默截断。8GB 机 4096 KV≈+1.5GB 贴近红线，可降 2048
-    ollamaNumCtx: 4096,
     // 第六轮 C10：云端上下文窗口——云端同样走预算守卫（window − maxTokens − reserve），
-    // 也是分层提示词（云端扩展层 ≈900 tokens）的容量基础；32k 上下文端点请调低
+    // 是动作数组/观察结果回填的容量基础；32k 上下文端点请调低
     cloudMaxContextWindow: 65536,
+    // 第七轮 C3：单次 act 动作数组上限（LLM 每轮动作预算 = maxSteps × maxActionsPerCall）
+    maxActionsPerCall: 8,
     // 环境感知自动注入（A3）：每次对话 system 尾部追加 ≤150 字符环境行
     envInjection: true
   },
@@ -91,19 +90,15 @@ const ENV_MAP = {
   MCBOT_OP_WHITELIST: ['ops'], // 逗号分隔
   MCBOT_TASKS_FILE: ['tasksFile'], // 任务 JSON 路径，合并入 tasks
   MCBOT_L2_ENABLED: ['l2', 'enabled'],
-  MCBOT_L2_PROVIDER: ['l2', 'provider'],
   MCBOT_L2_MODEL: ['l2', 'model'],
   MCBOT_L2_CLOUD_BASE_URL: ['l2', 'cloudBaseUrl'],
   MCBOT_L2_CLOUD_API_KEY_ENV: ['l2', 'cloudApiKeyEnv'],
-  MCBOT_L2_OLLAMA_URL: ['l2', 'ollamaUrl'],
-  MCBOT_L2_OLLAMA_MODEL: ['l2', 'ollamaModel'],
   MCBOT_L2_MAX_STEPS: ['l2', 'maxSteps'],
   MCBOT_L2_COOLDOWN_MS: ['l2', 'cooldownMs'],
   MCBOT_L2_MAX_TOKENS: ['l2', 'maxTokens'],
   MCBOT_L2_CLOUD_TIMEOUT_MS: ['l2', 'cloudTimeoutMs'],
-  MCBOT_L2_OLLAMA_TIMEOUT_MS: ['l2', 'ollamaTimeoutMs'],
-  MCBOT_L2_OLLAMA_NUM_CTX: ['l2', 'ollamaNumCtx'],
   MCBOT_L2_CLOUD_MAX_CONTEXT_WINDOW: ['l2', 'cloudMaxContextWindow'],
+  MCBOT_L2_MAX_ACTIONS_PER_CALL: ['l2', 'maxActionsPerCall'],
   MCBOT_L2_ENV_INJECTION: ['l2', 'envInjection'],
   MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
   MCBOT_CHAT_COMMAND_COOLDOWN_MS: ['chat', 'commandCooldownMs'],
@@ -173,7 +168,7 @@ function parseEnv (env) {
       value = raw === 'true'
     } else if (!Number.isNaN(Number(raw)) && /^-?\d+(\.\d+)?$/.test(raw) && pathArr[pathArr.length - 1].toLowerCase().includes('ms')) {
       value = Number(raw)
-    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && ['keepDays', 'port', 'maxSteps', 'maxLength', 'maxTokens', 'cloudMaxContextWindow'].includes(pathArr[pathArr.length - 1])) {
+    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && ['keepDays', 'port', 'maxSteps', 'maxLength', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall'].includes(pathArr[pathArr.length - 1])) {
       value = Number(raw)
     } else {
       value = raw
@@ -319,25 +314,34 @@ export function validateConfig (cfg) {
   }
   if (!cfg.l2 || typeof cfg.l2.enabled !== 'boolean') errors.push('l2.enabled 必须是布尔值')
   if (cfg.l2?.enabled) {
-    if (!['auto', 'cloud', 'ollama'].includes(cfg.l2.provider)) {
-      errors.push(`l2.provider 必须是 auto/cloud/ollama，当前: ${cfg.l2.provider}`)
-    }
     if (typeof cfg.l2.model !== 'string' || !cfg.l2.model) errors.push('l2.model 必须是非空字符串（启用 L2 时）')
     if (!Number.isInteger(cfg.l2.maxSteps) || cfg.l2.maxSteps < 1) errors.push('l2.maxSteps 必须为正整数')
     if (typeof cfg.l2.cooldownMs !== 'number' || cfg.l2.cooldownMs < 0) errors.push('l2.cooldownMs 必须为非负数')
-    for (const k of ['cloudTimeoutMs', 'ollamaTimeoutMs']) {
-      if (typeof cfg.l2[k] !== 'number' || cfg.l2[k] <= 0) errors.push(`l2.${k} 必须为正数（毫秒）`)
-    }
+    if (typeof cfg.l2.cloudTimeoutMs !== 'number' || cfg.l2.cloudTimeoutMs <= 0) errors.push('l2.cloudTimeoutMs 必须为正数（毫秒）')
     if (typeof cfg.l2.maxTokens !== 'number' || cfg.l2.maxTokens <= 0) errors.push('l2.maxTokens 必须为正数')
-    if (typeof cfg.l2.ollamaModel !== 'string' || !cfg.l2.ollamaModel) errors.push('l2.ollamaModel 必须是非空字符串')
-    if (!Number.isInteger(cfg.l2.ollamaNumCtx) || cfg.l2.ollamaNumCtx < 512) {
-      errors.push(`l2.ollamaNumCtx 必须是 ≥512 的整数，当前: ${cfg.l2.ollamaNumCtx}`)
-    }
     // 第六轮 C10：云端上下文窗口 ≥4096（防误配——小于预算裁剪 reserve 就没有守卫意义）
     if (!Number.isInteger(cfg.l2.cloudMaxContextWindow) || cfg.l2.cloudMaxContextWindow < 4096) {
       errors.push(`l2.cloudMaxContextWindow 必须是 ≥4096 的整数，当前: ${cfg.l2.cloudMaxContextWindow}`)
     }
+    // 第七轮 C3：单次 act 动作数组上限 ≥1（每轮动作预算 = maxSteps × maxActionsPerCall）
+    if (!Number.isInteger(cfg.l2.maxActionsPerCall) || cfg.l2.maxActionsPerCall < 1) {
+      errors.push(`l2.maxActionsPerCall 必须是 ≥1 的整数，当前: ${cfg.l2.maxActionsPerCall}`)
+    }
     if (typeof cfg.l2.envInjection !== 'boolean') errors.push('l2.envInjection 必须是布尔值')
+  }
+  // 第七轮 C2：l2 子键白名单（config 契约冻结）——v1.0.0 移除本地 provider 后，
+  // 存量配置里残留的 ollama/provider 键必须显式报错给迁移指引，不静默忽略
+  if (cfg.l2) {
+    const L2_KNOWN_KEYS = new Set([
+      'enabled', 'model', 'cloudBaseUrl', 'cloudApiKeyEnv', 'maxSteps', 'cooldownMs',
+      'cloudTimeoutMs', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'envInjection'
+    ])
+    for (const key of Object.keys(cfg.l2)) {
+      if (!L2_KNOWN_KEYS.has(key)) {
+        errors.push(`l2 未知键: ${key}（v1.0.0 已移除本地 provider——ollamaUrl/ollamaModel/` +
+          'ollamaTimeoutMs/ollamaNumCtx/provider 请删除该配置；拼写错误请对照 config.example.json）')
+      }
+    }
   }
   if (!Number.isInteger(cfg.chat?.maxLength) || cfg.chat?.maxLength < 32 || cfg.chat?.maxLength > 256) {
     errors.push(`chat.maxLength 必须是 32-256 的整数，当前: ${cfg.chat?.maxLength}`)
