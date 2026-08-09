@@ -15,7 +15,7 @@
 ## 环境准备（Windows PC，一次性）
 
 ```powershell
-winget install --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements   # Node.js 22 LTS
+winget install --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements   # Node.js LTS（当前 24；部署机实际运行 26）
 winget install --id NSSM.NSSM --accept-package-agreements --accept-source-agreements           # Windows 服务注册
 winget install --id Git.Git                                                                     # git（部署拉取用；依赖已无 git 引用，npm ci 不再需要）
 ```

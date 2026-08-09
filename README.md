@@ -1,14 +1,14 @@
 # Minecraft Bot（PaperMC 26.1.2 / Windows PC + 树莓派服务端）
 
-Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC 26.1.2 服务端（协议 775）。基于 [mineflayer](https://github.com/PrismarineJS/mineflayer)（PR #3902 分支，26.1.2 支持），整合了 mindcraft / Voyager / baritone 的分析结论（见 [docs/architecture.md](docs/architecture.md)）。
+Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC 26.1.2 服务端（协议 775）。基于 [mineflayer](https://github.com/PrismarineJS/mineflayer)（官方 npm 4.37.1 + 本地补丁承载 26.1.2 支持——见依赖 pin 说明），整合了 mindcraft / Voyager / baritone 的分析结论（见 [docs/architecture.md](docs/architecture.md)）。
 
 ## 功能
 
-- **分层架构**：L1 精简生产核心（默认）+ L2 LLM 智能体层（可选启用，双 Provider：云端 API + 本地 Ollama）
+- **分层架构**：L1 精简生产核心（默认）+ L2 LLM 智能体层（可选启用，**单 Provider：云端 Anthropic 兼容 API，non-reasoning 模式**）
 - **连接守护**：断线原因分类（LoginGuard 思想）、指数退避重连（5s→300s）、10s 防抖防崩溃循环、spawn 超时兜底；名字冲突/白名单/版本不匹配/消息违规（illegal）算致命，其余退避重连
 - **重连自愈**：每次 spawn 全量重建功能层（任务/命令/LLM 重新绑定新 bot，一次重连后一切照常）
-- **任务系统**：8 种任务——挖矿（区域+背包满暂停）、钓鱼、AFK 防踢、**种植收割、伐木、战斗巡逻、养殖、螺旋探索**（后台游荡 + 资源记录，LLM 可查）；cron 调度（run-completion 语义，防重叠+时长上限）、热重载（SIGHUP/改配置/`!reload` 同一队列）
-- **L2 环境感知与探索**：环境自动注入（每次对话附带坐标/昼夜/天气/维度/朝向）+ 环境快照技能；`explore` 单步探索技能与 `explore` 探索任务（方形螺旋覆盖 + 23 种资源采样）；**探索记忆**（DiscoveryMap 持久化——`query_map` 查已知资源坐标不重扫）；Ollama 上下文窗口与预算裁剪（超窗不再静默截断）
+- **任务系统**：8 种任务全部**脚本化**（动作原语脚本，与 LLM 共用执行层——挖矿、钓鱼、AFK 防踢、种植收割、伐木、战斗巡逻、养殖、螺旋探索）；BaseTask 状态机外壳保留（暂停/恢复/取消/调度/防重叠）；cron 调度（防重叠+时长上限）、热重载（SIGHUP/改配置/`!reload` 同一队列）
+- **L2 直接操作协议**：LLM 通过 **act 动作数组**（≤8 个动作/次）自由组合 28 个动作原语直接操控 Bot（观察/移动/挖掘/放置/采集/战斗/交互/任务）——彻底打破「提示词→固定技能」映射；行动-观察循环 + 失败反思经验跨会话注入；云端上下文预算裁剪
 - **聊天命令**：`!ping` `!status` `!task`（含 `!task new/remove` 临时任务）`!reload` `!say` `!pos` `!follow` `!find`（地表方块定位）`!agent`（chat/doctor/reset 全员可用，act 需 op），op 白名单 + 速率限制 + 256 字符自动分片（见下方指令列表）
 - **生产设施**：pino 结构化日志（按天轮转）、NSSM Windows 服务（自启+崩溃重启+fatal 停止等人工）、PowerShell 一键部署/一键更新（`scripts/deploy.ps1 -Update`）、兼容性门禁、冒烟测试、webhook 运维通知（企业微信/Server酱）、只读 HTTP 状态端点（/health /metrics，含坐标/等待原因）
 
@@ -29,9 +29,9 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 | `!pos` | op | 当前坐标与朝向（调试） |
 | `!follow <player>\|off` | op | 跟随/停止跟随玩家（需 `mineflayerPlugins.follow: true`；exclusive 任务运行中拒绝——移动互斥） |
 | `!find <方块名> [maxDistance]` | op | 找到指定方块的地表暴露位置（上方 2 格为天空，排除洞穴/液体）并走过去（3 格内）；报告实际到达坐标/距离/耗时。maxDistance 16-256（默认 64）。已知局限：高洞顶洞穴的 cave_air 也可能被判为地表（pc 版无 heightmap） |
-| `!agent chat <text>` | all | 与 L2 LLM 对话（需 `l2.enabled=true`；LLM 通过 20 个技能执行动作——查询/移动/挖掘/放置/攻击/探索，危险操作仍由技能层 op 门强制）。自然语言示例：`!agent chat 你周围有什么？`、`!agent chat 帮我挖点铁`、`!agent chat 附近有什么矿？`、`!agent chat 你能做什么？`（触发 list_skills） |
-| `!agent act <name> [json]` | op | 直调技能（不经 LLM），如 `!agent act status {}`、`!agent act move_to {"x":10,"y":64,"z":10}` |
-| `!agent doctor` | all | cloud/ollama 连通性诊断 + 生效模式/最近延迟（只读） |
+| `!agent chat <text>` | all | 与 L2 LLM 对话（需 `l2.enabled=true`；LLM 经 act 工具执行动作原语数组——危险操作仍由执行器 op 门强制）。自然语言示例：`!agent chat 你周围有什么？`、`!agent chat 帮我挖点铁`、`!agent chat 附近有什么矿？` |
+| `!agent act <op> [json]` | op | 直调动作原语（不经 LLM），如 `!agent act observe_status {}`、`!agent act goto {"x":10,"y":64,"z":10}` |
+| `!agent doctor` | all | 云端连通性诊断 + 生效模式/最近延迟（只读） |
 | `!agent reset` | all | 清空调用者会话记忆 |
 
 聊天安全层：回复消息自动 ≤256 字符分片（`chat.maxLength`）；op 命令冷却（`chat.commandCooldownMs`）防刷屏；**发送时统一剥离 `§` 颜色码**（Paper 26.1.2 实测含颜色码的消息会被踢出，见下文兼容性说明；所有出口——含命令反馈/重连广播/任务通知——都走 sendChat 剥离）。
@@ -52,7 +52,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 | `explore` | — | 方形螺旋游荡覆盖（每站采样记录 23 种资源与实体到探索记忆，LLM 经 `query_map` 查询）；`maxDistance` 半径上限（16-256）、`area` 可限定 | `stopWhenDone: true` 时环满即完成 / 无则到边界后以当前位置重启（有界漫游）；scheduled 由 durationMinutes 到时停止 |
 
 - 调度：`schedule`（cron 表达式，时区 `scheduleTimezone`）触发后运行到完成，防重叠、`durationMinutes` 时长上限、完成/失败聊天通知（`notifyChat: false` 关闭）
-- 仅 farm/chop 强制 area（mine 可选、combat/breed 可省略=无区域约束；afk/fish 无区域）；farm/chop/combat/breed 为 exclusive（互斥，避免争抢寻路/采集）
+- 仅 farm/chop 强制 area（mine 可选、combat/breed 可省略=无区域约束；afk/fish 无区域）；farm/chop/combat/breed/explore 为 exclusive（互斥，避免争抢寻路/采集）
 - 遥测：`counters`（mined/caught/planted/chopped/kills/breedings…）显示于 `!task list`
 
 ## 快速开始（开发机）
@@ -67,7 +67,7 @@ npm start                   # 连接 localhost:25565
 
 ## 部署（Windows PC）
 
-Bot 以 NSSM Windows 服务运行于 PC（同机跑 Ollama 做 L2 本地推理）；PaperMC 服务端仍在树莓派（systemd）。见 [docs/deploy.md](docs/deploy.md)。
+Bot 以 NSSM Windows 服务运行于 PC（L2 推理在云端——v1.0.0 起无本地 LLM 进程）；PaperMC 服务端仍在树莓派（systemd）。见 [docs/deploy.md](docs/deploy.md)。
 
 ```powershell
 # Windows PC，管理员 PowerShell（前置：Node 24 LTS + NSSM，见 docs/deploy.md）
@@ -93,14 +93,14 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 - [上游迁移（PR pin → 正式版）](docs/upstream-migration.md)
 - [路线图（完善/升级/重构三档与取舍）](docs/roadmap.md)
 
-## 性能要点（低配 PC + 同机 Ollama）
+## 性能要点（低配 PC）
 
-部署目标为 8GB 内存的 Windows PC，同机运行 Ollama（qwen3.5:4b）做 L2 本地推理：
+部署目标为 8GB 内存的 Windows PC（v1.0.0 起 LLM 推理在云端——本地无 LLM 进程）：
 
-- Bot 常驻 ~200-400MB RSS，已设低进程优先级（NSSM `BELOW_NORMAL_PRIORITY_CLASS`），不抢 Ollama 与其它程序的 CPU
-- 内存预算：系统 ~2G + Ollama ~2.5-5G（视量化/GPU 卸载）+ Bot ~0.4G + 余量 ~1G——重程序按需关闭
-- 依赖安装 `--omit=dev`（deploy.ps1 默认）；`maxSteps: 5` 防 LLM 工具循环；farm/chop/combat/breed 互斥不并发
-- Windows 无 cgroup 等价物：内存靠任务管理器观察；Ollama 吃紧时换小量化档
+- Bot 常驻 ~200-400MB RSS，已设低进程优先级（NSSM `BELOW_NORMAL_PRIORITY_CLASS`），不抢其它程序的 CPU
+- 内存预算：系统 ~2G + Bot ~0.4G + 余量充足——重程序按需关闭
+- 依赖安装 `--omit=dev`（deploy.ps1 默认）；`maxSteps: 8` × `maxActionsPerCall: 8` 防 LLM 工具循环；farm/chop/combat/breed/explore 互斥不并发
+- Windows 无 cgroup 等价物：内存靠任务管理器观察
 
 ## 配置
 
@@ -114,12 +114,12 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 | `username` / `auth` | `mcbot` / `offline` | 生产为 LAN 离线服；Microsoft 认证需 `auth: microsoft` |
 | `ops` | `[]` | 命令白名单（offline 模式无法查 OP；大小写不敏感） |
 | `reconnect` | base 5s, max 300s | 指数退避参数 |
-| `tasks` | `[]` | 任务定义（7 种类型，可带 schedule + durationMinutes） |
+| `tasks` | `[]` | 任务定义（8 种类型，可带 schedule + durationMinutes） |
 | `chat.maxLength` | `250` | 聊天分片上限（服务端上限 256） |
 | `chat.commandCooldownMs` | `750` | op 命令冷却（防刷屏） |
 | `scheduleTimezone` | `Asia/Shanghai` | cron 调度时区 |
 | `notify.webhook` | `''` | 运维通知（U10）：任务终态/断线重连/死亡重生/fatal 停服推送企业微信或 Server酱（URL 自动识别；空=关闭；零依赖，失败静默） |
-| `l2` | `enabled: false` | LLM 层：`provider: auto\|cloud\|ollama`，密钥只走环境变量；默认 Ollama 模型 `qwen3.5:4b` |
+| `l2` | `enabled: false` | LLM 层：单 Provider（云端 Anthropic 兼容 API，non-reasoning）；密钥只走 `l2.cloudApiKeyEnv` 指定环境变量；残留旧键（provider/ollama 系）启动即报错（契约冻结） |
 
 环境变量示例：`MCBOT_USERNAME=bot2 MCBOT_OP_WHITELIST=steve,alex npm start`
 
