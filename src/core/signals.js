@@ -1,9 +1,12 @@
-// 进程信号处理：SIGINT/SIGTERM 优雅退出（Windows 下 NSSM stop 发送 Ctrl+C 事件 → Node 映射 SIGINT，走同一路径）。
+// 进程信号处理：SIGINT/SIGTERM/SIGBREAK 优雅退出（Windows 下 NSSM stop 发送 Ctrl+C
+// 事件 → Node 映射 SIGINT；Ctrl+C 等待超时后 NSSM 发 CTRL_BREAK → Node 映射 SIGBREAK——
+// 第六轮 C5 注册 handler 后走同一优雅路径，不再默认终止）。
 // 热重载：无 SIGHUP 的平台（Windows）用配置监视 + !reload；Linux 下 SIGHUP 仍注册（systemd ExecReload）。
 
 import { withTimeout } from '../util/promise-timeout.js'
 
-// 优雅退出整体上限：必须低于 NSSM AppStopTimeout（默认 30s），否则卡死会被强杀成非干净退出
+// 优雅退出整体上限：必须低于 NSSM AppStopMethodConsole（deploy.ps1 设 20000——
+// Ctrl+C 等待窗口须覆盖本预算，超时后 NSSM 发 CTRL_BREAK 强杀；两处互引声明不变量）
 const SHUTDOWN_TIMEOUT_MS = 15000
 
 /**
@@ -38,6 +41,11 @@ export function setupSignals (deps) {
 
   process.on('SIGINT', () => gracefulShutdown('SIGINT'))
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+  // 第六轮 C5：NSSM stop 在 Ctrl+C 超时（AppStopMethodConsole 20s）后发 CTRL_BREAK——
+  // Node 将 Windows CTRL_BREAK 映射为 SIGBREAK，注册 handler 后不再默认终止进程；
+  // shuttingDown 幂等标志防重入（20s 窗口内 CTRL_BREAK 到达时为 no-op）。
+  // 非 Windows 平台该事件永不触发，零影响。
+  process.on('SIGBREAK', () => gracefulShutdown('SIGBREAK'))
 
   process.on('SIGHUP', async () => {
     // 热重载会重建 logger——日志一律走当前实例（ctx.logger），否则 SIGHUP 日志

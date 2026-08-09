@@ -45,6 +45,33 @@ test('P1-5 修复：SIGHUP 日志走 ctx.logger（热重载后新实例，而非
   assert.deepEqual(calls, ['ctx-logger'], 'SIGHUP 日志应写当前 logger 实例（修复前写旧 transport）')
 })
 
+test('C5 修复：SIGBREAK 触发优雅退出（Windows Ctrl+Break → 同一优雅路径）', async () => {
+  const order = []
+  const ctx = {
+    logger: makeLogger(),
+    tasks: { stopAll: async () => { order.push('tasks') } },
+    agent: null
+  }
+  const exits = []
+  const origExit = process.exit
+  process.exit = (code) => { exits.push(code) }
+  try {
+    // 前面的测试各自 setupSignals 也注册了 SIGBREAK handler（process 全局共享）——
+    // emit 会触发全部 → 多个 gracefulShutdown 并发 → exit 多次。只保留本次注册的
+    // handler（测试文件串行执行，前面的测试已结束，摘除无副作用）
+    process.removeAllListeners('SIGBREAK')
+    setupSignals({ logger: makeLogger(), conn: {}, ctx, onReload: async () => {} })
+    process.emit('SIGBREAK') // 任意平台可 emit（不依赖真实信号）
+    // 等待异步关闭链完成（withTimeout 走 timer 相位，setImmediate settle 覆盖不了）
+    const deadline = Date.now() + 2000
+    while (exits.length === 0 && Date.now() < deadline) await new Promise(r => setTimeout(r, 5))
+  } finally {
+    process.exit = origExit
+  }
+  assert.deepEqual(order, ['tasks'], 'SIGBREAK 应触发优雅关闭（修复前无 handler 默认终止）')
+  assert.deepEqual(exits, [0], '应正常 exit(0)')
+})
+
 test('gracefulShutdown: 完整顺序 tasks → agent → conn → flush → exit(0)', async () => {
   const order = []
   const flushed = []

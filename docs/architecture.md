@@ -52,6 +52,7 @@ minecraft-bot (Node.js ≥22, ESM)
 - 退避：base 5s，×2，max 300s，±20% jitter；`minGapMs: 10s` 进程内防抖；spawn 即重置重连计数（attempt=0）
 - **重连自愈（B1）**：每次 spawn 由 feature-layer 全量重建功能层（tasks/commands/L2 重新绑定新 bot，chat 监听重挂）——重连后命令与任务照常
 - 热重载：配置文件变化（fs.watch 防抖 500ms，rename 重挂）/ `!reload`（Linux 另支持 SIGHUP）走同一串行队列 → 校验 → updateCfg → 日志配置变化重建 logger → 任务 diff 重载
+- **退出不变量（第六轮 C5）**：`NSSM stop 总窗口（AppStopMethodConsole 20s）> signals SHUTDOWN_TIMEOUT_MS（15s）`——Ctrl+C 超时后 NSSM 发 CTRL_BREAK，Node 注册 SIGBREAK handler 走同一优雅路径；两处互引声明，改动需同步
 
 ## 任务运行语义
 
