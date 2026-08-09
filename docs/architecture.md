@@ -73,5 +73,5 @@ minecraft-bot (Node.js ≥22, ESM)
 ## 已知风险
 
 - mineflayer PR #3902 / minecraft-protocol PR #1487 尚未合并（上游链进度：chunk 已合、physics 已发布、protocol/mineflayer 待合）。SHA pin 不可变；上游合并后 `npm run migrate-upstream -- --check` 检测
-- `npm audit` 的 axios 漏洞全部位于 Microsoft 认证链（prismarine-auth → @xboxreplay/xboxlive-auth），offline 模式不执行该路径
+- `npm audit` 的 axios 漏洞全部位于 Microsoft 认证链（prismarine-auth → @xboxreplay/xboxlive-auth），offline 模式不执行该路径。**已接受风险**（第六轮 C1 评估：overrides 覆盖 axios 版本有破坏 prismarine-auth 兼容性的风险，offline 部署不触达该链；CI 审计步骤信息性标记，不门禁）
 - pino v9 transport 无法主动拆除：反复改日志配置会累积文件句柄（接受，文档化）
