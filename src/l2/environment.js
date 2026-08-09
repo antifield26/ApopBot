@@ -1,4 +1,4 @@
-// 环境快照构建器（L2 进化 A3）：environment/nearby_entities 技能与自动注入共用。
+// 环境快照构建器（L2 进化 A3）：environment 技能与自动注入共用。
 // 数据源 26.1 已核实：
 //   - bot.time（timeOfDay/isDay/age/moonPhase，服务端 time 包驱动）
 //   - bot.isRaining + bot.thunderState（**无 bot.weather 字段**，game_state_change 包）
@@ -6,23 +6,11 @@
 //   - bot.blockAt(脚).biome.name（prismarine-chunk 1.41.0 已支持；blockAt 未加载返回
 //     null → unknown；biome id 未知 → biome_id 兜底，不虚构）
 //   - yaw → 8 向罗盘（原版约定 yaw=0 南，顺时针增大）
-//   - bot.players（玩家 entity 可能 null，守卫）；Object.values(bot.entities) 过滤自身
-//     （name/type/position；**绝不读实体 health**——26.1 实体元数据不解析，恒 undefined；
-//     player 的 kind/category 是 UNKNOWN 不可用，玩家走 bot.players）
 // 安全：全字段 null 安全——缺失/异常逐项跳过，任何调用不抛（测试 makeCtx 缺字段不崩）。
+// 第六轮 C2：nearbyEntities/资源白名单已归位 src/core/{entities,resources}.js
+//（core/explore.js 的 scanEntities 依赖它们——放本模块造成 core→l2 上向引用）。
 
-/** 资源白名单（explore 技能/任务采样用；26.1.2 已核实存在，注意 sugar_cane 非 sugarcane）。 */
-export const RESOURCE_WHITELIST = [
-  'iron_ore', 'deepslate_iron_ore', 'coal_ore', 'deepslate_coal_ore',
-  'copper_ore', 'deepslate_copper_ore', 'gold_ore', 'deepslate_gold_ore',
-  'diamond_ore', 'deepslate_diamond_ore', 'emerald_ore', 'deepslate_emerald_ore',
-  'redstone_ore', 'deepslate_redstone_ore', 'lapis_ore', 'deepslate_lapis_ore',
-  'nether_gold_ore', 'nether_quartz_ore', 'ancient_debris',
-  'bamboo', 'sugar_cane', 'cactus', 'sweet_berry_bush'
-]
-
-/** 重要资源（webhook 推送用）：钻石/绿宝石/远古残骸。 */
-export const VALUABLE_RESOURCES = ['diamond_ore', 'deepslate_diamond_ore', 'emerald_ore', 'deepslate_emerald_ore', 'ancient_debris']
+import { distance, fmtPos, nearbyEntities } from '../core/entities.js'
 
 /** yaw → 8 向罗盘（原版：yaw=0 朝南 +Z，顺时针增大）。 */
 export function directionFromYaw (yaw) {
@@ -30,16 +18,6 @@ export function directionFromYaw (yaw) {
   const deg = (((yaw * 180) / Math.PI) % 360 + 360) % 360
   const names = ['南', '西南', '西', '西北', '北', '东北', '东', '东南']
   return names[Math.round(deg / 45) % 8]
-}
-
-function fmtPos (p) {
-  return p ? `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}` : '?'
-}
-
-function distance (a, b) {
-  if (!a || !b || !a.position || !b.position) return null
-  return Math.round(Math.hypot(
-    b.position.x - a.position.x, b.position.y - a.position.y, b.position.z - a.position.z))
 }
 
 /** 时间 hh:mm（timeOfDay 0-24000 ticks）。 */
@@ -62,51 +40,6 @@ export function nearbyPlayers (bot, limit = 5) {
         dist: distance(me, p.entity)
       }))
       .filter(x => x.entity && x.dist !== null)
-      .sort((a, b) => a.dist - b.dist)
-      .slice(0, limit)
-  } catch {
-    return []
-  }
-}
-
-/**
- * 附近实体列表（过滤 bot 自身；按距离升序）。
- * 过滤语义（第五轮 P1 修复）：name 与 kind/type 是 **OR**——filter 字符串可以是
- * 实体名子串（zombie）或 26.1 的 type（hostile/passive/animal/projectile/player/mob）。
- * 此前 AND 语义 + e.kind 大写分类（'Hostile mobs'）导致过滤恒失效（P1-1 实测）。
- * 玩家由 nearbyPlayers 覆盖（entity.kind 对 player 不可靠）；绝不读实体 health。
- * @param {{ name?: string, kind?: string, maxDistance?: number }} opts
- */
-export function nearbyEntities (bot, { name, kind, maxDistance = 64, limit = 10 } = {}) {
-  try {
-    const me = bot?.entity
-    const nameFilter = name?.toLowerCase()
-    const typeFilter = kind?.toLowerCase()
-    // bot.entities 是 Map（combat.js 用 .values 判定）——Object.values(Map) 恒空，
-    // 必须双形态遍历（第五轮 P1 实测：此前整个 nearby_entities 技能恒空）
-    const entities = bot?.entities
-    const all = entities instanceof Map ? [...entities.values()] : Object.values(entities ?? {})
-    const list = []
-    for (const e of all) {
-      if (!e || e === me || !e.position) continue
-      if (maxDistance && me?.position && distance(me, e) > maxDistance) continue
-      const nameHit = nameFilter && String(e.name ?? '').toLowerCase().includes(nameFilter)
-      const typeHit = typeFilter && (e.type === typeFilter || (typeFilter === 'player' && e.type === 'player'))
-      if (nameFilter || typeFilter) {
-        if (!nameHit && !typeHit) continue // OR：任一命中即通过
-      }
-      list.push(e)
-    }
-    return list
-      .map(e => ({
-        name: e.name ?? 'unknown',
-        // 输出 type 而非 kind：kind 是数据表 category（大写分类，26.1 实测 'Hostile mobs'），
-        // 对 LLM 决策无意义且与 filter 语义不一致
-        kind: e.type ?? '?',
-        type: e.type ?? '?',
-        dist: distance(me, e),
-        pos: fmtPos(e.position)
-      }))
       .sort((a, b) => a.dist - b.dist)
       .slice(0, limit)
   } catch {

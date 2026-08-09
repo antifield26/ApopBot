@@ -6,7 +6,9 @@
 // movement.js:228 的 16-256 通道，那是给用户输入限幅的；此处是内部常量）。
 
 import * as discovery from './discovery.js'
-import { RESOURCE_WHITELIST, VALUABLE_RESOURCES, nearbyEntities } from '../l2/environment.js'
+// 第六轮 C2：资源白名单/实体遍历归位 core（此前从 l2/environment.js 导入 = core→l2 上向引用）
+import { RESOURCE_WHITELIST, VALUABLE_RESOURCES } from './resources.js'
+import { nearbyEntities } from './entities.js'
 import { createNotifier } from './notify.js'
 
 export const SAMPLE_RADIUS = 64 // 采样半径（主控旋钮）

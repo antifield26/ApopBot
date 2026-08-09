@@ -5,7 +5,9 @@
 import { isOp } from '../commands/permissions.js'
 import { validateTaskOptions } from '../core/task-schemas.js'
 import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
-import { environmentSnapshot, nearbyEntities } from './environment.js'
+import { environmentSnapshot } from './environment.js'
+// 第六轮 C2：nearbyEntities 归位 core（skills 是组合层，可从 core 直接取）
+import { nearbyEntities } from '../core/entities.js'
 import * as discovery from '../core/discovery.js'
 import { exploreStep, notifyValuableFound } from '../core/explore.js'
 import { withTimeout } from '../util/promise-timeout.js'
