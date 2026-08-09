@@ -6,7 +6,6 @@
 import { readFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -23,9 +22,6 @@ const EXPECTED = {
   'prismarine-chunk': { kind: 'npm', version: '1.41.0' },
   'prismarine-physics': { kind: 'npm', version: '1.11.1' }
 }
-
-// 当前项目版本（与 package.json 同步维护——版本单一来源）
-const EXPECTED_VERSION = '0.2.0'
 
 // 目标协议版本（与 mcVersion 对应；上游更新时在 docs/upstream-migration.md 说明）
 const PROTOCOL_BY_VERSION = { '26.1.2': 775, '26.1.1': 775, '26.1': 775, '1.21.11': 774 }
@@ -159,12 +155,17 @@ async function main () {
       '需 prismarine-physics ≥ 1.11.0（官方已发布 26.1 特性标记，npm install 即可）')
   }
 
-  // 3.6 项目版本一致性（版本单一来源）
+  // 3.6 项目版本一致性（第六轮 C4：版本单一来源 = package.json，lockfile 交叉校验——
+  // 此前 check-compat 持有 EXPECTED_VERSION 双处维护。package-lock.json 根 version 与
+  // packages[""].version 两处漏改会被这里拦截，指引用 release.mjs）
   const pkgPath = path.join(ROOT, 'package.json')
   const pkgVersion = JSON.parse(readFileSync(pkgPath, 'utf8')).version
-  check('项目版本一致', pkgVersion === EXPECTED_VERSION,
-    `package.json=${pkgVersion}, check-compat=${EXPECTED_VERSION}`,
-    '版本号以 check-compat.mjs 的 EXPECTED_VERSION 为准同步 package.json')
+  const lockRoot = JSON.parse(readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'))
+  const lockVersion = lockRoot.version
+  const lockPkgVersion = lockRoot.packages?.['']?.version ?? null
+  check('项目版本一致（package.json ↔ lockfile）', pkgVersion === lockVersion && pkgVersion === lockPkgVersion,
+    `package.json=${pkgVersion}, lock=${lockVersion}, lock.packages[""]=${lockPkgVersion ?? '(缺失)'}`,
+    '运行 node scripts/release.mjs patch|minor|major 同步版本（版本单一来源 = package.json）')
 
   // 4. --probe: ping 真实服务器
   if (args.probe) {

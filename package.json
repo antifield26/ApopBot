@@ -13,7 +13,8 @@
     "test": "node --test \"tests/*.test.mjs\"",
     "check:compat": "node scripts/check-compat.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "migrate-upstream": "node scripts/migrate-upstream.mjs"
+    "migrate-upstream": "node scripts/migrate-upstream.mjs",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "mineflayer": "github:PrismarineJS/mineflayer#b30c85cb24d9fc7a009f61fe71a4fead516f8802",
