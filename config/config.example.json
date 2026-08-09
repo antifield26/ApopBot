@@ -159,10 +159,11 @@
     "maxSteps": 8,
     "cooldownMs": 5000,
     "ollamaNumCtx": 4096,
+    "cloudMaxContextWindow": 65536,
     "envInjection": true,
     "cloudTimeoutMs": 60000,
     "ollamaTimeoutMs": 60000,
     "maxTokens": 1024,
-    "_comment": "API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（如 ANTHROPIC_API_KEY），绝不写进配置文件"
+    "_comment": "API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（如 ANTHROPIC_API_KEY），绝不写进配置文件；cloudMaxContextWindow 是云端预算守卫（32k 上下文端点调低到 32768）"
   }
 }

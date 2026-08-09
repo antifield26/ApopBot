@@ -1,6 +1,8 @@
 // LLM Provider 抽象（双 Provider：云端 Anthropic 兼容 API + 本地 Ollama）。
 // 接口：chat(messages, { tools, system, signal }) →
 //   Promise<{ text: string|null, toolCalls: Array<{id, name, arguments}> }>
+//   kind(): 'cloud'|'ollama'（第六轮 C10：agent-interface 分层提示词按它分支）
+//   contextWindow(): 上下文窗口（agent-interface 预算裁剪用；云端返回 cloudMaxContextWindow）
 //
 // 归一化：内部 messages 为 { role: 'user'|'assistant', content, toolCalls?, toolResults? }；
 // CloudProvider 转 Anthropic Messages API 的 tool_use/tool_result block 结构，
@@ -13,6 +15,17 @@
 // 低配机 Ollama 约 10-30 tok/s，20s 超时会误杀长回复）
 const DEFAULT_TIMEOUT_MS = 60000
 const DEFAULT_MAX_TOKENS = 1024
+// 第六轮 C10：云端上下文窗口默认 64k（无 cloudMaxContextWindow 配置时——预算守卫与
+// 提示词扩容的容量基础；32k 上下文端点请在配置调低）
+const DEFAULT_CLOUD_CONTEXT_WINDOW = 65536
+
+// 云端扩展层剥除（第六轮 C10）：auto 粘滞回退发生在 chat 内部——system 已由
+// agent-interface 构造（含扩展层），回退步必须剥除，否则 Ollama 收到 64k 才
+// 该用的扩展层（4B 上下文装不下）。按分隔标记切分返回前半段（核心层）。
+import { CLOUD_EXTENSION_MARKER } from './agent-interface.js'
+export function stripCloudExtension (system) {
+  return system.split(CLOUD_EXTENSION_MARKER)[0]
+}
 // Ollama 网络类错误单次重试退避（U5）：低配机 CPU 抢占导致偶发连接重置是真实场景；
 // 一次重试成本远低于整次对话失败。4xx（配置错）与 AbortError 不重试。
 const RETRY_BACKOFF_MS = 2000
@@ -44,9 +57,14 @@ export function createProvider (cfg, logger) {
   return {
     mode: 'auto',
     _latched: false,
-    /** A2：auto 模式按 ollama 窗口保守裁剪（云大窗口也 fit；兜底 ollama 时输入必 fit）。 */
+    // 第六轮 C10：当前生效侧（分层提示词与预算窗口都按它动态分支——粘滞前 cloud/
+    // 粘滞后 ollama；agent-interface 每轮调用）
+    kind () {
+      return this._latched ? 'ollama' : 'cloud'
+    },
+    /** A2：预算窗口动态化——粘滞前按云端（64k，扩容提示词不触发裁剪），粘滞后按 ollama（兜底必 fit）。 */
     contextWindow () {
-      return ollama.contextWindow()
+      return this._latched ? ollama.contextWindow() : cloud.contextWindow()
     },
     /**
      * 本轮对话内粘滞回退（C7/V）：cloud 失败一次后其余步骤直走 ollama——
@@ -62,13 +80,17 @@ export function createProvider (cfg, logger) {
       return { mode: 'auto', providers: [c, o] }
     },
     async chat (messages, opts = {}) {
-      if (this._latched) return ollama.chat(messages, opts)
+      // C10：粘滞分支同样剥除扩展层（agent-interface 按 kind() 动态分支是主防线，
+      // 此处纵深兜底——任何路径漏切时 ollama 也不收扩展层）
+      if (this._latched) return ollama.chat(messages, { ...opts, system: stripCloudExtension(opts.system ?? '') })
       try {
         return await cloud.chat(messages, opts)
       } catch (err) {
         this._latched = true
         log.warn({ err: err.message }, 'cloud provider 失败，本轮对话余下步骤回退 ollama')
-        return ollama.chat(messages, opts)
+        // C10：回退步剥除云端扩展层——system 已由 agent-interface 按 cloud 构造，
+        // 不剥除则 Ollama 收到 64k 窗口才该用的扩展层（4B 上下文装不下）
+        return ollama.chat(messages, { ...opts, system: stripCloudExtension(opts.system ?? '') })
       }
     }
   }
@@ -106,6 +128,14 @@ class CloudProvider {
     this.model = l2.model ?? 'claude-sonnet-5'
     this.timeoutMs = l2.cloudTimeoutMs ?? DEFAULT_TIMEOUT_MS
     this.maxTokens = l2.maxTokens ?? DEFAULT_MAX_TOKENS
+    // 第六轮 C10：云端上下文窗口（预算守卫用）——l2.cloudMaxContextWindow 可配
+    this.kind = 'cloud'
+    this.contextWindowValue = l2.cloudMaxContextWindow ?? DEFAULT_CLOUD_CONTEXT_WINDOW
+  }
+
+  /** 第六轮 C10：云端上下文窗口（agent-interface 预算裁剪用——云端同样走预算守卫）。 */
+  contextWindow () {
+    return this.contextWindowValue
   }
 
   /** U9：连通性探测（缺 key 不发请求，明确报未配置）。 */
@@ -188,6 +218,8 @@ class OllamaProvider {
     // 上下文窗口（A2 预算裁剪用）：qwen3.5:4b 默认窗 2048 太小（10 条历史已逼近），
     // 默认 4096（8GB 机 KV≈+1.5GB 贴近红线但预算裁剪兜底；可降 2048）
     this.numCtx = l2.ollamaNumCtx ?? 4096
+    // 第六轮 C10：provider 类型标记（分层提示词分支）
+    this.kind = 'ollama'
   }
 
   /** A2：上下文窗口（agent-interface 预算裁剪用）。 */

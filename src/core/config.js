@@ -57,6 +57,9 @@ const BUILTIN_DEFAULTS = {
     // compat 端点不支持，官方 wont-fix）与预算裁剪配合：输入按 window−maxTokens−384
     // 预算裁剪，超窗不再静默截断。8GB 机 4096 KV≈+1.5GB 贴近红线，可降 2048
     ollamaNumCtx: 4096,
+    // 第六轮 C10：云端上下文窗口——云端同样走预算守卫（window − maxTokens − reserve），
+    // 也是分层提示词（云端扩展层 ≈900 tokens）的容量基础；32k 上下文端点请调低
+    cloudMaxContextWindow: 65536,
     // 环境感知自动注入（A3）：每次对话 system 尾部追加 ≤150 字符环境行
     envInjection: true
   },
@@ -100,6 +103,7 @@ const ENV_MAP = {
   MCBOT_L2_CLOUD_TIMEOUT_MS: ['l2', 'cloudTimeoutMs'],
   MCBOT_L2_OLLAMA_TIMEOUT_MS: ['l2', 'ollamaTimeoutMs'],
   MCBOT_L2_OLLAMA_NUM_CTX: ['l2', 'ollamaNumCtx'],
+  MCBOT_L2_CLOUD_MAX_CONTEXT_WINDOW: ['l2', 'cloudMaxContextWindow'],
   MCBOT_L2_ENV_INJECTION: ['l2', 'envInjection'],
   MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
   MCBOT_CHAT_COMMAND_COOLDOWN_MS: ['chat', 'commandCooldownMs'],
@@ -169,7 +173,7 @@ function parseEnv (env) {
       value = raw === 'true'
     } else if (!Number.isNaN(Number(raw)) && /^-?\d+(\.\d+)?$/.test(raw) && pathArr[pathArr.length - 1].toLowerCase().includes('ms')) {
       value = Number(raw)
-    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && ['keepDays', 'port', 'maxSteps', 'maxLength', 'maxTokens'].includes(pathArr[pathArr.length - 1])) {
+    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && ['keepDays', 'port', 'maxSteps', 'maxLength', 'maxTokens', 'cloudMaxContextWindow'].includes(pathArr[pathArr.length - 1])) {
       value = Number(raw)
     } else {
       value = raw
@@ -328,6 +332,10 @@ export function validateConfig (cfg) {
     if (typeof cfg.l2.ollamaModel !== 'string' || !cfg.l2.ollamaModel) errors.push('l2.ollamaModel 必须是非空字符串')
     if (!Number.isInteger(cfg.l2.ollamaNumCtx) || cfg.l2.ollamaNumCtx < 512) {
       errors.push(`l2.ollamaNumCtx 必须是 ≥512 的整数，当前: ${cfg.l2.ollamaNumCtx}`)
+    }
+    // 第六轮 C10：云端上下文窗口 ≥4096（防误配——小于预算裁剪 reserve 就没有守卫意义）
+    if (!Number.isInteger(cfg.l2.cloudMaxContextWindow) || cfg.l2.cloudMaxContextWindow < 4096) {
+      errors.push(`l2.cloudMaxContextWindow 必须是 ≥4096 的整数，当前: ${cfg.l2.cloudMaxContextWindow}`)
     }
     if (typeof cfg.l2.envInjection !== 'boolean') errors.push('l2.envInjection 必须是布尔值')
   }

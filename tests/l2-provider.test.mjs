@@ -3,6 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createProvider } from '../src/l2/provider.js'
+import { CLOUD_EXTENSION_MARKER } from '../src/l2/agent-interface.js'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }
@@ -354,4 +355,73 @@ test('U5: agent 计量累计——chat 工具循环多轮 usage 累加（AgentIn
   assert.equal(agent.usage.inputTokens, 18, '两轮 usage 应累加')
   assert.equal(agent.usage.outputTokens, 6)
   assert.equal(agent.usage.latencyMs, 200, 'latency 取最后一次')
+})
+
+// ---- 第六轮 C10：云端窗口 + 分层提示词回退剥除 ----
+
+test('C10: CloudProvider contextWindow 返回 cloudMaxContextWindow（缺省 65536）+ kind 标记', () => {
+  const p1 = createProvider({ l2: { ...l2Base, provider: 'cloud' } }, makeLogger())
+  assert.equal(p1.contextWindow(), 65536, '缺省云端窗口 65536')
+  assert.equal(p1.kind, 'cloud')
+  const p2 = createProvider({ l2: { ...l2Base, provider: 'cloud', cloudMaxContextWindow: 32768 } }, makeLogger())
+  assert.equal(p2.contextWindow(), 32768, '配置 32768 生效')
+  const p3 = createProvider({ l2: { ...l2Base, provider: 'ollama' } }, makeLogger())
+  assert.equal(p3.kind, 'ollama')
+})
+
+test('C10: auto 回退剥除云端扩展层——ollama 收到的 system 不含扩展层标记', async () => {
+  const calls = mockFetch((url) => url.includes('anthropic')
+    ? { ok: false, status: 500, text: async () => 'cloud down' }
+    : { ok: true, status: 200, json: async () => ({ message: { role: 'assistant', content: 'ok' } }) })
+  const l2 = {
+    ...l2Base, provider: 'auto',
+    cloudBaseUrl: 'https://api.anthropic.com/v1/messages',
+    cloudApiKeyEnv: 'ANTHROPIC_API_KEY',
+    ollamaUrl: 'http://127.0.0.1:11434'
+  }
+  process.env.ANTHROPIC_API_KEY = 'sk-test'
+  try {
+    const p = createProvider({ l2 }, makeLogger())
+    const fullSystem = `核心规则……${CLOUD_EXTENSION_MARKER}扩展内容`
+    await p.chat([{ role: 'user', content: 'x' }], { system: fullSystem })
+    assert.equal(calls.length, 2, 'cloud 失败回退 ollama')
+    const ollamaCall = calls.find(c => c.url.includes('11434'))
+    const ollamaSystem = ollamaCall.body.messages.find(m => m.role === 'system')?.content ?? ''
+    assert.ok(ollamaSystem, 'ollama 应收到 system')
+    assert.ok(!ollamaSystem.includes('高级能力（云端扩展）'), 'ollama 不得收到扩展层')
+    assert.ok(ollamaSystem.includes('核心规则'), '核心层保留')
+    // 粘滞后第二次 chat 同样剥除（agent-interface 按 kind() 分支是主防线，此处测纵深兜底）
+    await p.chat([{ role: 'user', content: 'y' }], { system: `核心A${CLOUD_EXTENSION_MARKER}扩展B` })
+    const ollama2 = calls.filter(c => c.url.includes('11434')).at(-1)
+    const sys2 = ollama2.body.messages.find(m => m.role === 'system')?.content ?? ''
+    assert.ok(!sys2.includes('高级能力（云端扩展）'))
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY
+    restoreFetch()
+  }
+})
+
+test('C10: auto contextWindow 动态——粘滞前按云端窗口，粘滞后按 ollama 窗口', async () => {
+  const calls = mockFetch((url) => url.includes('anthropic')
+    ? { ok: false, status: 500, text: async () => 'cloud down' }
+    : { ok: true, status: 200, json: async () => ({ message: { role: 'assistant', content: 'ok' } }) })
+  const l2 = {
+    ...l2Base, provider: 'auto',
+    cloudBaseUrl: 'https://api.anthropic.com/v1/messages',
+    cloudApiKeyEnv: 'ANTHROPIC_API_KEY',
+    ollamaUrl: 'http://127.0.0.1:11434',
+    cloudMaxContextWindow: 32768
+  }
+  process.env.ANTHROPIC_API_KEY = 'sk-test'
+  try {
+    const p = createProvider({ l2 }, makeLogger())
+    assert.equal(p.contextWindow(), 32768, '粘滞前按云端窗口')
+    assert.equal(p.kind(), 'cloud')
+    await p.chat([{ role: 'user', content: 'x' }]) // 触发回退粘滞
+    assert.equal(p.contextWindow(), 4096, '粘滞后按 ollama 窗口')
+    assert.equal(p.kind(), 'ollama')
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY
+    restoreFetch()
+  }
 })

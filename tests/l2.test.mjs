@@ -969,3 +969,45 @@ test('C5/G 修复：find_block maxDistance 越界（16-256 外）→ 参数校�
   assert.equal(r2.ok, false)
   assert.ok(r2.result.includes('不能小于'), r2.result)
 })
+
+// ---- 第六轮 C10：分层提示词（cloud 带扩展层 / ollama 只发核心层）----
+
+test('C10: kind=cloud（含缺省）→ system 含云端扩展层标记', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [{ text: 'ok' }]) // fake provider 无 kind → 缺省 cloud
+  await agent.chat('steve', '你好')
+  assert.ok(provider.calls[0].system.includes('高级能力（云端扩展）'), 'cloud 应下发扩展层')
+  assert.ok(provider.calls[0].system.includes('steve 是普通玩家'), '核心层结构不变（steve 非 op）')
+  assert.ok(provider.calls[0].system.includes('环境:'), '环境行仍在扩展层之后')
+})
+
+test('C10: kind=ollama → system 不含扩展层（只发核心层）', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [{ text: 'ok' }])
+  provider.kind = 'ollama'
+  await agent.chat('steve', '你好')
+  assert.ok(!provider.calls[0].system.includes('高级能力（云端扩展）'), 'ollama 不应收到扩展层')
+  assert.ok(provider.calls[0].system.includes('steve 是普通玩家'), '核心层仍在（steve 非 op）')
+})
+
+test('C10: kind 是函数（auto 形态）→ 按返回值动态分支', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [{ text: 'ok' }, { text: 'ok' }])
+  // auto 粘滞前 cloud → 扩展层；粘滞后 ollama → 精简
+  provider.kind = () => 'cloud'
+  await agent.chat('steve', '第一轮')
+  assert.ok(provider.calls[0].system.includes('高级能力（云端扩展）'), '粘滞前应带扩展层')
+  provider.kind = () => 'ollama'
+  await agent.chat('steve', '第二轮')
+  assert.ok(!provider.calls.at(-1).system.includes('高级能力（云端扩展）'), '粘滞后应精简')
+})
+
+test('C10: 云端扩展层预算守卫——contextWindow 512 + kind cloud → 消息被裁不抛错', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [{ text: 'ok' }])
+  provider.kind = 'cloud'
+  provider.contextWindow = () => 512 // 极紧窗口 → 固定 prompt（含扩展层）必超预算
+  await agent.chat('steve', 'x'.repeat(2000))
+  assert.ok(provider.calls[0].system.includes('高级能力（云端扩展）'), 'system 本身不受裁剪（fixed 超预算仅 warn）')
+  // 不抛错即通过——云端窗口生效后裁剪路径对 cloud 同样兜底
+})

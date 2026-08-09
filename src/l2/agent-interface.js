@@ -146,7 +146,9 @@ function putBounded (map, key, value) {
   if (map.size > MAX_SESSIONS) map.delete(map.keys().next().value)
 }
 
-const SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（minecraft-bot）。
+// 核心层（第六轮 C10 分层）：所有 provider 共用——低配 4B 模型也 hold 得住的紧凑规则。
+// 云端扩展层（CLOUD_EXTENSION）只随 cloud/auto 的 cloud 侧下发，Ollama 精简。
+const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（minecraft-bot）。
 规则：
 1. 回答保持简短（≤250 字符），用 reply 技能说话。
 2. 涉及移动/创建任务/控制行为的操作必须用对应技能完成，不要编造能力。
@@ -157,15 +159,40 @@ const SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（mi
 7. 不要角色扮演，不要输出 Markdown，不要虚构玩家或世界状态。环境感知以系统消息里的"环境:"行与 environment/nearby_entities 技能结果为准——没感知到的信息（如天气/生物群系/附近实体）如实说不知道，探索过的区域可查 query_map。`
 
 /**
+ * 云端扩展层分隔标记（provider.js 的回退剥除按它切分——Ollama 回退步绝不收到
+ * 扩展层；导出供 stripCloudExtension 与测试使用）。
+ */
+export const CLOUD_EXTENSION_MARKER = '\n\n===== 高级能力（云端扩展） =====\n'
+
+// 云端扩展层：纯增量指导（不重复、不矛盾核心 7 条规则），约 1.8k 字符 ≈ 900 tokens，
+// 64k 云端窗口占比可忽略；内容为多步意图示例/技能选择策略/任务规划与异常恢复。
+// auto 回退到 Ollama 时由 provider 包装器剥除（ollama 从不见此节——4B 上下文装不下）。
+const CLOUD_EXTENSION = `${CLOUD_EXTENSION_MARKER}本节为高级能力指引，仅在云端模型启用；本地模型可忽略此节内容。
+
+A. 多步意图示例（"玩家说→技能链"）：
+- "帮我建个树屋"→ 先 inventory_summary 确认木材 → equip 木材 → move_to 目标 → place×N 逐层搭建 → reply 汇报进度。搭完一层再查一次位置，不要一次放空。
+- "挖点铁做个镐"→ find_block(iron_ore) 或 query_map 查记忆 → move_to 靠近 → dig×N → 装备/制作由玩家完成 → 汇报获得数量。
+- "去收集 20 个木头"→ run_task(chop, area) 批量采集优先于逐块 dig（任务自动往返与避障）→ 完成后 inventory_summary 核对数量。
+- "附近有危险吗"→ nearby_entities 先扫一圈 → 有 hostile 再 environment 确认方位 → attack 或如实汇报"有 X 只怪物在 Y 米外"。
+- "帮我探索周边"→ explore 单步推进，每步后用 query_map 复查已记录资源；重复调用逐步扩大范围。
+B. 技能选择策略：批量/持续型需求（采集、巡逻、养殖）→ run_task；单次交互（挖一块、放一块、打一只）→ 对应单技能。先查记忆（query_map）再探索（explore），避免重复扫描。行动前先 environment/nearby_entities 感知当前环境，不要凭猜测行动。
+C. 多步任务与异常恢复：把大请求分解为可验证的技能链，每步工具结果都要读取；工具返回失败信息时先读懂原因再决定重试/换法/求助（如 dig 提示距离远 → 先 move_to；exclusive 冲突 → 先 task_status 看谁在运行）。同一失败操作不要盲目重试两次以上。
+D. 安全边界（重申）：exclusive 任务运行期间移动/挖掘/放置/攻击/探索会被拒绝——这是任务保护机制，不是故障；不要编造世界状态或玩家行为，不确定就 query_map/environment 或如实说不知道。`
+
+/**
  * 每次对话注入调用者身份：LLM 必须知道"谁在说话、是否有 op 权限"，
  * 否则面对危险操作请求只会回复"需要验证 op 身份"（实测反馈——身份此前未进上下文）。
+ * 第六轮 C10：withExtension=true（cloud/auto 的 cloud 侧）时拼接云端扩展层——
+ * 每轮 system 重新生成，auto 粘滞回退后自然切回精简（provider.kind() 动态判定）。
  * @param {string} user 消息来源玩家
+ * @param {object} cfg
+ * @param {boolean} [withExtension] 是否下发云端扩展层
  */
-function buildSystem (user, cfg) {
+function buildSystem (user, cfg, withExtension = false) {
   const auth = isOp(user, cfg)
     ? `${user} 是 op 白名单成员——危险操作可直接执行，无需再要求验证`
     : `${user} 是普通玩家——危险操作（move_to/run_task/stop_task/follow_player）必须拒绝并说明权限不足`
-  return `${SYSTEM_PROMPT}\n\n当前会话：${auth}`
+  return `${CORE_SYSTEM_PROMPT}\n\n当前会话：${auth}` + (withExtension ? CLOUD_EXTENSION : '')
 }
 
 export class AgentInterface {
@@ -238,7 +265,12 @@ export class AgentInterface {
         if (toolCalls.length) {
           toolLog = `\n最近工具操作: ${toolCalls.slice(-3).map(c => `${c.name}${c.result ? `→${c.result}` : ''}`).join('；')}`
         }
-        const system = buildSystem(user, this.ctx.cfg) + (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`) + toolLog
+        // 第六轮 C10：provider 感知的分层提示词——cloud/auto 的 cloud 侧带扩展层，
+        // ollama 只发核心层。每轮重新生成（bot 移动后环境行新鲜 + auto 粘滞回退后
+        // kind() 切换自然生效）；fake provider 无 kind 按 cloud 处理（扩展层下发）
+        const kind = typeof this.provider.kind === 'function' ? this.provider.kind() : (this.provider.kind ?? 'cloud')
+        const system = buildSystem(user, this.ctx.cfg, kind === 'cloud') +
+          (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`) + toolLog
         // A2：上下文预算裁剪（provider 有窗口时）——fixed = system + 工具定义；
         // 超预算按序裁剪历史/工具结果/用户消息。窗口 null（云端/测试）→ 不裁剪
         const window = this.provider.contextWindow?.()

@@ -318,3 +318,18 @@ test('B7: 无 --config 时存在 config/config.json 则合并（README 复制即
     else fs.rmSync(file)
   }
 })
+
+test('C10: cloudMaxContextWindow 默认 65536 + env 数字转换 + 非法值报错', () => {
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
+  assert.equal(cfg.l2.cloudMaxContextWindow, 65536, '默认云端窗口 65536')
+  assert.equal(validateConfig(cfg).ok, true)
+  // env 数字转换（parseEnv 数字键列表必须含该键——否则注入字符串 → Number.isInteger 失败）
+  const cfg2 = loadConfig({ argv: [], env: { MCBOT_L2_CLOUD_MAX_CONTEXT_WINDOW: '32768' } }, { skipProdConfig: true })
+  assert.equal(cfg2.l2.cloudMaxContextWindow, 32768, 'env 应转数字（不是字符串）')
+  assert.equal(validateConfig(cfg2).ok, true)
+  // 非法值（<4096 防误配——小于预算 reserve 就没有守卫意义；l2 校验在 enabled 门内）
+  const bad = { ...cfg, l2: { ...cfg.l2, enabled: true, cloudMaxContextWindow: 100 } }
+  const { ok, errors } = validateConfig(bad)
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => e.includes('cloudMaxContextWindow')), errors.join('; '))
+})
