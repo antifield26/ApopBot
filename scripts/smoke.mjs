@@ -10,14 +10,20 @@ import { createConsoleLogger } from '../src/core/logger.js'
 import { withTimeout } from '../src/util/promise-timeout.js'
 import { createBot, loadMineflayerPluginsAsync } from '../src/core/bot.js'
 import pathfinderPkg from 'mineflayer-pathfinder' // CJS 包：default 导入后解构（ESM named 互操作不可靠）
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 const { goals } = pathfinderPkg
+
+// 第六轮 C8：默认配置路径按 ROOT 解析（此前 CWD 相对——从别的目录运行
+// `node scripts/smoke.mjs` 报"指定的配置文件不存在"，与 config.js 的 ROOT 口径不一致）
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const STEP_TIMEOUT = 60_000
 const ALL_STEPS = ['connect', 'spawn', 'move', 'mine', 'chat', 'quit']
 
 function parseArgs () {
   const argv = process.argv.slice(2)
-  const out = { config: 'config/smoke.json', steps: ALL_STEPS, dangerous: false, walkDistance: 3 }
+  const out = { config: path.join(ROOT, 'config', 'smoke.json'), steps: ALL_STEPS, dangerous: false, walkDistance: 3 }
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--config': out.config = argv[++i]; break
@@ -86,6 +92,9 @@ async function runStep (name, fn) {
 
 async function main () {
   const args = parseArgs()
+  // C8：CLI 相对路径按 ROOT 解析（loadConfig 的 --config 按 CWD 读——从任意目录
+  // 运行都稳定；绝对路径原样传入）
+  if (!path.isAbsolute(args.config)) args.config = path.resolve(ROOT, args.config)
   // --host/--port 覆盖配置（部署机连远程服务端时使用；CLI 优先级最高，走 loadConfig 而非改冻结配置）
   const cli = ['--config', args.config]
   if (args.host) cli.push('--host', args.host)

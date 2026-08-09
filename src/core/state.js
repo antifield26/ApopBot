@@ -5,7 +5,7 @@
 //
 // 写入策略：5s 防抖（任务变更频繁时不刷盘），优雅退出 flush 立即落盘；损坏/不存在回退空态。
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -46,10 +46,16 @@ export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logg
   function persist () {
     if (!dirty) return
     dirty = false
+    // 第六轮 C8：原子写（tmp + rename）——Windows 下直接 writeFileSync 遇文件被占用
+    // （编辑器/杀软扫描）抛 EPERM/EBUSY → 快照静默丢弃；rename 覆盖是原子操作。
+    // 同步 API 在 exit 处理器中安全（不允许调度异步工作）。同目录保证同卷 rename。
+    const tmp = file + '.tmp'
     try {
       mkdirSync(path.dirname(file), { recursive: true })
-      writeFileSync(file, JSON.stringify(last, null, 2))
+      writeFileSync(tmp, JSON.stringify(last, null, 2))
+      renameSync(tmp, file)
     } catch (err) {
+      rmSync(tmp, { force: true }) // 清理半写 tmp（写成功但 rename 失败场景）
       logger?.warn?.({ err: err.message }, 'state save failed')
     }
   }

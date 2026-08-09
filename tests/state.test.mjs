@@ -55,6 +55,8 @@ test('store: setTasks 防抖写（debounce 内不落盘），flush 立即落盘'
   const disk = JSON.parse(readFileSync(file, 'utf8'))
   assert.equal(disk.tasks[0].id, 'gold')
   assert.equal(disk.tasks[0].options.blockTypes[0], 'gold_ore')
+  // C8 原子写：flush 后不得残留 .tmp 中间文件（写失败清理兜底）
+  assert.ok(!fileExists(file + '.tmp'), '原子写后不得残留 .tmp')
 })
 
 test('store: 防抖到期自动落盘（不调 flush）', (t) => {
