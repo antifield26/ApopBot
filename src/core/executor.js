@@ -46,8 +46,9 @@ export function createActionExecutor (ctx, deps = {}) {
         entry.result = `未知动作: ${op}（observe_* / goto / dig / place / collect_blocks / attack / equip / reply...）`
         return finish()
       }
-      // 权限门（op 原语仅白名单玩家）
-      if (p.permission === 'op' && !isOp(user, ctx.cfg)) {
+      // 权限门（op 原语仅白名单玩家；'system' = 脚本任务通道——任务本身只能由
+      // op 启动/配置，脚本内动作不再逐层重复校验）
+      if (p.permission === 'op' && user !== 'system' && !isOp(user, ctx.cfg)) {
         entry.result = `权限不足：${user} 不在 ops 白名单`
         return finish()
       }
