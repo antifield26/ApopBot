@@ -12,6 +12,21 @@
 
 import { isOp } from '../commands/permissions.js'
 import { environmentLine } from '../core/environment.js'
+import { withTimeout } from '../util/promise-timeout.js'
+
+// v1.0.0 C11：确定性错误不反思（权限/参数/未知动作是模型无法从教训中获益的——
+// 它们是规则约束，不是运行时失败；NoPath/超时/NoChests 等运行时失败才值得沉淀）
+const DETERMINISTIC_ERROR = /权限不足|缺少参数|必须是|未知动作|未知技能|冷却中|不在 ops/
+
+/** 经验教训注入（buildSystem 之后拼接——最近 8 条 ≤600 字符）。 */
+function experienceInjection (experience) {
+  if (!experience) return ''
+  const items = experience.recent(8)
+  if (items.length === 0) return ''
+  let text = items.map(i => `- ${i.lesson}`).join('\n')
+  if (text.length > 600) text = text.slice(0, 600) + '…'
+  return `\n\n经验教训（最近）:\n${text}`
+}
 
 // 文本长度上限（低配 4B 模型上下文与聊天消息长度双重约束；B6 从硬编码提为常量）
 const INPUT_MAX_CHARS = 1000 // 用户消息截断
@@ -230,6 +245,8 @@ export class AgentInterface {
     this.cfg = deps.config ?? {}
     // v1.0.0 C5：会话落盘通道（缺省 null = 不落盘——测试/无持久化场景）
     this.sessionStore = deps.sessionStore ?? null
+    // v1.0.0 C11：经验记忆库（动作失败反思沉淀；缺省 null = 不反思/不注入）
+    this.experience = deps.experience ?? null
     this.log = ctx.logger.child({ module: 'l2' })
     this.busy = false
     // 按玩家冷却（C7/T）：此前全局单值——一个 op 的请求冷却挡住所有玩家的 !agent chat
@@ -286,6 +303,8 @@ export class AgentInterface {
       const maxSteps = this.cfg.maxSteps ?? 5
       let finished = false
       let reply = '（无回复）'
+      // v1.0.0 C11：本轮运行时失败动作收集（反思触发源）
+      const failures = []
       for (let step = 0; step < maxSteps && !finished; step++) {
         // v1.0.0 C4：固定工具集 = act + 观察/回复（从原语注册表生成）
         const tools = buildTools(this.executor, this.cfg.maxActionsPerCall ?? 8)
@@ -298,7 +317,9 @@ export class AgentInterface {
           toolLog = `\n最近工具操作: ${toolCalls.slice(-3).map(c => `${c.name}${c.result ? `→${c.result}` : ''}`).join('；')}`
         }
         // v1.0.0 C2：单 provider（云端）——恒拼接完整提示词（分层分支已移除）
+        // v1.0.0 C11：经验教训注入（最近 8 条 ≤600 字符——跨会话自主能力进化）
         const system = buildSystem(user, this.ctx.cfg) +
+          experienceInjection(this.experience) +
           (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`) + toolLog
         // A2：上下文预算裁剪（provider 有窗口时）——fixed = system + 工具定义；
         // 超预算按序裁剪历史/工具结果/用户消息。窗口 null（云端/测试）→ 不裁剪
@@ -351,6 +372,16 @@ export class AgentInterface {
           if (typeof output !== 'string') output = JSON.stringify(output)
           if (output.length > TOOL_RESULT_MAX_CHARS) output = output.slice(0, TOOL_RESULT_MAX_CHARS) + '…(截断)'
           results.push({ id: tc.id, name: tc.name, output })
+          // v1.0.0 C11：本轮运行时失败收集（反思触发源——排除确定性错误）
+          if (tc.name === 'act') {
+            for (const entry of r.results ?? []) {
+              if (!entry.ok && !DETERMINISTIC_ERROR.test(entry.result ?? '')) {
+                failures.push({ op: entry.op, result: String(entry.result ?? '').slice(0, 120) })
+              }
+            }
+          } else if (!r.ok && !DETERMINISTIC_ERROR.test(String(r.result ?? ''))) {
+            failures.push({ op: tc.name, result: String(r.result ?? '').slice(0, 120) })
+          }
           // U15：跨对话工具操作记录（摘要 ≤120 字符；失败也记录——LLM 下次知道上次错在哪）
           const failed = tc.name === 'act' ? r.rejected : !r.ok
           const summary = failed
@@ -369,6 +400,9 @@ export class AgentInterface {
         // 显式文案提示重试
         reply = `已达最大工具步数（${maxSteps}），请重试`
       }
+      // v1.0.0 C11：反思——本轮运行时失败 → 一句话总结教训 → 写入经验库
+      //（fire-and-forget：8s 上限，失败静默；60s 全局冷却复用 summarize 通道）
+      if (failures.length > 0) this._reflect(user, failures)
       // 回写会话：本轮 user 轮 + 最终 assistant 轮（纯文本，裁剪到上限）+ 工具操作记录
       history.push({ role: 'user', content: userMsg })
       history.push({ role: 'assistant', content: reply.slice(0, REPLY_MAX_CHARS) })
@@ -397,6 +431,29 @@ export class AgentInterface {
     if (this.busy) return { ok: false, result: '上一个请求仍在处理中，请稍候' }
     // v1.0.0 C4：直调动作原语（走执行器统一管线——权限/校验/守卫/审计）
     return this.executor.executeOne(name, params, { user, source: 'act' })
+  }
+
+  /**
+   * v1.0.0 C11：反思——本轮运行时失败 → 一句话总结教训 → 经验库。
+   * fire-and-forget（8s 上限，失败静默——绝不阻塞对话回复）；60s 全局冷却
+   * 复用 summarize 通道（死亡播报/任务总结/反思不并发抢推理）。
+   */
+  async _reflect (user, failures) {
+    if (!this.experience || !this.provider?.chat) return
+    const detail = failures.slice(0, 3).map(f => `${f.op}:${f.result}`).join('；')
+    try {
+      const lesson = await withTimeout(
+        this.summarize(`以下 Bot 动作失败: ${detail}。用一句话总结教训（该动作的正确用法或前置条件），≤100 字`),
+        8000,
+        'reflect timeout'
+      )
+      if (!lesson) return
+      for (const f of failures.slice(0, 3)) {
+        this.experience.add({ op: f.op, error: f.result, lesson, ts: Date.now() })
+      }
+      this.log.info({ failures: failures.length }, '反思完成，经验已沉淀')
+    } catch { /* 反思失败静默——不阻塞对话 */ }
+    void user
   }
 
   /**

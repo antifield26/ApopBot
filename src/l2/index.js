@@ -2,6 +2,7 @@ import { AgentInterface } from './agent-interface.js'
 import { createProvider } from './provider.js'
 import { createActionExecutor } from '../core/executor.js'
 import { createSessionStore } from './sessions.js'
+import { createExperienceStore } from './experience.js'
 
 /**
  * L2 层入口。l2.enabled=false 时返回 null（零额外依赖，不加载任何 LLM 相关代码路径）。
@@ -20,5 +21,12 @@ export function createL2 (cfg, ctx) {
   } catch (err) {
     logger.warn({ err: err.message }, '会话落盘初始化失败，降级为内存会话')
   }
-  return new AgentInterface(ctx, { provider, executor, sessionStore, config: cfg.l2 })
+  // v1.0.0 C11：经验记忆库（动作失败反思沉淀；失败降级为不反思）
+  let experience = null
+  try {
+    experience = createExperienceStore({ logger })
+  } catch (err) {
+    logger.warn({ err: err.message }, '经验库初始化失败，降级为不反思')
+  }
+  return new AgentInterface(ctx, { provider, executor, sessionStore, experience, config: cfg.l2 })
 }
