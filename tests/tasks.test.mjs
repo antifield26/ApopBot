@@ -251,15 +251,18 @@ test('E 修复：scheduled exclusive 排队启动后仍到时停止（时长上�
   await manager.stopAll()
 })
 
-test('F 修复：scheduled 任务 run 抛错 → 通知失败而非上抛（croner 漂浮 rejection → fatal exit）', async () => {
+test('F 修复：脚本任务 init 失败 → 通知失败而非上抛（croner 漂浮 rejection → fatal exit）', async () => {
+  // v1.0.0 C9 语义迁移：脚本化后运行时错误软失败（任务持续巡逻）——run 抛错
+  // 路径只剩 init 失败/maxActions 超限；F 的核心守卫（异常不经过 runScheduled
+  // 上抛 → croner 无漂浮 rejection）由 BaseTask.start catch + 此处验证
   const bot = makeCombatBot()
   const manager = new TaskManager({}, makeLogger(), { bot })
   const notices = []
   manager._notify = (rec, state) => { notices.push(state) }
   await manager.load({
-    tasks: [{ id: 's1', type: 'combat', schedule: '0 3 * * *', options: { stopWhenNoTargets: false }, notifyChat: false }]
+    // aggroRange < attackRange 陷阱 → combat 脚本 init 校验抛错
+    tasks: [{ id: 's1', type: 'combat', schedule: '0 3 * * *', options: { aggroRange: 2, attackRange: 5 }, notifyChat: false }]
   })
-  bot.entity = null // 触发 combat 循环 TypeError（F 触发源同类）
   let rejected = false
   try {
     await manager.runScheduled('s1')

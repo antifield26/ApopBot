@@ -3,15 +3,14 @@
 ## 拓扑
 
 ```
-树莓派 5 8G (LAN 192.168.3.93)            Windows PC（低配：i7-4720HQ / 8GB DDR3）
+树莓派 5 8G (LAN 192.168.3.93)            Windows PC
 ├── PaperMC 26.1.2 服务端                 ├── Bot —— NSSM 服务 minecraft-bot
 │   └── systemd/minecraft-server.service  ├── Ollama（qwen3.5:4b，L2 本地推理）
-│   └── 白名单: mcbot / smokebot           └── deploy.ps1 一键部署
+│   └── 白名单: mcbot / mcbot-test           └── deploy.ps1 一键部署
 └── white-list=true
 ```
 
-- Bot 不部署到树莓派（原 Linux 部署产物 `deploy.sh` / `minecraft-bot.service` 已随迁移移除）；Pi 上若仍有旧部署残留，清理见下文「移除残留 Bot 部署」
-- PaperMC 服务端仍在树莓派运行（单元文件 `systemd/minecraft-server.service` 未移动）
+- PaperMC 服务端仍在树莓派运行（单元文件 `systemd/minecraft-server.service` ）
 
 ## 环境准备（Windows PC，一次性）
 
@@ -49,7 +48,7 @@ winget install --id Git.Git                                                     
 ```
 
 - `host` 指向服务端域名 `mc.antifield.work`（DNS 指向 Pi 的当前 IP；Pi 换 IP 只改 DNS，Bot 重连时自动解析新地址，DNS 解析失败归类为 network_error 自动退避重连而非 fatal）。`localhost` 仅限开发机连本机服务端
-- `username: mcbot` 已在服务端白名单；smoke 用 `config/smoke.json` 以 smokebot 身份登录（同样需白名单）
+- `username: mcbot` 已在服务端白名单；smoke 用 `config/smoke.json` 以 mcbot-test 身份登录（同样需白名单）
 - L2 默认 `ollama` + `qwen3.5:4b`（已是代码默认值）；云端回退/密钥见 [docs/l2.md](l2.md)
 
 ## 部署（管理员 PowerShell）
@@ -106,24 +105,6 @@ Get-Content logs\nssm-stderr.log -Encoding UTF8 -Tail 50  # 启动期 stderr（�
 - `maxSteps: 5` 保持默认（防 LLM 工具循环吃 CPU）；`l2.cooldownMs` 可调大（如 10000）降低 Ollama 负载；`l2.ollamaTimeoutMs` 默认 60s（低配机长回复放宽到 120s）
 - 任务均为区域限定；farm/chop/combat/breed 为 exclusive 互斥（不会并发抢寻路/采集）
 - 无 MemoryMax 等价物：用任务管理器观察；Ollama 吃紧时换更小量化档（`ollama ps` 查看当前模型）或关浏览器
-
-## 服务端（树莓派）运维速查
-
-服务端单元仍在仓库 `systemd/minecraft-server.service`（Pi 上使用）：
-
-```bash
-ssh pi@<host>   # 或直接在 Pi 上操作
-systemctl status minecraft-server        # 状态
-journalctl -u minecraft-server -f        # 实时日志
-systemctl restart minecraft-server       # 重启
-# 白名单（游戏控制台）：
-whitelist add mcbot
-whitelist add smokebot
-```
-
-- JVM `-Xms2G -Xmx2G`（Pi 5 8G 上限约 3G 堆）；`white-list=true`；`online-mode=false`
-- Pi 侧无需再装 Node（Bot 已不在 Pi 上跑）；迁移前的旧服务如仍在运行，见下节清理
-
 
 ## 验证清单
 

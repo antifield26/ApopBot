@@ -193,7 +193,9 @@ export class ScriptRunner {
       case 'continue':
         throw new ScriptContinue()
       case 'if': {
-        if (evalCond(step.cond, this)) await this.runSteps(step.then ?? [])
+        // cond 参数模板化（gte/equals/value 支持 '${minHealth}' 等 options 引用；
+        // ref 的 '$last'/'$name' 是条件语义标识——不得被模板解析）
+        if (evalCond(this.resolveCond(step.cond), this)) await this.runSteps(step.then ?? [])
         else await this.runSteps(step.else ?? [])
         return
       }
@@ -210,6 +212,17 @@ export class ScriptRunner {
       default:
         throw new Error(`未知 ctrl: ${step.ctrl}`)
     }
+  }
+
+  /** 条件模板化（只处理 gte/equals/value——ref 的 '$last' 是语义标识）。 */
+  resolveCond (cond) {
+    if (!cond || typeof cond !== 'object') return cond
+    const out = { ...cond }
+    for (const k of ['gte', 'equals', 'value']) {
+      if (out[k] !== undefined) out[k] = this.resolveValue(out[k])
+    }
+    if (cond.type === 'not' && cond.cond) out.cond = this.resolveCond(cond.cond)
+    return out
   }
 
   /** 参数模板求值（递归）：$引用 / ${options} / {expr}。 */

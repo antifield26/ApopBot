@@ -147,15 +147,17 @@ export function validateParams (schema, params) {
   for (const [k, def] of Object.entries(schema.properties ?? {})) {
     if (params[k] === undefined) continue
     const v = params[k]
-    const ok = {
+    // type 支持联合（['string','array']——observe_entities 的 filter）
+    const types = Array.isArray(def.type) ? def.type : [def.type]
+    const ok = types.some(t => ({
       number: typeof v === 'number',
       integer: Number.isInteger(v),
       string: typeof v === 'string',
       boolean: typeof v === 'boolean',
       object: typeof v === 'object' && v !== null && !Array.isArray(v),
       array: Array.isArray(v)
-    }[def.type]
-    if (!ok) return { ok: false, error: `${k} 必须是 ${def.type}` }
+    }[t]))
+    if (!ok) return { ok: false, error: `${k} 必须是 ${types.join('/')}` }
     if ((def.type === 'number' || def.type === 'integer') && typeof v === 'number') {
       // A3：NaN/Infinity 兜底（JSON 无法携带但防御直传/未来入口）
       if (!Number.isFinite(v)) return { ok: false, error: `${k} 必须是有限数值` }

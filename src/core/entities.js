@@ -54,7 +54,9 @@ export function nearbyEntities (bot, { name, kind, maxDistance = 64, limit = 10 
         kind: e.type ?? '?',
         type: e.type ?? '?',
         dist: distance(me, e),
-        pos: fmtPos(e.position)
+        pos: fmtPos(e.position),
+        // v1.0.0 C9：原始位置（observe_entities 的结构化坐标用——pos 是格式化字符串）
+        position: e.position
       }))
       .sort((a, b) => a.dist - b.dist)
       .slice(0, limit)

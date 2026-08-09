@@ -432,3 +432,106 @@ test('farm 脚本: init 校验——未知作物报错（failed）', async () =>
   assert.equal(task.state, 'failed')
   assert.ok(task.lastError.includes('未知作物'), task.lastError)
 })
+
+// ---- combat/breed 脚本（v1.0.0 C9）----
+
+function makeCombatBot (opts = {}) {
+  const packets = []
+  const entities = new Map()
+  const hostile = { id: 1, type: 'hostile', name: 'zombie', position: new Vec3(3, 64, 0), height: 1.8 }
+  entities.set(1, hostile)
+  const bot = {
+    entity: { position: new Vec3(0, 64, 0) },
+    health: 20,
+    entities,
+    nearestEntity: () => null,
+    registry: { entitiesArray: [{ id: 1, type: 'hostile' }], blocksByName: {} },
+    pathfinder: { setGoal: () => {}, stop: () => {} },
+    inventory: { items: () => [{ name: 'iron_sword', count: 1 }] },
+    equip: async () => {},
+    autoEat: { eat: async () => {} },
+    lookAt: () => {},
+    _client: { write: (name, params) => { packets.push({ name, ...params }); if (name === 'attack') entities.delete(1) } }, // 一击击杀
+    chat: () => {},
+    once: () => {},
+    removeListener: () => {},
+    ...(opts.bot ?? {})
+  }
+  return { bot, packets }
+}
+
+test('combat 脚本: 无目标 + stopWhenNoTargets → 完成', async () => {
+  const { bot } = makeCombatBot({ bot: { entities: new Map() } })
+  const ctx = makeCtx(bot)
+  const { default: combatScript } = await import('../src/tasks/scripts/combat.js')
+  const task = makeTask(combatScript, { stopWhenNoTargets: true }, ctx)
+  await task.start()
+  assert.equal(task.state, 'completed', '无目标 + stopWhenNoTargets → 完成')
+})
+
+test('combat 脚本: 击杀 → kills 计数 → maxTargets 上限完成', async () => {
+  const { bot, packets } = makeCombatBot()
+  const ctx = makeCtx(bot)
+  const { default: combatScript } = await import('../src/tasks/scripts/combat.js')
+  const task = makeTask(combatScript, { maxTargets: 1, checkIntervalSeconds: 0.01 }, ctx)
+  await task.start()
+  assert.equal(task.state, 'completed', '击杀 1 个（maxTargets 1）→ 完成')
+  assert.equal(task.counters.kills, 1, 'kills 计数')
+  assert.equal(packets.filter(p => p.name === 'attack').length, 1, '应发攻击包（entity-actions 原始包）')
+})
+
+test('combat 脚本: 武器自动装备（init 钩子解析背包第一把剑）', async () => {
+  const { bot } = makeCombatBot({ bot: { entities: new Map() } })
+  const equipped = []
+  bot.equip = async (item) => { equipped.push(item.name) }
+  const ctx = makeCtx(bot)
+  const { default: combatScript } = await import('../src/tasks/scripts/combat.js')
+  const task = makeTask(combatScript, { stopWhenNoTargets: true }, ctx)
+  await task.start()
+  assert.ok(equipped.includes('iron_sword'), `应自动装备剑: ${JSON.stringify(equipped)}`)
+})
+
+test('combat 脚本: init 校验——aggroRange < attackRange 报错（配置陷阱）', async () => {
+  const { bot } = makeCombatBot()
+  const ctx = makeCtx(bot)
+  const { default: combatScript } = await import('../src/tasks/scripts/combat.js')
+  const task = makeTask(combatScript, { aggroRange: 2, attackRange: 5 }, ctx)
+  await task.start()
+  assert.equal(task.state, 'failed')
+  assert.ok(task.lastError.includes('aggroRange'), task.lastError)
+})
+
+test('breed 脚本: 无动物 + stopWhenNoAnimals → 完成', async () => {
+  const bot = { entity: { position: { x: 0, y: 64, z: 0 } }, entities: new Map(), pathfinder: { stop: () => {} }, inventory: { items: () => [] } }
+  const ctx = makeCtx(bot)
+  const { default: breedScript } = await import('../src/tasks/scripts/breed.js')
+  const task = makeTask(breedScript, { stopWhenNoAnimals: true }, ctx)
+  await task.start()
+  assert.equal(task.state, 'completed', '无动物 + stopWhenNoAnimals → 完成')
+})
+
+test('breed 脚本: 喂食成功 → 等待幼崽 → breedings 计数', async () => {
+  const animals = new Map()
+  const cow = { id: 1, name: 'cow', type: 'animal', position: { x: 2, y: 64, z: 0 }, height: 1.3 }
+  animals.set(1, cow)
+  const packets = []
+  const bot = {
+    entity: { position: { x: 0, y: 64, z: 0 } },
+    entities: animals,
+    pathfinder: { stop: () => {} },
+    inventory: { items: () => [{ name: 'wheat', count: 10 }] },
+    equip: async () => {},
+    lookAt: () => {},
+    _client: { write: (name, params) => { packets.push({ name, ...params }); if (name === 'use_entity') animals.delete(1) } }, // 喂食后目标替换（幼崽）
+    chat: () => {},
+    once: () => {},
+    removeListener: () => {}
+  }
+  const ctx = makeCtx(bot)
+  const { default: breedScript } = await import('../src/tasks/scripts/breed.js')
+  const task = makeTask(breedScript, { maxBreedings: 1, useCooldownMs: 500 }, ctx) // schema min 500
+  await task.start()
+  assert.equal(task.state, 'completed', '繁殖 1 次（maxBreedings 1）→ 完成')
+  assert.equal(task.counters.breedings, 1, 'breedings 计数（targetGone）')
+  assert.ok(packets.some(p => p.name === 'use_entity'), '应发 use_entity 包（entity-actions 原始包）')
+})

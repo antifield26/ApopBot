@@ -115,17 +115,35 @@ export function createPrimitiveRegistry (ctx) {
     schema: {
       type: 'object',
       properties: {
-        filter: { type: 'string', description: '实体名子串或 kind：hostile/passive/neutral/player/projectile/animal' },
-        maxDistance: { type: 'number', min: 1, max: 64, description: '搜索半径 1-64，默认 32' }
+        filter: { type: ['string', 'array'], description: '实体名子串或 kind（hostile/animal...），或名称数组（任一匹配）' },
+        maxDistance: { type: 'number', min: 1, max: 256, description: '搜索半径 1-256，默认 32' },
+        area: { type: 'object', description: '区域 {x1,y1,z1,x2,y2,z2}（只返回区域内实体）' }
       }
     },
     permission: 'all',
     exclusiveClass: 'readonly',
     guardText: '',
     timeoutMs: 5000,
-    handler: async (c, { filter, maxDistance }) => {
-      const ents = nearbyEntities(c.bot, { name: filter, kind: filter, maxDistance: maxDistance ?? 32, limit: 10 })
-      return ents.map(e => ({ name: e.name, type: e.type, dist: e.dist, pos: [e.pos.x, e.pos.y, e.pos.z] }))
+    handler: async (c, { filter, maxDistance, area }) => {
+      // filter 支持字符串（nearbyEntities 语义：name 子串 OR kind）与数组（任一匹配）
+      let ents = []
+      if (Array.isArray(filter)) {
+        ents = nearbyEntities(c.bot, { maxDistance: maxDistance ?? 32, limit: 32 })
+        ents = ents.filter(e => filter.some(f => String(e.name ?? '').includes(f) || e.type === f))
+      } else {
+        ents = nearbyEntities(c.bot, { name: filter, kind: filter, maxDistance: maxDistance ?? 32, limit: 32 })
+      }
+      if (area && isArea(area)) {
+        ents = ents.filter(e => {
+          const p = e.position
+          if (!p) return false
+          return p.x >= area.x1 && p.x <= area.x2 && p.y >= area.y1 && p.y <= area.y2 && p.z >= area.z1 && p.z <= area.z2
+        })
+      }
+      return ents.slice(0, 10).map(e => {
+        const p = e.position
+        return { name: e.name, type: e.type, dist: e.dist, pos: p ? [p.x, p.y, p.z] : null }
+      })
     }
   })
 
@@ -607,7 +625,7 @@ export function createPrimitiveRegistry (ctx) {
       type: 'object',
       required: ['filter'],
       properties: {
-        filter: { type: 'string', description: '实体名子串（如 cow/chicken——喂食繁殖用）' },
+        filter: { type: ['string', 'array'], description: '实体名子串或名称数组（如 cow/chicken——喂食繁殖用）' },
         foodName: { type: 'string', description: '食物物品名（如 wheat；缺省用背包自动匹配）' },
         count: { type: 'integer', min: 1, max: 10, description: '喂食次数（默认 2）' },
         useCooldownMs: { type: 'integer', min: 500, max: 30000, description: '喂食间隔（默认 3000）' }
@@ -619,14 +637,17 @@ export function createPrimitiveRegistry (ctx) {
     timeoutMs: 30000,
     handler: async (c, { filter, foodName, count = 2, useCooldownMs = 3000 }) => {
       if (!c.bot?.entity?.position) throw new Error('位置不可用')
-      const f = filter?.toLowerCase()
+      // filter 支持字符串（name 子串）与数组（任一匹配——breed 的 animalTypes）
+      const filters = Array.isArray(filter) ? filter.map(f => String(f).toLowerCase()) : null
+      const f = typeof filter === 'string' ? filter.toLowerCase() : null
       const matches = []
       for (const e of c.bot.entities instanceof Map ? c.bot.entities.values() : Object.values(c.bot.entities)) {
         if (!e || e === c.bot.entity || !e.position) continue
-        if (f && !String(e.name ?? '').toLowerCase().includes(f)) continue
+        const name = String(e.name ?? '').toLowerCase()
+        if (filters ? !filters.some(x => name.includes(x)) : (f && !name.includes(f))) continue
         matches.push(e)
       }
-      if (matches.length === 0) return { fed: 0, targetGone: false, reason: `附近没有匹配 ${filter} 的实体` }
+      if (matches.length === 0) return { fed: 0, targetGone: false, reason: `附近没有匹配 ${JSON.stringify(filter)} 的实体` }
       matches.sort((a, b) => a.position.distanceTo(c.bot.entity.position) - b.position.distanceTo(c.bot.entity.position))
       const target = matches[0]
       // breed._feed 同款：找食物（参数优先，缺省按种子表自动匹配）→ equip → useEntityOn×count
