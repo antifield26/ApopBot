@@ -70,7 +70,7 @@ deploy.ps1 流程：预检（node ≥22、非 Store 存根、nssm 存在）→ �
 | `CPUWeight=30` | `AppPriority BELOW_NORMAL_PRIORITY_CLASS`（低优先级：同机 Ollama/其他程序优先） |
 | `MemoryHigh` / `MemoryMax` | **无等价**（Windows 无 cgroup）→ 内存靠预算与监控（见性能） |
 | `LogsDirectory` + `StandardOutput=journal` | pino `logs/bot.log` 按天轮转 + `AppStdout/AppStderr` → `logs/nssm-*.log` |
-| `systemctl status` / `journalctl -u minecraft-bot -f` | `nssm status minecraft-bot` / `Get-Content logs\bot.log -Wait` |
+| `systemctl status` / `journalctl -u minecraft-bot -f` | `nssm status minecraft-bot` / `Get-Content logs\bot.log -Encoding UTF8 -Wait` |
 | `systemctl stop/restart` | `nssm stop/restart minecraft-bot`（stop 发 Ctrl+C 事件 → Node SIGINT → 优雅退出：停任务→断开→flush 日志） |
 | `systemctl reset-failed` | 不需要（`AppExit 2 Exit` 后服务为 Stopped，修复后直接 `nssm start`） |
 
@@ -79,8 +79,8 @@ deploy.ps1 流程：预检（node ≥22、非 Store 存根、nssm 存在）→ �
 ```powershell
 nssm status minecraft-bot                  # 状态（SERVICE_RUNNING / STOPPED）
 nssm restart minecraft-bot                 # 全量重启
-Get-Content logs\bot.log -Wait             # 实时日志（pino 按天轮转）
-Get-Content logs\nssm-stderr.log -Tail 50  # 启动期 stderr（服务起不来先看这里）
+Get-Content logs\bot.log -Encoding UTF8 -Wait             # 实时日志（pino 按天轮转；UTF8 编码——PS 5.1 默认 ANSI 读中文乱码）
+Get-Content logs\nssm-stderr.log -Encoding UTF8 -Tail 50  # 启动期 stderr（服务起不来先看这里）
 ```
 
 游戏内命令（op 白名单在 `config.ops`）：`!ping` `!status` `!task list` `!task new <type> <id> [json]` `!task remove <id>` `!task start|stop|pause|resume <id>` `!reload` `!say` `!pos` `!find <方块> [距离]` `!follow <player>|off` `!agent chat|act|doctor|reset ...`。完整说明见 README 指令列表（含 `!task list` 的排队位置/剩余时长/下次 cron 字段与 `!find` 的 16-256 限幅）。
@@ -135,7 +135,7 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 
 | 症状 | 排查 |
 |---|---|
-| 服务启动即停止 | `Get-Content logs\nssm-stderr.log -Tail 50` + `logs\bot.log`。fatal（exit 2：白名单拒绝/名字冲突/版本不匹配）触发 `AppExit 2 Exit` 停止——修复后 `nssm start minecraft-bot` |
+| 服务启动即停止 | `Get-Content logs\nssm-stderr.log -Encoding UTF8 -Tail 50` + `logs\bot.log`。fatal（exit 2：白名单拒绝/名字冲突/版本不匹配）触发 `AppExit 2 Exit` 停止——修复后 `nssm start minecraft-bot` |
 | 服务反复重启 | 启动期错误（exit 1，如配置/日志目录问题）每 10s 重试 → 看 `logs\bot.log` 首段报错 |
 | 启动即退出 "日志目录不可写" | `log.dir` 指向不可写路径；改用默认 `./logs` 或确认运行账户写权限 |
 | 连不上服务端 | `Test-NetConnection mc.antifield.work -Port 25565`（IP 直测可换 `192.168.3.93`）；确认 DNS 解析正确、服务端在线、`host` 正确、Windows 防火墙放行出站 25565 |

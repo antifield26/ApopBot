@@ -1,4 +1,4 @@
-# deploy.ps1 — Windows PC 部署脚本（Bot → NSSM Windows 服务）
+﻿# deploy.ps1 — Windows PC 部署脚本（Bot → NSSM Windows 服务）
 # 本机部署，无 ssh；在目标 Windows PC 上运行。
 #
 # 用法（管理员 PowerShell，或 powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1）:
@@ -70,7 +70,7 @@ if ($Status) {
   $log = Join-Path $root 'logs\bot.log'
   if (Test-Path $log) {
     Write-Host '--- 最近日志（logs\bot.log 尾部）---'
-    Get-Content $log -Tail 20
+    Get-Content $log -Encoding UTF8 -Tail 20  # pino 输出无 BOM UTF-8——PS 5.1 默认 ANSI 读中文乱码
   }
   exit 0
 }
@@ -156,8 +156,9 @@ $hashInput = @('package-lock.json', 'package.json', '.npmrc') | Where-Object { T
 $hash = ((Get-FileHash $hashInput -Algorithm SHA256 | ForEach-Object { $_.Hash }) -join '')
 $lockFile = 'logs\.lockhash'
 $needInstall = $true
-# 哈希一致 + node_modules 实际存在才算可跳过（手工删除 node_modules 后必须重装）
-if ((Test-Path $lockFile) -and ((Get-Content $lockFile -Raw) -eq $hash) -and (Test-Path 'node_modules\.package-lock.json')) { $needInstall = $false }
+# 哈希一致 + node_modules 实际存在才算可跳过（手工删除 node_modules 后必须重装）。
+# 读取侧 -replace 归一去尾换行：PS 5.1 旧 lockhash 可能带尾换行（历史 Set-Content 写入）
+if ((Test-Path $lockFile) -and (((Get-Content $lockFile -Raw) -replace '\s+$','') -eq $hash) -and (Test-Path 'node_modules\.package-lock.json')) { $needInstall = $false }
 
 if ($needInstall) {
   Write-Host '依赖文件有变化，执行 npm ci --omit=dev ...'
@@ -168,7 +169,9 @@ if ($needInstall) {
       "`n然后重试本脚本"
     exit 1
   }
-  Set-Content -Path $lockFile -Value $hash
+  # 无尾换行写入（Set-Content 追加尾换行 → Get-Content -Raw 含尾换行 → 与哈希恒不等
+  # → 每次部署都重跑 npm ci，第六轮 C6 修复）
+  [System.IO.File]::WriteAllText((Join-Path $root $lockFile), $hash)
 } else {
   Write-Host '依赖未变化，跳过 npm ci'
 }
@@ -210,9 +213,26 @@ Set-NssmParam 'AppStderr' (Join-Path $root 'logs\nssm-stderr.log')
 
 $envPairs = @()
 if (Test-Path 'config\service.env') {
-  $envPairs = @(Get-Content 'config\service.env' |
+  # -Encoding UTF8：PS 5.1 对无 BOM 文件默认 ANSI 解码——值含中文（webhook 等）会乱码
+  $envPairs = @(Get-Content 'config\service.env' -Encoding UTF8 |
     ForEach-Object { $_.Trim() } |
     Where-Object { $_ -and -not $_.StartsWith('#') })
+  $valid = $true
+  for ($i = 0; $i -lt $envPairs.Count; $i++) {
+    $line = $envPairs[$i]
+    if ($line -notmatch '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+      Write-Error "config\service.env 第 $($i + 1) 行格式非法（应为 KEY=VALUE）: $line"
+      $valid = $false
+      break
+    }
+    # 值含空格/等号/引号时包裹引号（NSSM AppEnvironmentExtra 语法）；否则原样
+    if ($Matches[2] -match '[\s="]') {
+      $envPairs[$i] = "$($Matches[1])=""$($Matches[2])"""
+    } else {
+      $envPairs[$i] = "$($Matches[1])=$($Matches[2])"
+    }
+  }
+  if (-not $valid) { exit 1 }
   if ($envPairs.Count -gt 0) {
     Write-Host "从 config/service.env 注入 $($envPairs.Count) 个环境变量"
     & nssm set $serviceName AppEnvironmentExtra $envPairs
@@ -252,6 +272,6 @@ Write-Host '  nssm status minecraft-bot                   # 服务状态（也�
 Write-Host '  nssm restart minecraft-bot                  # 全量重启（热重载：改 config 自动生效 + 游戏内 !reload）'
 Write-Host '  nssm stop minecraft-bot / nssm start minecraft-bot'
 Write-Host "  日志: $root\logs\bot.log（pino 按天轮转）; nssm-stdout.log / nssm-stderr.log（stdout/stderr）"
-Write-Host '  实时日志: Get-Content logs\bot.log -Wait'
+Write-Host '  实时日志: Get-Content logs\bot.log -Encoding UTF8 -Wait'
 Write-Host '  服务异常停止（fatal 白名单/名字冲突）后: 修复 → nssm start minecraft-bot'
 Write-Host '  游戏内验收: !ping / !status / !task list / !agent chat ...'
