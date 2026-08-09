@@ -1,0 +1,321 @@
+diff --git a/node_modules/mineflayer/lib/plugins/bed.js b/node_modules/mineflayer/lib/plugins/bed.js
+index 9b526f6..110d837 100644
+--- a/node_modules/mineflayer/lib/plugins/bed.js
++++ b/node_modules/mineflayer/lib/plugins/bed.js
+@@ -22,6 +22,28 @@ function inject (bot) {
+       headOffset: new Vec3(0, 0, 1)
+     }
+ 
++    const properties = bedBlock.getProperties?.()
++    if (properties?.part) {
++      metadata.part = properties.part === 'head'
++      metadata.occupied = properties.occupied === true || properties.occupied === 'true'
++
++      switch (properties.facing) {
++        case 'west':
++          metadata.facing = 1
++          metadata.headOffset.set(-1, 0, 0)
++          break
++        case 'north':
++          metadata.facing = 2
++          metadata.headOffset.set(0, 0, -1)
++          break
++        case 'east':
++          metadata.facing = 3
++          metadata.headOffset.set(1, 0, 0)
++          break
++      }
++      return metadata
++    }
++
+     if (bot.supportFeature('blockStateId')) {
+       const state = bedBlock.stateId - bot.registry.blocksByStateId[bedBlock.stateId].minStateId
+       const bitMetadata = state.toString(2).padStart(4, '0') // FACING (first 2 bits), PART (3rd bit), OCCUPIED (4th bit)
+diff --git a/node_modules/mineflayer/lib/plugins/entities.js b/node_modules/mineflayer/lib/plugins/entities.js
+index 507a618..08cbaf5 100644
+--- a/node_modules/mineflayer/lib/plugins/entities.js
++++ b/node_modules/mineflayer/lib/plugins/entities.js
+@@ -271,7 +271,13 @@ function inject (bot) {
+     entity.yaw = conv.fromNotchianYawByte(packet.yaw)
+     entity.pitch = conv.fromNotchianPitchByte(packet.pitch)
+     entity.headPitch = conv.fromNotchianPitchByte(packet.headPitch)
+-    const notchVel = new Vec3(packet.velocity.x, packet.velocity.y, packet.velocity.z)
++
++    let notchVel
++    if (bot.supportFeature('entityVelocityIsLpVec3')) {
++      notchVel = new Vec3(packet.velocity.x, packet.velocity.y, packet.velocity.z)
++    } else {
++      notchVel = new Vec3(packet.velocityX, packet.velocityY, packet.velocityZ)
++    }
+     entity.velocity.update(conv.fromNotchVelocity(notchVel))
+     entity.metadata = parseMetadata(packet.metadata, entity.metadata)
+ 
+@@ -281,7 +287,12 @@ function inject (bot) {
+   bot._client.on('entity_velocity', (packet) => {
+     // entity velocity
+     const entity = fetchEntity(packet.entityId)
+-    const notchVel = new Vec3(packet.velocity.x, packet.velocity.y, packet.velocity.z)
++    let notchVel
++    if (bot.supportFeature('entityVelocityIsLpVec3')) {
++      notchVel = new Vec3(packet.velocity.x, packet.velocity.y, packet.velocity.z)
++    } else {
++      notchVel = new Vec3(packet.velocityX, packet.velocityY, packet.velocityZ)
++    }
+     entity.velocity.update(conv.fromNotchVelocity(notchVel))
+   })
+ 
+@@ -349,8 +360,8 @@ function inject (bot) {
+     const entity = fetchEntity(packet.entityId)
+     entity.position.set(packet.x, packet.y, packet.z)
+     entity.velocity.set(packet.dx, packet.dy, packet.dz)
+-    entity.yaw = conv.fromNotchianYaw(packet.yaw)
+-    entity.pitch = conv.fromNotchianPitch(packet.pitch)
++    entity.yaw = packet.yaw
++    entity.pitch = packet.pitch
+     bot.emit('entityMoved', entity)
+   })
+ 
+@@ -411,12 +422,15 @@ function inject (bot) {
+       bot.emit('entityElytraFlew', entity)
+     }
+   }
++  bot._setElytraFlyingState = setElytraFlyingState
+ 
+   const knownFireworks = new Set()
+   function handleBotUsedFireworkRocket (fireworkEntityId, fireworkInfo) {
+     if (knownFireworks.has(fireworkEntityId)) return
+     knownFireworks.add(fireworkEntityId)
+-    let flightDur = fireworkInfo?.nbtData?.value?.Fireworks?.value?.Flight.value ?? 1
++    let flightDur = fireworkInfo?.nbtData?.value?.Fireworks?.value?.Flight.value ??
++      fireworkInfo?.nbt?.value?.Fireworks?.value?.Flight.value ??
++      1
+     if (typeof flightDur !== 'number') { flightDur = 1 }
+     const baseDuration = 10 * (flightDur + 1)
+     const randomDuration = Math.floor(Math.random() * 6) + Math.floor(Math.random() * 7)
+@@ -424,6 +438,7 @@ function inject (bot) {
+ 
+     bot.emit('usedFirework', fireworkEntityId)
+   }
++  bot._handleFireworkRocketUse = handleBotUsedFireworkRocket
+ 
+   let fireworkEntityName
+   if (bot.supportFeature('fireworkNamePlural')) {
+@@ -900,6 +915,25 @@ function inject (bot) {
+ 
+   function useEntity (target, leftClick, x, y, z) {
+     const sneaking = bot.getControlState('sneak')
++    if (bot.supportFeature('useEntityUsesEntityId')) {
++      if (leftClick === 1 && bot.supportFeature('attackUsesOwnPacket')) {
++        bot._client.write('attack', { entityId: target.id })
++        return
++      }
++
++      bot._client.write('use_entity', {
++        entityId: target.id,
++        hand: 0,
++        location: {
++          x: x ?? 0,
++          y: y ?? 0,
++          z: z ?? 0
++        },
++        usingSecondaryAction: sneaking
++      })
++      return
++    }
++
+     if (x && y && z) {
+       bot._client.write('use_entity', {
+         target: target.id,
+diff --git a/node_modules/mineflayer/lib/plugins/inventory.js b/node_modules/mineflayer/lib/plugins/inventory.js
+index 0636faa..8c6224f 100644
+--- a/node_modules/mineflayer/lib/plugins/inventory.js
++++ b/node_modules/mineflayer/lib/plugins/inventory.js
+@@ -115,6 +115,7 @@ function inject (bot, { hideErrors }) {
+   function activateItem (offHand = false) {
+     bot.usingHeldItem = true
+     sequence++
++    const heldItem = offHand ? bot.inventory.slots[45] : bot.heldItem
+ 
+     if (bot.supportFeature('useItemWithBlockPlace')) {
+       bot._client.write('block_place', {
+@@ -135,6 +136,9 @@ function inject (bot, { hideErrors }) {
+         }
+       })
+     }
++    if (heldItem?.name === 'firework_rocket' && bot.entity?.elytraFlying) {
++      bot._handleFireworkRocketUse?.(`local:${sequence}`, heldItem)
++    }
+   }
+ 
+   function deactivateItem () {
+@@ -243,6 +247,16 @@ function inject (bot, { hideErrors }) {
+   async function activateEntity (entity) {
+     // TODO: tell the server that we are not sneaking while doing this
+     await bot.lookAt(entity.position.offset(0, 1, 0), false)
++    if (bot.supportFeature('useEntityUsesEntityId')) {
++      bot._client.write('use_entity', {
++        entityId: entity.id,
++        hand: 0,
++        location: { x: 0, y: 0, z: 0 },
++        usingSecondaryAction: false
++      })
++      return
++    }
++
+     bot._client.write('use_entity', {
+       target: entity.id,
+       mouse: 0, // interact with entity
+@@ -254,6 +268,20 @@ function inject (bot, { hideErrors }) {
+   async function activateEntityAt (entity, position) {
+     // TODO: tell the server that we are not sneaking while doing this
+     await bot.lookAt(position, false)
++    if (bot.supportFeature('useEntityUsesEntityId')) {
++      bot._client.write('use_entity', {
++        entityId: entity.id,
++        hand: 0,
++        location: {
++          x: position.x - entity.position.x,
++          y: position.y - entity.position.y,
++          z: position.z - entity.position.z
++        },
++        usingSecondaryAction: false
++      })
++      return
++    }
++
+     bot._client.write('use_entity', {
+       target: entity.id,
+       mouse: 2, // interact with entity at
+diff --git a/node_modules/mineflayer/lib/plugins/physics.js b/node_modules/mineflayer/lib/plugins/physics.js
+index cecae69..eedc712 100644
+--- a/node_modules/mineflayer/lib/plugins/physics.js
++++ b/node_modules/mineflayer/lib/plugins/physics.js
+@@ -83,6 +83,12 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
+       bot.emit('physicsTick')
+       bot.emit('physicTick') // Deprecated, only exists to support old plugins. May be removed in the future
+     }
++    if (bot.entity.elytraFlying && bot.entity.onGround) {
++      bot._setElytraFlyingState?.(bot.entity, false)
++    }
++    if (bot.fireworkRocketDuration > 0) {
++      bot.fireworkRocketDuration--
++    }
+     if (shouldUsePhysics) {
+       updatePosition(now)
+     }
+@@ -240,6 +246,7 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
+       actionId: bot.supportFeature('entityActionUsesStringMapper') ? 'start_elytra_flying' : 8,
+       jumpBoost: 0
+     })
++    bot._setElytraFlyingState?.(bot.entity, true)
+   }
+ 
+   bot.setControlState = (control, state) => {
+diff --git a/node_modules/mineflayer/lib/plugins/time.js b/node_modules/mineflayer/lib/plugins/time.js
+index 0b9411d..df8f463 100644
+--- a/node_modules/mineflayer/lib/plugins/time.js
++++ b/node_modules/mineflayer/lib/plugins/time.js
+@@ -13,9 +13,36 @@ function inject (bot) {
+     age: null
+   }
+   bot._client.on('update_time', (packet) => {
+-    const time = longToBigInt(packet.time)
+-    const age = longToBigInt(packet.age)
+-    const doDaylightCycle = packet.tickDayTime !== undefined ? !!packet.tickDayTime : time >= 0n
++    const clockUpdate = readClockUpdates(packet.clockUpdates)
++    const packetAge = packet.age ?? packet.gameTime ?? packet.time
++    if (packetAge == null) return
++
++    const age = longToBigInt(packetAge)
++    const previousAge = bot.time.bigAge
++    const previousTime = bot.time.bigTime
++
++    let packetTime = packet.time ?? clockUpdate?.time
++    const daylightBasis = packetTime ?? packet.gameTime ?? packet.age
++    const packetDayTime = packetTime == null ? null : longToBigInt(packetTime)
++    let doDaylightCycle
++    if (packet.tickDayTime !== undefined) {
++      doDaylightCycle = !!packet.tickDayTime
++    } else if (clockUpdate?.tickRate !== undefined) {
++      doDaylightCycle = clockUpdate.tickRate > 0
++    } else if (packetDayTime != null) {
++      doDaylightCycle = packetDayTime >= 0n
++    } else {
++      doDaylightCycle = bot.time.doDaylightCycle ?? (longToBigInt(daylightBasis) >= 0n)
++    }
++
++    if (packetTime == null && previousTime != null && previousAge != null) {
++      const ageDelta = age - previousAge
++      packetTime = doDaylightCycle ? previousTime + ageDelta : previousTime
++    }
++    packetTime ??= packet.gameTime ?? packet.age
++    if (packetTime == null) return
++
++    const time = packetDayTime ?? longToBigInt(packetTime)
+     // When doDaylightCycle is false, we need to take the absolute value of time
+     const finalTime = doDaylightCycle ? time : (time < 0n ? -time : time)
+ 
+@@ -33,6 +60,53 @@ function inject (bot) {
+   })
+ }
+ 
++function readClockUpdates (buffer) {
++  if (!buffer || buffer.length === 0) return null
++  let offset = 0
++  const count = readVarInt(buffer, offset)
++  offset = count.offset
++
++  for (let i = 0; i < count.value && offset < buffer.length; i++) {
++    const type = readVarInt(buffer, offset)
++    offset = type.offset
++    const time = readVarLong(buffer, offset)
++    offset = time.offset
++    const tickRate = offset + 8 <= buffer.length ? buffer.readFloatBE(offset + 4) : undefined
++    offset += 8
++
++    if (type.value === 0) return { time: time.value, tickRate }
++  }
++  return null
++}
++
++function readVarInt (buffer, offset) {
++  let value = 0
++  let shift = 0
++  let cursor = offset
++  while (cursor < buffer.length) {
++    const byte = buffer[cursor++]
++    value |= (byte & 0x7f) << shift
++    if ((byte & 0x80) === 0) return { value, offset: cursor }
++    shift += 7
++  }
++  throw new Error('Invalid varint in update_time clockUpdates')
++}
++
++function readVarLong (buffer, offset) {
++  let value = 0n
++  let shift = 0n
++  let cursor = offset
++  while (cursor < buffer.length) {
++    const byte = buffer[cursor++]
++    value |= BigInt(byte & 0x7f) << shift
++    if ((byte & 0x80) === 0) return { value: BigInt.asIntN(64, value), offset: cursor }
++    shift += 7n
++  }
++  throw new Error('Invalid varlong in update_time clockUpdates')
++}
++
+ function longToBigInt (arr) {
++  if (typeof arr === 'bigint') return BigInt.asIntN(64, arr)
++  if (typeof arr === 'number') return BigInt.asIntN(64, BigInt(arr))
+   return BigInt.asIntN(64, (BigInt(arr[0]) << 32n)) | BigInt(arr[1])
+ }
+diff --git a/node_modules/mineflayer/lib/version.js b/node_modules/mineflayer/lib/version.js
+index c4843bb..d96f9f8 100644
+--- a/node_modules/mineflayer/lib/version.js
++++ b/node_modules/mineflayer/lib/version.js
+@@ -1,4 +1,4 @@
+-const testedVersions = ['1.8.8', '1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2', '1.14.4', '1.15.2', '1.16.5', '1.17.1', '1.18.2', '1.19', '1.19.2', '1.19.3', '1.19.4', '1.20.1', '1.20.2', '1.20.4', '1.20.6', '1.21.1', '1.21.3', '1.21.4', '1.21.5', '1.21.6', '1.21.8', '1.21.9', '1.21.11']
++const testedVersions = ['1.8.8', '1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2', '1.14.4', '1.15.2', '1.16.5', '1.17.1', '1.18.2', '1.19', '1.19.2', '1.19.3', '1.19.4', '1.20.1', '1.20.2', '1.20.4', '1.20.6', '1.21.1', '1.21.3', '1.21.4', '1.21.5', '1.21.6', '1.21.8', '1.21.9', '1.21.11', '26.1.2']
+ module.exports = {
+ 
+   testedVersions,

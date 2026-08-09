@@ -1,5 +1,12 @@
 // migrate-upstream 的纯逻辑（独立模块便于单测；migrate-upstream.mjs 为 CLI 入口）。
 // 无顶层副作用，可安全 import。
+//
+// ⚠️ v1.0.0（C1）改造标注：依赖已全部为官方 npm 版，26.1.2 适配由 patches/ 补丁承担——
+// 本模块的 git-pin→npm 迁移逻辑已过时。上游 PR #3902/#1487 合并后的正确迁移 =
+// ① 删 patches/mineflayer+4.37.1.patch、patches/minecraft-protocol+1.66.2.patch
+// ② package.json 删 postinstall patch-package、devDeps 删 patch-package
+// ③ check-compat.mjs 删 PATCH_SENTINELS 与 3.7 门禁、恢复版本号检查
+// （待上游合并时改造，届时 check:compat 会先报补丁冲突提示）
 
 import { readFileSync, writeFileSync } from 'node:fs'
 

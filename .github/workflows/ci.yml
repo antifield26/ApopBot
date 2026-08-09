@@ -2,6 +2,8 @@
 # 覆盖：ubuntu（debian 系）与 windows 双端 × Node 24（LTS）/ 26（部署机版本）。
 # engines >=22 但 CI 面向实际运行环境：部署机 = Windows + Node 26，LTS = 24。
 # 测试全离线（mock 完善，无真实网络调用）；check:compat 无 --probe（不依赖服务器）。
+# v1.0.0（C1）：依赖全为官方 npm 版 + patch-package 本地补丁（26.1.2 适配），
+# 无 git 依赖 → 不再需要 git+ssh→https rewrite hack。
 
 name: CI
 
@@ -32,13 +34,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-
-      # lock 内 mineflayer/minecraft-protocol 的 resolved 是 git+ssh://git@github.com/
-      # ——CI 无 SSH key 会挂起，必须 npm ci 前用 https 重写（与 docs/deploy.md 的
-      # 部署机绕行同款）
-      - name: Rewrite git+ssh to https (git deps in lockfile)
-        run: git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
-        shell: bash
 
       - uses: actions/setup-node@v5
         with:

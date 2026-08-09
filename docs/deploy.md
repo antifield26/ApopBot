@@ -18,10 +18,15 @@
 ```powershell
 winget install --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements   # Node.js 22 LTS
 winget install --id NSSM.NSSM --accept-package-agreements --accept-source-agreements           # Windows 服务注册
-winget install --id Git.Git                                                                     # git（npm ci 需要）
-# npm ci 的 git+ssh 依赖（mineflayer PR pin）防挂起：
-git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
+winget install --id Git.Git                                                                     # git（部署拉取用；依赖已无 git 引用，npm ci 不再需要）
 ```
+
+重开 shell 后验证：`node -v`（≥22）、`nssm version`。
+
+> v1.0.0（C1）：依赖全部为官方 npm 版，26.1.2 协议适配由 `patches/` 的 patch-package
+> 补丁承担（`npm install`/`npm ci` 的 postinstall 自动应用，无需任何手工步骤）。
+> 升级 mineflayer/minecraft-protocol 版本时补丁会因 context 冲突报错——先删补丁重装
+> 再按 docs/upstream-migration.md 重新生成。
 
 重开 shell 后验证：`node -v`（≥22）、`nssm version`。
 

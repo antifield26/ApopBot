@@ -11,16 +11,24 @@ import { createRequire } from 'node:module'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 // 期望的 pin（与 package.json 同步维护）
-// mineflayer PR 分支将 chunk/physics 声明为 mneuhaus fork 的可变分支名（force-push 风险），
-// 故 overrides 以官方 npm 版本覆盖：prismarine-chunk 1.41.0 / prismarine-physics 1.11.1
-// 已于 2026-07-31 官方发布 26.1 支持（含 #329 的 fluid-count/fromLocalPalette 修复）。
-// 语义正确性由下方内容检查（3.5）兜底。
+// v1.0.0（C1）：全部依赖为官方 npm 版——26.1.2 协议 775 适配由 patches/ 的
+// patch-package 补丁承担（mineflayer PR#3902 / protocol PR#1487 上游未合并，官方
+// npm 最新版最高支持 1.21.11）。补丁应用性由 3.7 哨兵检查兜底。
+// minecraft-data 官方 3.113.0 已含 26.1.2 数据（零补丁）；prismarine-chunk 1.41.0 /
+// prismarine-physics 1.11.1 官方版已含 26.1 支持（语义正确性由 3.5 内容检查兜底）。
 const EXPECTED = {
-  'minecraft-data': { kind: 'npm', version: '3.112.0' },
-  'minecraft-protocol': { kind: 'git', sha: '3fb78a8da17cbce774a6cf8d78dfd889f1fbb8bf' },
-  'mineflayer': { kind: 'git', sha: 'b30c85cb24d9fc7a009f61fe71a4fead516f8802' },
+  'minecraft-data': { kind: 'npm', version: '3.113.0' },
+  'minecraft-protocol': { kind: 'npm', version: '1.66.2' },
+  'mineflayer': { kind: 'npm', version: '4.37.1' },
   'prismarine-chunk': { kind: 'npm', version: '1.41.0' },
   'prismarine-physics': { kind: 'npm', version: '1.11.1' }
+}
+
+// 补丁哨兵（3.7）：node_modules 内必须存在补丁引入的标记行——它只出现在
+// patches/ 对应的补丁里，存在即证明 postinstall 的 patch-package 已应用
+const PATCH_SENTINELS = {
+  'mineflayer+4.37.1.patch': ['node_modules/mineflayer/lib/version.js', "'26.1.2'"],
+  'minecraft-protocol+1.66.2.patch': ['node_modules/minecraft-protocol/src/version.js', "'26.1.2'"]
 }
 
 // 目标协议版本（与 mcVersion 对应；上游更新时在 docs/upstream-migration.md 说明）
@@ -108,7 +116,7 @@ async function main () {
     const versions = m ? m[1].match(/'([^']+)'/g).map(s => s.replaceAll("'", '')) : []
     check(`minecraft-protocol 支持 ${args.mcVersion}`, versions.includes(args.mcVersion),
       `installed versions: ${versions.join(', ') || '(解析失败)'}`,
-      'overrides.minecraft-protocol 应指向 PR #1487 分支 ' + EXPECTED['minecraft-protocol'].sha)
+      '运行 npm install（postinstall 的 patch-package 会应用 26.1.2 补丁，见 patches/minecraft-protocol+1.66.2.patch）')
   }
 
   // 3. 各包 resolved SHA（读 package-lock.json，比 npm ls 更稳、跨平台）
@@ -127,11 +135,6 @@ async function main () {
         check(`${pkg} 版本`, node.version === spec.version, `locked=${node.version}, expected=${spec.version}`, '检查 overrides')
         continue
       }
-      const resolved = String(node.resolved ?? '')
-      const sha = resolved.match(/#([0-9a-f]{40})$/)?.[1] ?? ''
-      check(`${pkg} SHA 固定`, sha === spec.sha,
-        `locked=${sha || '(非 git 引用)'}\n  expected=${spec.sha}`,
-        `overrides.${pkg} 应指向官方 PR 分支（github:PrismarineJS/${pkg}#${spec.sha}）`)
     }
   }
 
@@ -166,6 +169,20 @@ async function main () {
   check('项目版本一致（package.json ↔ lockfile）', pkgVersion === lockVersion && pkgVersion === lockPkgVersion,
     `package.json=${pkgVersion}, lock=${lockVersion}, lock.packages[""]=${lockPkgVersion ?? '(缺失)'}`,
     '运行 node scripts/release.mjs patch|minor|major 同步版本（版本单一来源 = package.json）')
+
+  // 3.7 patch-package 补丁应用性（v1.0.0 C1：26.1.2 适配的唯一载体——补丁缺失/未
+  // 应用时其余检查全过但协议栈不支持 26.1.2，此门禁是本方案的成败关键）
+  for (const [patchName, [targetFile, sentinel]] of Object.entries(PATCH_SENTINELS)) {
+    const patchPath = path.join(ROOT, 'patches', patchName)
+    check(`补丁 ${patchName} 存在`, existsSync(patchPath), patchPath, '从仓库重新拉取（git checkout patches/）')
+    const filePath = path.join(ROOT, targetFile)
+    if (existsSync(filePath)) {
+      const src = readFileSync(filePath, 'utf8')
+      check(`补丁 ${patchName} 已应用（哨兵 ${sentinel}）`, src.includes(sentinel),
+        `${targetFile} 含哨兵行`,
+        '运行 npm install（postinstall 自动应用）或手动 npx patch-package')
+    }
+  }
 
   // 4. --probe: ping 真实服务器
   if (args.probe) {

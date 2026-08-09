@@ -61,17 +61,16 @@ minecraft-bot (Node.js ≥22, ESM)
 - **暂停**：用户 pause 与任务内部等待（`_internalWait` + `waitingReason`）互不干扰
 - 完成语义表：mine(stopWhenDone) / fish(时长) / farm / chop / combat / breed 有自然完成；afk 无，scheduled 时必须配 `options.durationMinutes`
 
-## 依赖 pin 策略（协议 775 的核心）
+## 依赖 pin 策略（v1.0.0 C1：官方 npm + patch-package）
 
-- `mineflayer`：git SHA 直接依赖（PR #3902）
-- `minecraft-data`：overrides 固定 `3.112.0`（npm 正式版已含 775）
-- `minecraft-protocol`：overrides 固定官方 PR 分支 SHA（PR #1487 未合并）
-- `prismarine-chunk 1.41.0` / `prismarine-physics 1.11.1`：**官方 npm 版本覆盖**（2026-07-31 已发布 26.1 支持；mineflayer PR 分支声明 mneuhaus fork 的可变分支名，overrides 强制官方版以消除 force-push 风险）
-- `.npmrc`：`legacy-peer-deps=true`（npm 无法解析 git 依赖版本做 peer 校验，语义上已满足）+ `allow-git=all`（npm 12+ 供应链安全默认禁止 git 依赖，git 引用全部为 SHA 固定的官方仓库）
-- 门禁：`npm run check:compat`（每次部署预检，含 chunk/physics 26.1 内容检查与版本一致性）；迁移：`npm run migrate-upstream`（上游合并后一键回切）
+- `mineflayer ^4.37.1` / `minecraft-protocol ^1.66.2` / `minecraft-data ^3.113.0`：**全部官方 npm 版**（供应链干净、npm audit 正常、CI 无 git hack）。官方最新版仅支持到 1.21.11——26.1.2 协议 775 适配由 `patches/` 的 patch-package 补丁承担（mineflayer PR #3902 的 lib/ 适配：bed 属性新格式 / entityVelocityIsLpVec3 / use_entity 门控分支 / attack 独立包 / update_time clockUpdates；protocol PR #1487 的 src/version.js 支持列表），`postinstall` 自动应用
+- `minecraft-data 3.113.0`：官方版已含 26.1.2 数据（实测 version 775），零补丁
+- `prismarine-chunk 1.41.0` / `prismarine-physics 1.11.1`：官方 npm 版，overrides 固定（已含 26.1 支持）
+- `.npmrc`：`legacy-peer-deps=true`（补丁不改版本号，peer 校验解析依赖官方版本即可，保留以维持单一副本解析）；无 git 依赖 → 无 `allow-git`
+- 门禁：`npm run check:compat`（含 3.7 补丁哨兵门禁——补丁缺失/未应用即 FAIL；每次部署预检）；上游合并后迁移 = 删 patches + 删 postinstall（见 scripts/upstream-lib.mjs 头注释）
 
 ## 已知风险
 
-- mineflayer PR #3902 / minecraft-protocol PR #1487 尚未合并（上游链进度：chunk 已合、physics 已发布、protocol/mineflayer 待合）。SHA pin 不可变；上游合并后 `npm run migrate-upstream -- --check` 检测
+- mineflayer PR #3902 / minecraft-protocol PR #1487 上游仍未合并。补丁是本地载体：升级这两个包版本时补丁 context 冲突会显式报错（patch-package 行为，不会静默），需按 docs/upstream-migration.md 重新生成；26.1.2 的 use_entity 仍走旧格式（`useEntityUsesEntityId` feature=false），项目层 entity-actions.js 的旧格式原始包与之一致（部署机已验证），上游合并新格式后可删（保守保留）
 - `npm audit` 的 axios 漏洞全部位于 Microsoft 认证链（prismarine-auth → @xboxreplay/xboxlive-auth），offline 模式不执行该路径。**已接受风险**（第六轮 C1 评估：overrides 覆盖 axios 版本有破坏 prismarine-auth 兼容性的风险，offline 部署不触达该链；CI 审计步骤信息性标记，不门禁）
 - pino v9 transport 无法主动拆除：反复改日志配置会累积文件句柄（接受，文档化）
