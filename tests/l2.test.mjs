@@ -2,8 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Vec3 } from 'vec3'
 import { AgentInterface, _resetSummarizeCooldown, estimateTokens, applyTokenBudget } from '../src/l2/agent-interface.js'
-import { createSkillRegistry } from '../src/l2/skills.js'
 import { createL2 } from '../src/l2/index.js'
+import { createActionExecutor } from '../src/core/executor.js'
 import { loadConfig } from '../src/core/config.js'
 
 function makeLogger () {
@@ -44,9 +44,10 @@ const l2cfg = { enabled: true, provider: 'cloud', model: 'x', cooldownMs: 0, max
 
 function makeAgent (ctx, script) {
   const provider = makeFakeProvider(script)
-  const skills = createSkillRegistry(ctx)
-  const agent = new AgentInterface(ctx, { provider, skills, config: l2cfg })
-  return { agent, provider, skills }
+  // v1.0.0 C4：executor（真实原语层 + 假 provider）——工具循环与 act 都走执行器
+  const executor = createActionExecutor(ctx, { audit: null })
+  const agent = new AgentInterface(ctx, { provider, executor, config: l2cfg })
+  return { agent, provider, executor }
 }
 
 test('createL2: enabled=false 返回 null（零依赖路径）', () => {
@@ -75,7 +76,7 @@ test('chat: 单轮回复（无工具调用）', async () => {
 test('chat: 工具调用循环（调用 status 后回复）', async () => {
   const ctx = makeCtx()
   const { agent } = makeAgent(ctx, [
-    { text: null, toolCalls: [{ id: 't1', name: 'status', arguments: {} }] },
+    { text: null, toolCalls: [{ id: 't1', name: 'act', arguments: { actions: [{ op: 'observe_status', args: {} }] } }] },
     { text: '连接正常，重连 2 次', toolCalls: [] }
   ])
   const { reply } = await agent.chat('steve', '状态如何？')
@@ -85,10 +86,10 @@ test('chat: 工具调用循环（调用 status 后回复）', async () => {
 test('chat: maxSteps 上限（工具调用无限循环时终止）', async () => {
   const ctx = makeCtx()
   // 脚本：永远返回工具调用（模拟 LLM 死循环）→ maxSteps 必须截断
-  const script = Array.from({ length: 10 }, () => ({ text: null, toolCalls: [{ id: 't', name: 'status', arguments: {} }] }))
+  const script = Array.from({ length: 10 }, () => ({ text: null, toolCalls: [{ id: 't', name: 'act', arguments: { actions: [{ op: 'observe_status', args: {} }] } }] }))
   const p = makeFakeProvider(script)
-  const skills = createSkillRegistry(ctx)
-  const agent = new AgentInterface(ctx, { provider: p, skills, config: { ...l2cfg, maxSteps: 3 } })
+  const executor = createActionExecutor(ctx, { audit: null })
+  const agent = new AgentInterface(ctx, { provider: p, executor, config: { ...l2cfg, maxSteps: 3 } })
   const { reply } = await agent.chat('steve', '循环')
   assert.ok(p.calls.length <= 3, `maxSteps=3 时最多 3 轮工具调用（实际 ${p.calls.length}）`)
   assert.ok(typeof reply === 'string')
@@ -117,10 +118,10 @@ test('C7/T 修复：冷却按玩家——一个玩家的冷却不挡其他玩家
 
 test('C7/U 修复：maxSteps 耗尽 → 显式文案（不再返回无回复占位污染会话）', async () => {
   const ctx = makeCtx()
-  const script = Array.from({ length: 10 }, () => ({ text: null, toolCalls: [{ id: 't', name: 'status', arguments: {} }] }))
+  const script = Array.from({ length: 10 }, () => ({ text: null, toolCalls: [{ id: 't', name: 'act', arguments: { actions: [{ op: 'observe_status', args: {} }] } }] }))
   const p = makeFakeProvider(script)
-  const skills = createSkillRegistry(ctx)
-  const agent = new AgentInterface(ctx, { provider: p, skills, config: { ...l2cfg, maxSteps: 3 } })
+  const executor = createActionExecutor(ctx, { audit: null })
+  const agent = new AgentInterface(ctx, { provider: p, executor, config: { ...l2cfg, maxSteps: 3 } })
   const { reply } = await agent.chat('steve', '循环')
   assert.ok(reply.includes('最大工具步数'), reply)
 })
@@ -148,8 +149,8 @@ test('chat: abort 返回友好回复', async () => {
   const err = Object.assign(new Error('aborted'), { name: 'AbortError' })
   // 手动触发 abort 路径：busy 状态 + provider 抛 AbortError
   const p = { chat: async () => { throw err } }
-  const skills = createSkillRegistry(ctx)
-  const agent2 = new AgentInterface(ctx, { provider: p, skills, config: l2cfg })
+  const executor = createActionExecutor(ctx, { audit: null })
+  const agent2 = new AgentInterface(ctx, { provider: p, executor, config: l2cfg })
   const r = await agent2.chat('steve', 'x')
   assert.equal(r.reply, '请求已中止')
 })
@@ -158,8 +159,8 @@ test('chat: provider 抛错 → 友好回复不崩溃', async () => {
   const ctx = makeCtx()
   const { agent } = makeAgent(ctx, [])
   const p = { chat: async () => { throw new Error('API 500') } }
-  const skills = createSkillRegistry(ctx)
-  const agent2 = new AgentInterface(ctx, { provider: p, skills, config: l2cfg })
+  const executor = createActionExecutor(ctx, { audit: null })
+  const agent2 = new AgentInterface(ctx, { provider: p, executor, config: l2cfg })
   const r = await agent2.chat('steve', 'x')
   assert.ok(r.reply.includes('处理出错'))
 })
@@ -167,7 +168,7 @@ test('chat: provider 抛错 → 友好回复不崩溃', async () => {
 test('act: 直调技能成功', async () => {
   const ctx = makeCtx()
   const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('steve', 'status', {})
+  const r = await agent.act('steve', 'observe_status', {})
   assert.equal(r.ok, true)
   assert.equal(r.result.state, 'connected')
 })
@@ -175,7 +176,7 @@ test('act: 直调技能成功', async () => {
 test('act: op 技能被非 op 拒绝', async () => {
   const ctx = makeCtx()
   const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('creeper', 'move_to', { x: 1, y: 2, z: 3 })
+  const r = await agent.act('creeper', 'goto', { x: 1, y: 2, z: 3 })
   assert.equal(r.ok, false)
   assert.ok(r.result.includes('权限不足'))
 })
@@ -183,10 +184,10 @@ test('act: op 技能被非 op 拒绝', async () => {
 test('act: 参数校验（缺必填/类型错误）', async () => {
   const ctx = makeCtx({}, { ops: ['op1'] }) // op 身份（参数校验先于权限通过）
   const { agent } = makeAgent(ctx, [])
-  const r1 = await agent.act('op1', 'move_to', {})
+  const r1 = await agent.act('op1', 'goto', {})
   assert.equal(r1.ok, false)
   assert.ok(r1.result.includes('缺少参数'))
-  const r2 = await agent.act('op1', 'move_to', { x: 'abc', y: 1, z: 1 })
+  const r2 = await agent.act('op1', 'goto', { x: 'abc', y: 1, z: 1 })
   assert.equal(r2.ok, false)
   assert.ok(r2.result.includes('必须是'))
 })
@@ -196,7 +197,7 @@ test('act: 未知技能', async () => {
   const { agent } = makeAgent(ctx, [])
   const r = await agent.act('op1', 'fly', {})
   assert.equal(r.ok, false)
-  assert.ok(r.result.includes('未知技能'))
+  assert.ok(r.result.includes('未知动作'))
 })
 
 test('skills: reply 技能通过 sendChat 发送', async () => {
@@ -207,17 +208,17 @@ test('skills: reply 技能通过 sendChat 发送', async () => {
   assert.ok(ctx.bot.messages.includes('你好'))
 })
 
-test('skills: inventory_summary 聚合数量（U14 精简为字符串 Top-N）', async () => {
+test('primitives: observe_inventory 聚合数量（v1.0.0 结构化返回）', async () => {
   const ctx = makeCtx()
   const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('steve', 'inventory_summary', {})
+  const r = await agent.act('steve', 'observe_inventory', {})
   assert.equal(r.ok, true)
-  assert.equal(r.result, 'diamond:5', 'U14 后为紧凑字符串（不再全量对象撑爆上下文）')
-  // 空背包 → 空态文本
+  assert.deepEqual(r.result, { items: [{ name: 'diamond', count: 5 }], total: 5 })
+  // 空背包 → 空态
   const ctx2 = makeCtx({ bot: { ...makeCtx().bot, inventory: { items: () => [] } } })
   const { agent: a2 } = makeAgent(ctx2, [])
-  const empty = await a2.act('steve', 'inventory_summary', {})
-  assert.equal(empty.result, '背包为空')
+  const empty = await a2.act('steve', 'observe_inventory', {})
+  assert.deepEqual(empty.result, { items: [], total: 0 })
 })
 
 test('provider: v1.0.0 单 provider（云端）——createProvider 忽略 provider 配置恒返回 cloud 实例', async () => {
@@ -302,7 +303,7 @@ test('U2: reset 清空会话；act 直调不污染会话', async () => {
   ])
   agent.reset('mem3')
   await agent.chat('mem3', 'hi')
-  await agent.act('mem3', 'status', {})
+  await agent.act('mem3', 'observe_status', {})
   agent.reset('mem3')
   await agent.chat('mem3', 'again')
   assert.equal(provider.calls[1].messages.length, 1, 'reset 后第二轮应只有本轮（act 不写入会话）')
@@ -325,7 +326,7 @@ test('skills: run_task exclusive 排队时返回排队信息（不假成功）',
   ctx.tasks.getStatus = () => [{ id: 'g', state: 'created' }]
   ctx.tasks.isPendingExclusive = () => true
   const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('op1', 'run_task', { type: 'combat', id: 'g' })
+  const r = await agent.act('op1', 'start_task', { type: 'combat', id: 'g' })
   assert.equal(r.ok, true)
   assert.ok(r.result.includes('排队中'), `排队时应如实告知 LLM: ${r.result}`)
 })
@@ -350,8 +351,8 @@ test('A5 修复: summarize 全局冷却——60s 内连续调用只发一次 LLM
   const ctx = makeCtx()
   let calls = 0
   const p = { chat: async () => { calls++; return { text: '一句话' } } }
-  const skills = createSkillRegistry(ctx)
-  const agent = new AgentInterface(ctx, { provider: p, skills, config: l2cfg })
+  const executor = createActionExecutor(ctx, { audit: null })
+  const agent = new AgentInterface(ctx, { provider: p, executor, config: l2cfg })
   assert.equal(await agent.summarize('a'), '一句话', '首次调用应发出')
   assert.equal(calls, 1)
   assert.equal(await agent.summarize('b'), null, '冷却期内应静默跳过（返回 null 让调用方用固定模板）')
@@ -361,15 +362,15 @@ test('A5 修复: summarize 全局冷却——60s 内连续调用只发一次 LLM
 test('U6: summarize 失败 → null（调用方回退固定模板，不抛错）', async () => {
   const ctx = makeCtx()
   const p = { chat: async () => { throw new Error('API down') } }
-  const skills = createSkillRegistry(ctx)
-  const agent = new AgentInterface(ctx, { provider: p, skills, config: l2cfg })
+  const executor = createActionExecutor(ctx, { audit: null })
+  const agent = new AgentInterface(ctx, { provider: p, executor, config: l2cfg })
   assert.equal(await agent.summarize('x'), null)
 })
 
 test('U6: summarize 无 provider → null（零依赖路径）', async () => {
   const ctx = makeCtx()
-  const skills = createSkillRegistry(ctx)
-  const agent = new AgentInterface(ctx, { provider: null, skills, config: l2cfg })
+  const executor = createActionExecutor(ctx, { audit: null })
+  const agent = new AgentInterface(ctx, { provider: null, executor, config: l2cfg })
   assert.equal(await agent.summarize('x'), null)
 })
 
@@ -396,58 +397,48 @@ function makeFindCtx (overrides = {}, cfgPatch = {}) {
   return ctx
 }
 
-test('C8/W 修复：find_block 找到并到达 → 报告实际到达坐标（非欧氏最近候选）', async () => {
+test('primitives: observe_blocks 找到候选（结构化返回，不移动）', async () => {
   const ctx = makeFindCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('op1', 'find_block', { blockName: 'iron_ore' })
+  const r = await agent.act('op1', 'observe_blocks', { blockName: 'iron_ore' })
   assert.equal(r.ok, true)
-  assert.ok(r.result.includes('已到达 iron_ore'), r.result)
-  assert.ok(r.result.includes('0,64,0'), `应报实际到达点（bot 位置）: ${r.result}`)
+  assert.deepEqual(r.result.blockNames, ['iron_ore'])
+  assert.deepEqual(r.result.candidates, [[10, 64, 0]], '候选按距离升序')
 })
 
-test('skills: find_block 无候选 → 如实反馈', async () => {
+test('primitives: observe_blocks 多名字批量 + 区域过滤', async () => {
   const ctx = makeFindCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('op1', 'find_block', { blockName: 'bamboo' })
+  const r = await agent.act('op1', 'observe_blocks', { blockNames: ['iron_ore', 'bamboo'], area: { x1: 0, y1: 0, z1: 0, x2: 20, y2: 100, z2: 20 } })
   assert.equal(r.ok, true)
-  assert.ok(r.result.includes('没有暴露在地表的 bamboo'), r.result)
+  assert.ok(r.result.blockNames.includes('iron_ore'))
+  assert.ok(r.result.candidates.length >= 1)
+  // 区域外（x>20）被过滤
+  const r2 = await agent.act('op1', 'observe_blocks', { blockName: 'iron_ore', area: { x1: 100, y1: 0, z1: 100, x2: 200, y2: 100, z2: 200 } })
+  assert.deepEqual(r2.result.candidates, [], '区域外候选被过滤')
 })
 
-test('skills: find_block 未知方块 → ok:false', async () => {
+test('primitives: observe_blocks 无候选 → 空数组', async () => {
   const ctx = makeFindCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('op1', 'find_block', { blockName: 'not_a_block' })
+  const r = await agent.act('op1', 'observe_blocks', { blockName: 'bamboo' })
+  assert.equal(r.ok, true)
+  assert.deepEqual(r.result.candidates, [])
+})
+
+test('primitives: observe_blocks 未知方块 → ok:false', async () => {
+  const ctx = makeFindCtx({}, { ops: ['op1'] })
+  const { agent } = makeAgent(ctx, [])
+  const r = await agent.act('op1', 'observe_blocks', { blockName: 'not_a_block' })
   assert.equal(r.ok, false)
   assert.ok(r.result.includes('未知方块类型'))
 })
 
-test('skills: find_block 无法到达（NoPath）→ 如实反馈最近候选', async () => {
-  const bot = {
-    entity: { position: new Vec3(0, 64, 0) },
-    registry: { blocksByName: { iron_ore: { id: 44 } } },
-    findBlocks: () => [new Vec3(10, 64, 0)],
-    blockAt: () => ({ boundingBox: 'empty', name: 'air' }),
-    once: () => {},
-    removeListener: () => {},
-    pathfinder: {
-      setGoal: () => {}, stop: () => {},
-      goto: () => Promise.reject(Object.assign(new Error('NoPath'), { name: 'NoPath' }))
-    }
-  }
-  const ctx = makeCtx({ bot }, { ops: ['op1'] })
-  const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('op1', 'find_block', { blockName: 'iron_ore' })
-  assert.equal(r.ok, true) // 技能 handler 返回文本（含失败信息），非抛错
-  assert.ok(r.result.includes('无法到达'), r.result)
-  assert.ok(r.result.includes('10,64,0'), r.result)
-})
-
-test('skills: find_block 非 op → 权限不足', async () => {
+test('primitives: observe_blocks 只读（all 权限）——非 op 可查询', async () => {
   const ctx = makeFindCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('creeper', 'find_block', { blockName: 'iron_ore' })
-  assert.equal(r.ok, false)
-  assert.ok(r.result.includes('权限不足'))
+  const r = await agent.act('creeper', 'observe_blocks', { blockName: 'iron_ore' })
+  assert.equal(r.ok, true, '观察类原语只读——非 op 可用')
 })
 
 // ---- A3（第四轮）：技能层仲裁器防线与参数边界 ----
@@ -511,31 +502,17 @@ test('修复: follow_player 目标选择——跟随 Bot 自己被拒 + "跟随�
   assert.ok(missing.result.includes('找不到玩家 alex'), missing.result)
 })
 
-test('A3 修复: find_block 到达时附加 exclusive 冲突告警（与 !find 命令同款）', async () => {
-  const arb = await import('../src/core/arbiter.js')
-  try {
-    const ctx = makeFindCtx({}, { ops: ['op1'] })
-    const { agent } = makeAgent(ctx, [])
-    arb.setExclusiveOwner('g1')
-    const r = await agent.act('op1', 'find_block', { blockName: 'iron_ore' })
-    assert.equal(r.ok, true)
-    assert.ok(r.result.includes('exclusive 任务 g1'), `到达结果应含告警: ${r.result}`)
-  } finally {
-    arb.setExclusiveOwner(null)
-  }
-})
-
-test('A3 修复: move_to 坐标越界（世界边界 ±30000000）→ 参数校验拒绝', async () => {
+test('A3 修复: goto 坐标越界（世界边界 ±30000000）→ 参数校验拒绝', async () => {
   const ctx = makeCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
-  const r1 = await agent.act('op1', 'move_to', { x: 1e18, y: 64, z: 0 })
+  const r1 = await agent.act('op1', 'goto', { x: 1e18, y: 64, z: 0 })
   assert.equal(r1.ok, false)
   assert.ok(r1.result.includes('不能大于'), r1.result)
-  const r2 = await agent.act('op1', 'move_to', { x: -1e18, y: 64, z: 0 })
+  const r2 = await agent.act('op1', 'goto', { x: -1e18, y: 64, z: 0 })
   assert.equal(r2.ok, false)
   assert.ok(r2.result.includes('不能小于'), r2.result)
   // NaN/Infinity 兜底（validateParams isFinite）
-  const r3 = await agent.act('op1', 'move_to', { x: Number.NaN, y: 64, z: 0 })
+  const r3 = await agent.act('op1', 'goto', { x: Number.NaN, y: 64, z: 0 })
   assert.equal(r3.ok, false)
   assert.ok(r3.result.includes('有限数值'), r3.result)
 })
@@ -553,7 +530,7 @@ test('A2: applyTokenBudget——超预算丢最旧历史轮，工具轮保留', 
   const messages = [
     { role: 'user', content: '旧历史一（很长很长很长很长很长很长）' },
     { role: 'assistant', content: '旧历史二' },
-    { role: 'assistant', content: '', toolCalls: [{ id: 't1', name: 'status', arguments: {} }] },
+    { role: 'assistant', content: '', toolCalls: [{ id: 't1', name: 'act', arguments: { actions: [{ op: 'observe_status', args: {} }] } }] },
     { role: 'user', content: '', toolResults: [{ id: 't1', name: 'status', output: '结果' }] },
     { role: 'user', content: '当前问题' }
   ]
@@ -568,7 +545,7 @@ test('A2: applyTokenBudget——超预算丢最旧历史轮，工具轮保留', 
 test('A2: applyTokenBudget——工具结果动态截短且不低于下限', () => {
   const long = 'x'.repeat(5000)
   const messages = [
-    { role: 'assistant', content: '', toolCalls: [{ id: 't1', name: 'status', arguments: {} }] },
+    { role: 'assistant', content: '', toolCalls: [{ id: 't1', name: 'act', arguments: { actions: [{ op: 'observe_status', args: {} }] } }] },
     { role: 'user', content: '', toolResults: [{ id: 't1', name: 'status', output: long }] },
     { role: 'user', content: 'q' }
   ]
@@ -588,18 +565,18 @@ test('A2: applyTokenBudget——未超预算不动消息', () => {
 test('A3 修复: environment 技能输出环境快照（makeCtx 缺 time/weather 字段——null 安全）', async () => {
   const ctx = makeCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('steve', 'environment', {})
+  const r = await agent.act('steve', 'observe_environment', {})
   assert.equal(r.ok, true)
   assert.ok(r.result.includes('位置'), r.result) // makeCtx bot 有 entity.position
   assert.ok(r.result.includes('朝向'), r.result) // yaw 存在
 })
 
-test('A3 修复: nearby_entities 输出列表（无实体 → 如实反馈）', async () => {
+test('A3 修复: observe_entities 输出列表（无实体 → 空数组）', async () => {
   const ctx = makeCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('steve', 'nearby_entities', { maxDistance: 32 })
+  const r = await agent.act('steve', 'observe_entities', { maxDistance: 32 })
   assert.equal(r.ok, true)
-  assert.ok(r.result.includes('没有'), r.result)
+  assert.deepEqual(r.result, [], '无实体返回空数组（结构化）')
 })
 
 test('A3 修复: 环境自动注入——chat 的 system 含环境行', async () => {
@@ -625,37 +602,37 @@ test('A3 修复: 环境自动注入——chat 的 system 含环境行', async ()
 
 // ---- L2 进化（B2/C1）：探索记忆查询 + 单步探索 ----
 
-test('B2 修复: query_map 查询探索记忆（无记录 → 指引探索）', async () => {
+test('B2 修复: query_map 查询探索记忆（结构化返回）', async () => {
   const discovery = await import('../src/core/discovery.js')
   discovery._reset()
   const ctx = makeCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
-  // 空地图 → 指引
+  // 空地图 → 空数组
   const empty = await agent.act('op1', 'query_map', { blockName: 'iron_ore' })
   assert.equal(empty.ok, true)
-  assert.ok(empty.result.includes('还没有 iron_ore'), empty.result)
-  // 有记录 → 坐标
+  assert.deepEqual(empty.result, [])
+  // 有记录 → 坐标对象
   discovery.recordResource('iron_ore', { x: 10, y: 63, z: 8 })
   const hit = await agent.act('op1', 'query_map', { blockName: 'iron_ore' })
-  assert.ok(hit.result.includes('iron_ore @ 10,63,8'), hit.result)
-  // 非 op 拒绝（all 权限？query_map 是 all——对，all）
+  assert.deepEqual(hit.result.map(h => [h.x, h.y, h.z]), [[10, 63, 8]])
+  // all 权限（只读查询）
   const nonOp = await agent.act('creeper', 'query_map', { blockName: 'iron_ore' })
   assert.equal(nonOp.ok, true, 'query_map 是 all 权限（只读查询）')
   discovery._reset()
 })
 
-test('B2 修复: map_status 统计（空地图 → 指引）', async () => {
+test('B2 修复: map_status 统计（结构化返回）', async () => {
   const discovery = await import('../src/core/discovery.js')
   discovery._reset()
   const ctx = makeCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
   const empty = await agent.act('op1', 'map_status', {})
-  assert.ok(empty.result.includes('地图还是空的'), empty.result)
+  assert.equal(empty.result.anchors, 0, '空地图 anchors=0')
   discovery.recordAnchor({ x: 0, y: 64, z: 0 })
   discovery.recordResource('coal_ore', { x: 5, y: 60, z: 0 })
   const s = await agent.act('op1', 'map_status', {})
-  assert.ok(s.result.includes('已访问 1 站'), s.result)
-  assert.ok(s.result.includes('coal_ore:1'), s.result)
+  assert.equal(s.result.anchors, 1)
+  assert.ok(s.result.topResources.some(t => t.name === 'coal_ore' && t.count === 1), JSON.stringify(s.result.topResources))
   discovery._reset()
 })
 
@@ -676,18 +653,18 @@ test('C1 修复: explore 技能单步探索（exclusive 任务运行中被拒）
   try {
     // exclusive 运行中 → 拒绝（移动互斥）
     arb.setExclusiveOwner('g1')
-    const denied = await agent.act('op1', 'explore', { direction: 'n' })
+    const denied = await agent.act('op1', 'explore_step', { direction: 'n' })
     assert.equal(denied.ok, false)
     assert.ok(denied.result.includes('exclusive 任务 g1'), denied.result)
-    // 无冲突 → 单步探索成功 + 记录
+    // 无冲突 → 单步探索成功 + 记录（结构化返回）
     arb.setExclusiveOwner(null)
-    const r = await agent.act('op1', 'explore', { direction: 'n' })
+    const r = await agent.act('op1', 'explore_step', { direction: 'n' })
     assert.equal(r.ok, true)
-    assert.ok(r.result.includes('探索完成'), r.result)
-    assert.ok(r.result.includes('iron_ore'), `报告应含发现: ${r.result}`)
+    assert.ok(Array.isArray(r.result.from) && Array.isArray(r.result.to), `结构化返回: ${JSON.stringify(r.result)}`)
+    assert.ok(r.result.found.some(f => f.name === 'iron_ore'), `报告应含发现: ${JSON.stringify(r.result.found)}`)
     assert.ok(discovery.query('iron_ore', null, 20).length >= 1, '发现应写入记忆')
     // 非 op 拒绝
-    const nonOp = await agent.act('creeper', 'explore', {})
+    const nonOp = await agent.act('creeper', 'explore_step', {})
     assert.equal(nonOp.ok, false)
     assert.ok(nonOp.result.includes('权限不足'))
   } finally {
@@ -708,13 +685,12 @@ test('P1 修复: nearby_entities filter 命中（OR 语义 + e.type 比对——
   } }, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
   // filter='hostile'（type 值）→ 命中 zombie（此前被 name 检查拦截恒空）
-  const r1 = await agent.act('op1', 'nearby_entities', { filter: 'hostile', maxDistance: 32 })
+  const r1 = await agent.act('op1', 'observe_entities', { filter: 'hostile', maxDistance: 32 })
   assert.equal(r1.ok, true)
-  assert.ok(r1.result.includes('zombie'), `hostile 过滤应命中 zombie: ${r1.result}`)
-  assert.ok(!r1.result.includes('cow'), 'cow 不应被命中')
+  assert.deepEqual(r1.result.map(e => e.name), ['zombie'], `hostile 过滤应命中 zombie: ${JSON.stringify(r1.result)}`)
   // filter='zombie'（name 子串）→ 命中 zombie（此前被 kind 检查拦截恒空）
-  const r2 = await agent.act('op1', 'nearby_entities', { filter: 'zombie', maxDistance: 32 })
-  assert.ok(r2.result.includes('zombie'), `zombie 过滤应命中: ${r2.result}`)
+  const r2 = await agent.act('op1', 'observe_entities', { filter: 'zombie', maxDistance: 32 })
+  assert.deepEqual(r2.result.map(e => e.name), ['zombie'], `zombie 过滤应命中: ${JSON.stringify(r2.result)}`)
 })
 
 test('P2-3 修复: move_to 在 exclusive 任务运行中被拒（唯一漏网的危险技能）', async () => {
@@ -723,7 +699,7 @@ test('P2-3 修复: move_to 在 exclusive 任务运行中被拒（唯一漏网的
     const ctx = makeCtx({}, { ops: ['op1'] })
     const { agent } = makeAgent(ctx, [])
     arb.setExclusiveOwner('g1')
-    const r = await agent.act('op1', 'move_to', { x: 10, y: 64, z: 10 })
+    const r = await agent.act('op1', 'goto', { x: 10, y: 64, z: 10 })
     assert.equal(r.ok, false)
     assert.ok(r.result.includes('exclusive 任务 g1'), r.result)
   } finally {
@@ -861,8 +837,9 @@ test('U13 修复: attack 技能——Map 实体表回归 + 击杀即止（原地
   try {
     const r = await agent.act('op1', 'attack', { filter: 'zombie' })
     assert.equal(r.ok, true)
-    assert.ok(r.result.includes('已攻击 zombie'), r.result)
-    assert.ok(r.result.includes('目标已消失'), r.result)
+    assert.equal(r.result.hits, 1, `结构化返回: ${JSON.stringify(r.result)}`)
+    assert.equal(r.result.targetGone, true, '一击击杀 → targetGone')
+    assert.equal(r.result.targetName, 'zombie')
     assert.equal(packets.filter(p => p.name === 'attack').length, 1, '应写独立 attack 包（此前 Map 下标检查恒 false 从未发出）')
     assert.equal(packets[0].entityId, 1)
     // exclusive 拒绝（exclusive 检查在冷却之前——不受 500ms 冷却干扰）
@@ -906,7 +883,7 @@ test('U13 修复: attack 技能——远距目标自动接近后攻击（原地�
   const r = await agent.act('op1', 'attack', { filter: 'zombie' })
   assert.equal(r.ok, true)
   assert.equal(gotoCalls, 1, '远距目标应先接近（approachEntity）')
-  assert.ok(r.result.includes('已攻击 zombie'), r.result)
+  assert.equal(r.result.hits, 1, `接近后应攻击: ${JSON.stringify(r.result)}`)
   assert.equal(packets.filter(p => p.name === 'attack').length, 1, '接近后应攻击（此前远距直接发无效包）')
 })
 
@@ -924,7 +901,8 @@ test('U13 修复: attack 技能——连击上限（目标存活 5 次后提示�
   const { agent } = makeAgent(ctx, [])
   const r = await agent.act('op1', 'attack', { filter: 'zombie' })
   assert.equal(r.ok, true)
-  assert.ok(r.result.includes('目标仍存活'), r.result)
+  assert.equal(r.result.hits, 5, `连击至上限: ${JSON.stringify(r.result)}`)
+  assert.equal(r.result.targetGone, false, '目标存活')
   assert.equal(packets.filter(p => p.name === 'attack').length, 5, '应连击至 5 次上限（600ms 冷却）')
 })
 
@@ -937,7 +915,7 @@ test('U15: 会话工具记录——第二次 chat 的 system 注入上次工具�
   ctx.bot.removeListener = () => {}
   ctx.bot.pathfinder = { setGoal: () => {}, stop: () => {}, goto: () => Promise.resolve() }
   const { agent, provider } = makeAgent(ctx, [
-    { text: null, toolCalls: [{ id: 't1', name: 'status', arguments: {} }] },
+    { text: null, toolCalls: [{ id: 't1', name: 'act', arguments: { actions: [{ op: 'observe_status', args: {} }] } }] },
     { text: '完成' },
     { text: '继续' }
   ])
@@ -959,13 +937,13 @@ test('A2 修复: 预算裁剪生效——provider 有 contextWindow 时超预算
   assert.ok(provider.calls[0].system.includes('环境:'), provider.calls[0].system)
 })
 
-test('C5/G 修复：find_block maxDistance 越界（16-256 外）→ 参数校验拒绝（防主线程冻结）', async () => {
+test('C5/G 修复：observe_blocks maxDistance 越界（16-256 外）→ 参数校验拒绝（防主线程冻结）', async () => {
   const ctx = makeFindCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
-  const r = await agent.act('op1', 'find_block', { blockName: 'iron_ore', maxDistance: 100000 })
+  const r = await agent.act('op1', 'observe_blocks', { blockName: 'iron_ore', maxDistance: 100000 })
   assert.equal(r.ok, false)
   assert.ok(r.result.includes('不能大于'), r.result)
-  const r2 = await agent.act('op1', 'find_block', { blockName: 'iron_ore', maxDistance: 5 })
+  const r2 = await agent.act('op1', 'observe_blocks', { blockName: 'iron_ore', maxDistance: 5 })
   assert.equal(r2.ok, false)
   assert.ok(r2.result.includes('不能小于'), r2.result)
 })

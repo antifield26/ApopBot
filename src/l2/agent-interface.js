@@ -2,10 +2,12 @@
 // Node 22 全局 fetch 零新依赖；mindcraft 的 AgentProcess 模式在此规模无收益，见 docs/l2.md）。
 //
 // chat(user, text)：cooldown 门 + busy 拒并发 → 循环 ≤maxSteps：provider.chat →
-//   执行 toolCalls（≤4/轮，权限与参数校验在 skills.execute）→ 续；无工具调用即回复。
-// act(user, name, params)：直调技能（!agent act，不经 LLM）。
+//   执行 toolCalls（act 动作数组走执行器；观察/回复单动作）→ 续；无工具调用即回复。
+// act(user, name, params)：直调动作原语（!agent act，不经 LLM）。
 // stop()：AbortController 中止进行中的请求。
 //
+// v1.0.0 C4：动作协议——工具集 = act（动作数组 ≤maxActionsPerCall）+ 观察/回复；
+// 动作原语见 src/core/primitives.js（权限/exclusive/校验/冷却/审计由 executor 统一）。
 // 错误永不向上抛——以友好回复返回（配合 logger.error 留痕）。
 
 import { isOp } from '../commands/permissions.js'
@@ -141,57 +143,90 @@ function putBounded (map, key, value, max = MAX_SESSIONS) {
   if (map.size > max) map.delete(map.keys().next().value)
 }
 
-// v1.0.0 C2：单 Provider（云端 non-reasoning）——原 CORE（核心层）与 CLOUD_EXTENSION
-// （云端扩展层）机械合并为单一完整提示词（C4 将按动作协议重写内容）；分层标记/
-// 剥除逻辑随 Ollama/auto 一起移除。
-const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（minecraft-bot）。
-规则：
-1. 回答保持简短（≤250 字符），用 reply 技能说话。
-2. 涉及移动/创建任务/控制行为的操作必须用对应技能完成，不要编造能力。
-3. 危险操作（move_to/run_task/stop_task/follow_player/find_block/explore）只有 op 玩家可用——当前调用者是否是 op 见"当前会话"（技能层会强制校验，无需再向调用者要求验证）。
-4. 状态查询（status/task_status/inventory_summary）可自由使用，回答时引用真实数据。
-5. 找东西用 find_block 技能（如"去找铁矿石"→ find_block(iron_ore)），不要用其他方式编造位置。
-6. 意图→技能示例（玩家口语与你该做的）："附近有什么矿"→ query_map 查记忆或 find_block；"挖这块石头/挖掉 X 坐标"→ move_to 靠近后 dig；"放一块石头/种棵树"→ equip 取方块后 place；"打那个僵尸"→ attack（filter=zombie）；"帮我采木头/挖矿"→ run_task chop/mine；"我饿了/吃点东西"→ use_item；"拿出剑"→ equip；"跟着我/跟随我"→ follow_player（name=当前会话玩家名——"我"指说话玩家，绝不是 Bot 自己）；不确定用什么技能时先调 list_skills。
-7. 不要角色扮演，不要输出 Markdown，不要虚构玩家或世界状态。环境感知以系统消息里的"环境:"行与 environment/nearby_entities 技能结果为准——没感知到的信息（如天气/生物群系/附近实体）如实说不知道，探索过的区域可查 query_map。`
+// v1.0.0 C4：动作协议提示词（替代"意图→固定技能"映射）——教 LLM 用 act 动作数组
+// + 观察原语直接操作 Bot。op 清单与工具 schema 对应 src/core/primitives.js。
+const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（minecraft-bot）。你可以通过工具直接操控 Bot 在世界中的行动。
 
-// v1.0.0 C2：云端扩展层内容机械并入核心层（原 A-D 节合并为第 8 条规则）——
-// 单 provider 无分层必要；C4 将按"动作协议"整体重写。
-const CLOUD_EXTENSION = `
-
-8. 高级能力（v1.0.0：原云端扩展层合并）：
-A. 多步意图示例（"玩家说→技能链"）：
-- "帮我建个树屋"→ 先 inventory_summary 确认木材 → equip 木材 → move_to 目标 → place×N 逐层搭建 → reply 汇报进度。搭完一层再查一次位置，不要一次放空。
-- "挖点铁做个镐"→ find_block(iron_ore) 或 query_map 查记忆 → move_to 靠近 → dig×N → 装备/制作由玩家完成 → 汇报获得数量。
-- "去收集 20 个木头"→ run_task(chop, area) 批量采集优先于逐块 dig（任务自动往返与避障）→ 完成后 inventory_summary 核对数量。
-- "附近有危险吗"→ nearby_entities 先扫一圈 → 有 hostile 再 environment 确认方位 → attack 或如实汇报"有 X 只怪物在 Y 米外"。
-- "帮我探索周边"→ explore 单步推进，每步后用 query_map 复查已记录资源；重复调用逐步扩大范围。
-B. 技能选择策略：批量/持续型需求（采集、巡逻、养殖）→ run_task；单次交互（挖一块、放一块、打一只）→ 对应单技能。先查记忆（query_map）再探索（explore），避免重复扫描。行动前先 environment/nearby_entities 感知当前环境，不要凭猜测行动。
-C. 多步任务与异常恢复：把大请求分解为可验证的技能链，每步工具结果都要读取；工具返回失败信息时先读懂原因再决定重试/换法/求助（如 dig 提示距离远 → 先 move_to；exclusive 冲突 → 先 task_status 看谁在运行）。同一失败操作不要盲目重试两次以上。
-D. 安全边界（重申）：exclusive 任务运行期间移动/挖掘/放置/攻击/探索会被拒绝——这是任务保护机制，不是故障；不要编造世界状态或玩家行为，不确定就 query_map/environment 或如实说不知道。`
+【行动协议】
+1. 用 act 工具执行动作数组 {actions:[{op,args},...]}，一次最多 8 个、按序执行；每个动作的结果按序返回，必须读取。动作原语（op）：
+   观察：observe_status（连接/位置/血量/饥饿）、observe_inventory（背包）、observe_environment（时间/天气/维度/群系/朝向/附近）、observe_entities（附近实体）、observe_blocks（找方块位置）、observe_block（单方块详情）、observe_crops（作物成熟度）、query_map（探索记忆中的资源坐标）、map_status（探索统计）
+   移动：goto{x,y,z,range?,timeoutMs?} 寻路移动；explore_step{direction?,maxDistance?} 单步探索
+   建造：dig{x,y,z} 挖方块（不捡掉落物）；place{x,y,z,face?} 放手持物品；collect_blocks{blockNames|positions,area?,maxBlocks?,chestLocations?} 批量采集（自动捡掉落）；plant_crops{area,cropTypes?} 种作物
+   战斗：attack{filter,maxHits?} 攻击实体（自动接近连击）
+   交互：interact_entity{filter,foodName?,count?} 右键实体（喂食繁殖）
+   物品：equip{itemName}；drop{itemName?,count?}；use_item 用手持物；eat 自动进食
+   流程：wait{ms} 等待（≤5 分钟）；look{x,y,z|yaw,pitch} 转向；reply{text} 说话；fish{timeoutMs?} 钓鱼
+   任务：start_task{type,id,options?} 启动任务；stop_task{id} 停止任务；follow_player{name|off} 跟随玩家
+2. 观测优先：行动前先观察（observe_*），不凭猜测行动、不编造世界状态。单步行动后读结果再决定下一步。
+3. 异常恢复：失败先读懂原因（如"移动失败: 无法到达"、"exclusive 任务 X 运行中"、"权限不足"、"先 goto 靠近"），同一失败操作不要盲目重试超过 2 次；需要等待用 wait{ms}。
+4. 预算：每次 act ≤8 动作、每轮对话 ≤8 次工具调用。移动/采集耗时长，拆小步执行。
+5. 安全：移动/建造/战斗/交互/物品/任务管理只有 op 玩家可用（系统强制校验，身份见"当前会话"）；exclusive 任务运行期间相关动作会被拒绝——这是任务保护机制不是故障，可等任务结束或用 start_task 排队。任务 = 长循环（挖矿/砍树/农场/战斗/繁殖/探索/钓鱼/AFK），单次操作用原语直接做，批量持续型需求用 start_task。
+6. 多步意图示例："帮我建个树屋"→ observe_inventory 确认木材 → equip 木材 → goto 目标 → place×N 逐层 → reply 汇报；"挖点铁"→ observe_blocks(iron_ore) 或 query_map → goto 靠近 → dig×N 或 collect_blocks → reply 汇报数量；"采 20 个木头"→ start_task(chop, area)（任务自动往返避障）→ observe_inventory 核对；"附近有危险吗"→ observe_entities(hostile) → attack 或如实汇报；"跟着我/跟随我"→ follow_player（name=当前会话玩家名——"我"指说话玩家，绝不是 Bot 自己）。
+7. 不要角色扮演，不要输出 Markdown，不要虚构玩家或世界状态。感知以"环境:"行与观察结果为准——没感知到的信息（如天气/生物群系/附近实体）如实说不知道。`
 
 /**
  * 每次对话注入调用者身份：LLM 必须知道"谁在说话、是否有 op 权限"，
  * 否则面对危险操作请求只会回复"需要验证 op 身份"（实测反馈——身份此前未进上下文）。
- * v1.0.0 C2：单 provider（云端），withExtension 分支移除，恒拼接完整提示词。
  * @param {string} user 消息来源玩家
  * @param {object} cfg
  */
 function buildSystem (user, cfg) {
   const auth = isOp(user, cfg)
     ? `${user} 是 op 白名单成员——危险操作可直接执行，无需再要求验证`
-    : `${user} 是普通玩家——危险操作（move_to/run_task/stop_task/follow_player）必须拒绝并说明权限不足`
-  return `${CORE_SYSTEM_PROMPT}\n\n当前会话：${auth}` + CLOUD_EXTENSION
+    : `${user} 是普通玩家——危险操作（goto/dig/place/attack 等动作）必须拒绝并说明权限不足`
+  return `${CORE_SYSTEM_PROMPT}\n\n当前会话：${auth}`
+}
+
+// ---- 工具集（v1.0.0 C4）：act（动作数组）+ 观察/回复工具 ----
+// 观察类（readonly）与 reply 作为独立工具（单次查询/说话便宜、LLM 常用）；
+// 其余动作（goto/dig/...）只经 act 数组——动作是"一次一串"，观察是"单次一问"。
+
+/** act 工具描述（动作通道）。 */
+function actTool (maxActionsPerCall) {
+  return {
+    name: 'act',
+    description: '执行一串动作（动作数组，按序执行）。op 为动作原语（goto/dig/place/collect_blocks/plant_crops/attack/interact_entity/equip/drop/use_item/eat/wait/look/fish/explore_step/start_task/stop_task/follow_player），args 为对应参数对象；结果数组按序对应每个动作。',
+    parameters: {
+      type: 'object',
+      required: ['actions'],
+      properties: {
+        actions: {
+          type: 'array',
+          minItems: 1,
+          maxItems: maxActionsPerCall,
+          items: {
+            type: 'object',
+            required: ['op', 'args'],
+            properties: { op: { type: 'string' }, args: { type: 'object' } }
+          }
+        }
+      }
+    }
+  }
+}
+
+/** 从原语注册表生成工具集（act + 观察类 + reply；wait/look/fish 只经 act）。 */
+function buildTools (executor, maxActionsPerCall) {
+  const tools = [actTool(maxActionsPerCall)]
+  for (const [op, p] of executor.primitives) {
+    if (p.permission !== 'all') continue
+    if (['wait', 'look', 'fish'].includes(op)) continue // 流程原语经 act
+    if (op === 'reply' || p.exclusiveClass === 'readonly') {
+      tools.push({ name: op, description: p.description ?? op, parameters: p.schema ?? { type: 'object', properties: {} } })
+    }
+  }
+  return tools
 }
 
 export class AgentInterface {
   /**
    * @param {{ bot, cfg, logger, tasks, conn, plugins }} ctx
-   * @param {{ provider: object, skills: object, config: object }} deps
+   * @param {{ provider: object, executor: object, config: object }} deps
    */
   constructor (ctx, deps) {
     this.ctx = ctx
     this.provider = deps.provider
-    this.skills = deps.skills
+    this.executor = deps.executor
     this.cfg = deps.config ?? {}
     this.log = ctx.logger.child({ module: 'l2' })
     this.busy = false
@@ -242,7 +277,8 @@ export class AgentInterface {
       let finished = false
       let reply = '（无回复）'
       for (let step = 0; step < maxSteps && !finished; step++) {
-        const tools = this.skills.listForTools()
+        // v1.0.0 C4：固定工具集 = act + 观察/回复（从原语注册表生成）
+        const tools = buildTools(this.executor, this.cfg.maxActionsPerCall ?? 8)
         // A3：环境自动注入——每次工具轮重新生成（bot 移动后数据新鲜）；开关可关；
         // 缺失字段 environmentLine 内部兜底（返回空串）
         // U15：最近工具操作注入（≤3 条 × ≤60 字符摘要）——跨对话规划连续性的核心：
@@ -285,20 +321,33 @@ export class AgentInterface {
           finished = true
           break
         }
-        // 执行工具调用并把结果送回给 LLM
+        // v1.0.0 C4：执行工具调用（act → 动作数组走执行器；观察/回复 → 单动作）
         const results = []
         for (const tc of calls) {
-          const r = await this.skills.execute(tc.name, tc.arguments, user)
-          // 工具结果截断：maxSteps×多技能的大 JSON（inventory_summary/task_status）
-          // 会撑爆 4B 模型上下文或放大云端成本
-          let output = r
+          let r
+          if (tc.name === 'act') {
+            r = await this.executor.executeBatch(tc.arguments?.actions ?? [], { user, source: 'llm' })
+          } else {
+            r = await this.executor.executeOne(tc.name, tc.arguments, { user, source: 'llm' })
+          }
+          // 工具结果截断：maxSteps×多动作的大 JSON（observe_* 结构化结果）
+          // 会撑爆上下文或放大云端成本
+          let output
+          if (tc.name === 'act') {
+            output = r.rejected ? r.rejected : JSON.stringify(r.results)
+          } else {
+            output = r.ok ? (typeof r.result === 'string' ? r.result : JSON.stringify(r.result)) : r.result
+          }
           if (typeof output !== 'string') output = JSON.stringify(output)
           if (output.length > TOOL_RESULT_MAX_CHARS) output = output.slice(0, TOOL_RESULT_MAX_CHARS) + '…(截断)'
           results.push({ id: tc.id, name: tc.name, output })
           // U15：跨对话工具操作记录（摘要 ≤120 字符；失败也记录——LLM 下次知道上次错在哪）
-          const summary = r.ok
-            ? (typeof r.result === 'string' ? r.result : JSON.stringify(r.result))
-            : `失败:${r.result}`
+          const failed = tc.name === 'act' ? r.rejected : !r.ok
+          const summary = failed
+            ? `失败:${tc.name === 'act' ? r.rejected : r.result}`
+            : (tc.name === 'act'
+                ? r.results.map(x => `${x.op}${x.ok ? '' : '✗'}`).join(' ')
+                : (typeof r.result === 'string' ? r.result : JSON.stringify(r.result)))
           toolCalls.push({ name: tc.name, result: summary.slice(0, 120) })
           if (toolCalls.length > 20) toolCalls.shift()
         }
@@ -330,10 +379,11 @@ export class AgentInterface {
    * @returns {Promise<{ ok: boolean, result: unknown }>}
    */
   async act (user, name, params) {
-    // P2-3（第五轮）：act 直调技能不经 busy 门——!agent act move_to 可打进进行中
+    // P2-3（第五轮）：act 直调不经 busy 门——!agent act goto 可打进进行中的
     // chat 工具循环（两个控制流并发改 pathfinder/装备状态）。busy 时拒绝
     if (this.busy) return { ok: false, result: '上一个请求仍在处理中，请稍候' }
-    return this.skills.execute(name, params, user)
+    // v1.0.0 C4：直调动作原语（走执行器统一管线——权限/校验/守卫/审计）
+    return this.executor.executeOne(name, params, { user, source: 'act' })
   }
 
   /**

@@ -114,16 +114,16 @@ test('exclusive 守卫：movement/build/combat/interact 拒绝，readonly/item/f
   }
 })
 
-test('冷却：同 op 500ms 内第二次拒绝，不同 op 不互相占', async () => {
-  const { map } = makePrims()
+test('冷却由原语 handler 自理（v1.0.0 C4 语义）——executor 不拦截重复调用', async () => {
+  const { map, calls } = makePrims()
   const ex = createActionExecutor(makeCtx({ cfg: { ops: ['steve'], l2: { maxActionsPerCall: 8 } } }), { primitives: map, audit: null })
+  // 假原语无冷却字段 → 连续调用全部执行（真原语 dig/place/attack 的冷却在
+  // primitives 内"只对实际执行生效"——由 l2.test 的 dig 测试守护）
   const r1 = await ex.executeOne('dig', {}, { user: 'steve' })
-  assert.equal(r1.ok, true)
   const r2 = await ex.executeOne('dig', {}, { user: 'steve' })
-  assert.equal(r2.ok, false)
-  assert.ok(r2.result.includes('冷却中'), r2.result)
-  const r3 = await ex.executeOne('goto', { x: 1, y: 2, z: 3 }, { user: 'steve' })
-  assert.equal(r3.ok, true, '其他 op 不占 dig 冷却')
+  assert.equal(r1.ok, true)
+  assert.equal(r2.ok, true)
+  assert.equal(calls.length, 2)
 })
 
 test('超时：handler 超时 → ok:false（timeout 消息）', async () => {

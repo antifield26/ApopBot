@@ -23,14 +23,24 @@ import { exploreStep, notifyValuableFound } from './explore.js'
 import * as discovery from './discovery.js'
 import { createMovement, REASON_TEXT, findSurfaceBlocks } from './movement.js'
 import { attackEntity, useEntityOn } from './entity-actions.js'
+import { hasExclusiveActive, getExclusiveOwner } from './arbiter.js'
 import { validateTaskOptions } from './task-schemas.js'
 import { TASK_TYPES } from '../tasks/types.js'
 import { CROP_MATURITY, SEED_BY_CROP } from './crops.js'
 
-// 动作冷却（dig/place/attack 防刷；equip/use_item 等不拦）。冷却判定统一在
-// executor 层（参数校验通过后、执行前——校验类失败不占冷却，与原技能层一致），
-// 本常量只作 cooldownMs 字段值（与 executor.js 的 ACTION_COOLDOWN_MS 同值互引）。
+// 动作冷却（dig/place/attack 防刷；equip/use_item 等不拦）。判定在 handler 内
+// "只对实际执行生效"（业务性校验失败——距离/占用等——不占冷却，与原技能层一致）；
+// cooldownMs 字段保留供 executor 层展示/扩展，冷却执行点在 handler。
 const ACTION_COOLDOWN_MS = 500
+const lastActionAt = new Map()
+function checkActionCooldown (name) {
+  const now = Date.now()
+  const last = lastActionAt.get(name) ?? 0
+  if (now - last < ACTION_COOLDOWN_MS) {
+    throw new Error(`${name} 冷却中（${Math.ceil((ACTION_COOLDOWN_MS - (now - last)) / 1000)}s 后重试）`)
+  }
+  lastActionAt.set(name, now)
+}
 
 /** 区域对象校验（farm/collect 用）。 */
 function isArea (a) {
@@ -51,6 +61,7 @@ export function createPrimitiveRegistry (ctx) {
   // ============ 观察族（all / readonly / 5s，不拦 exclusive） ============
 
   register('observe_status', {
+    description: '获取 Bot 状态（连接/位置/血量/饥饿）',
     schema: { type: 'object', properties: {} },
     permission: 'all',
     exclusiveClass: 'readonly',
@@ -70,6 +81,7 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   register('observe_inventory', {
+    description: '获取背包物品摘要（名称与数量，按数量降序 Top-N）',
     schema: {
       type: 'object',
       properties: { maxItems: { type: 'integer', min: 1, max: 50, description: '最多返回条数，默认 10' } }
@@ -89,6 +101,7 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   register('observe_environment', {
+    description: '获取当前环境快照（时间/昼夜/天气/维度/生物群系/朝向/附近玩家与实体）',
     schema: { type: 'object', properties: {} },
     permission: 'all',
     exclusiveClass: 'readonly',
@@ -98,6 +111,7 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   register('observe_entities', {
+    description: '列出附近实体（按距离升序，可过滤名称/类型；结构化数组）',
     schema: {
       type: 'object',
       properties: {
@@ -116,6 +130,7 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   register('observe_blocks', {
+    description: '找指定方块的地表暴露位置（不移动；多名字/正则批量；结构化候选列表）',
     schema: {
       type: 'object',
       properties: {
@@ -181,6 +196,7 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   register('observe_block', {
+    description: '获取单方块详情（名称/属性/是否空）',
     schema: {
       type: 'object',
       required: ['x', 'y', 'z'],
@@ -200,6 +216,7 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   register('observe_crops', {
+    description: '扫描区域作物成熟度（成熟/未成熟/耕地）',
     schema: {
       type: 'object',
       required: ['area'],
@@ -249,6 +266,7 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   register('query_map', {
+    description: '查询探索记忆中已知的资源坐标（不重新扫描）',
     schema: {
       type: 'object',
       required: ['blockName'],
@@ -268,6 +286,7 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   register('map_status', {
+    description: '探索记忆统计（已访问锚点/覆盖范围/资源记录）',
     schema: { type: 'object', properties: {} },
     permission: 'all',
     exclusiveClass: 'readonly',
@@ -344,6 +363,7 @@ export function createPrimitiveRegistry (ctx) {
       if (!c.bot.canDigBlock(block)) {
         return `方块 ${block.name} 不可挖掘（距离过远或不可挖掘）——先 goto 靠近到 5 格内`
       }
+      checkActionCooldown('dig')
       await withTimeout(c.bot.dig(block), 30000, 'dig timeout') // 断线保护（A4 同款）
       return `已挖掘 ${block.name} @ ${x},${y},${z}`
     }
@@ -372,6 +392,7 @@ export function createPrimitiveRegistry (ctx) {
       const dest = c.bot.blockAt(new Vec3(x, y, z))
       if (dest && dest.boundingBox !== 'empty') return `目标位置被 ${dest.name} 占用`
       if (!c.bot.heldItem) return '手里没有物品——先 equip <物品名>'
+      checkActionCooldown('place')
       const itemName = c.bot.heldItem.name
       await withTimeout(c.bot.placeBlock(refBlock, face), 30000, 'place timeout')
       return `已放置 ${itemName} @ ${x},${y},${z}`
@@ -508,6 +529,8 @@ export function createPrimitiveRegistry (ctx) {
     timeoutMs: 60000,
     cooldownMs: ACTION_COOLDOWN_MS,
     handler: async (c, { filter, maxHits }) => {
+      // 冷却在实体扫描前（与原技能层一致：无目标也占冷却——防止"打不到"刷调用）
+      checkActionCooldown('attack')
       if (!c.bot?.entities || !c.bot.entity?.position) throw new Error('实体表/位置不可用')
       const me = c.bot.entity
       const f = filter?.toLowerCase()
@@ -734,6 +757,7 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   register('reply', {
+    description: '以 Bot 身份向当前对话的玩家发送一句话（聊天）。用于回答玩家或汇报状态。',
     schema: {
       type: 'object',
       required: ['text'],
@@ -834,14 +858,19 @@ export function createPrimitiveRegistry (ctx) {
       }
     },
     permission: 'op',
-    exclusiveClass: 'movement',
-    guardText: '跟随',
+    // off（停止跟随）不冲突移动权——守卫放 handler 内（executor 统一守卫拦不到 off）
+    exclusiveClass: 'flow',
+    guardText: '',
     timeoutMs: 10000,
     handler: async (c, { name }) => {
       if (!c.plugins?.follow) throw new Error('follow 插件未启用（配置 mineflayerPlugins.follow=true 并重启）')
       if (name === 'off') {
         c.plugins.follow.stop()
         return '已停止跟随'
+      }
+      // A3（第四轮）：启动跟随与 exclusive 任务互斥（双控制器冲突防线）
+      if (hasExclusiveActive()) {
+        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法跟随（任务结束后可试）`)
       }
       // "跟随我"指代消解（executor 注入 user）：空/me/self/我 → 当前对话玩家
       let targetName = name

@@ -144,18 +144,18 @@ test('U5: cloud usage 解析（input_tokens/output_tokens）+ latency', async ()
 
 test('U5: agent 计量累计——chat 工具循环多轮 usage 累加（AgentInterface 层）', async () => {
   const { AgentInterface } = await import('../src/l2/agent-interface.js')
-  const { createSkillRegistry } = await import('../src/l2/skills.js')
-  const ctx = { cfg: { ops: [] }, logger: makeLogger(), bot: {}, tasks: { getStatus: () => [] }, conn: { getStatus: () => ({ state: 'connected' }) }, plugins: {} }
+  const { createActionExecutor } = await import('../src/core/executor.js')
+  const ctx = { cfg: { ops: [], l2: { maxActionsPerCall: 8 } }, logger: makeLogger(), bot: {}, tasks: { getStatus: () => [] }, conn: { getStatus: () => ({ state: 'connected' }) }, plugins: {} }
   const calls = []
   const provider = {
     async chat (messages, opts = {}) {
       calls.push(messages)
-      if (calls.length === 1) return { text: null, toolCalls: [{ id: 't1', name: 'status', arguments: {} }], usage: { inputTokens: 10, outputTokens: 4 }, latencyMs: 100 }
+      if (calls.length === 1) return { text: null, toolCalls: [{ id: 't1', name: 'act', arguments: { actions: [{ op: 'observe_status', args: {} }] } }], usage: { inputTokens: 10, outputTokens: 4 }, latencyMs: 100 }
       return { text: 'done', toolCalls: [], usage: { inputTokens: 8, outputTokens: 2 }, latencyMs: 200 }
     }
   }
-  const skills = createSkillRegistry(ctx)
-  const agent = new AgentInterface(ctx, { provider, skills, config: { enabled: true, cooldownMs: 0, maxSteps: 5 } })
+  const executor = createActionExecutor(ctx, { audit: null })
+  const agent = new AgentInterface(ctx, { provider, executor, config: { enabled: true, cooldownMs: 0, maxSteps: 5 } })
   await agent.chat('steve', 'hi')
   assert.equal(agent.usage.inputTokens, 18, '两轮 usage 应累加')
   assert.equal(agent.usage.outputTokens, 6)

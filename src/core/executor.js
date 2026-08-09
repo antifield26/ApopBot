@@ -23,8 +23,6 @@ export function createActionExecutor (ctx, deps = {}) {
   const primitives = deps.primitives ?? createPrimitiveRegistry(ctx)
   const audit = deps.audit === undefined ? createAuditLogger({ dir: ctx.cfg?.log?.dir, logger: ctx.logger }) : deps.audit
   const maxActionsPerCall = ctx.cfg?.l2?.maxActionsPerCall ?? 8
-  // 冷却时钟实例级（executor 是动作唯一执行通道——单实例即全局；重建/测试隔离）
-  const lastActionAt = new Map()
   // follow_player 的"跟随我"指代消解（executor 注入 user——原 skills 经 ctx._caller）
   let execUser = null
 
@@ -64,8 +62,8 @@ export function createActionExecutor (ctx, deps = {}) {
         entry.result = v.error
         return finish()
       }
-      // 冷却（只对实际执行生效——校验类失败不占）
-      if (p.cooldownMs) checkActionCooldown(lastActionAt, op, p.cooldownMs)
+      // 冷却由原语 handler 内部自理（"只对实际执行生效"——业务性校验失败不占，
+      // 见 primitives.js dig/place/attack）
       // 执行（withTimeout 兜底 + runtime.signal 贯通）
       const prevCaller = ctx._caller
       ctx._caller = user ?? execUser
@@ -136,17 +134,6 @@ export function createActionExecutor (ctx, deps = {}) {
   }
 
   return { executeBatch, executeOne, primitives, setExecUser: (u) => { execUser = u } }
-}
-
-/** 动作冷却（dig/place/attack 防刷；与 primitives.js 的 ACTION_COOLDOWN_MS 同值互引）。 */
-const ACTION_COOLDOWN_MS = 500
-function checkActionCooldown (map, name, ms) {
-  const now = Date.now()
-  const last = map.get(name) ?? 0
-  if (now - last < (ms ?? ACTION_COOLDOWN_MS)) {
-    throw new Error(`${name} 冷却中（${Math.ceil(((ms ?? ACTION_COOLDOWN_MS) - (now - last)) / 1000)}s 后重试）`)
-  }
-  map.set(name, now)
 }
 
 /** 极简 JSONSchema 校验（type + required + min/max；原 skills.validateParams 原样搬入）。 */

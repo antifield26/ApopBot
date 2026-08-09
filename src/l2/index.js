@@ -1,15 +1,16 @@
 import { AgentInterface } from './agent-interface.js'
 import { createProvider } from './provider.js'
-import { createSkillRegistry } from './skills.js'
+import { createActionExecutor } from '../core/executor.js'
 
 /**
  * L2 层入口。l2.enabled=false 时返回 null（零额外依赖，不加载任何 LLM 相关代码路径）。
- * 启用时组装：单 Provider（v1.0.0 C2：仅云端 non-reasoning）+ 技能注册表 + Agent 接口。
+ * 启用时组装：单 Provider（v1.0.0 C2：仅云端 non-reasoning）+ 动作执行器
+ * （v1.0.0 C3/C4：act 动作数组 + 观察原语统一执行层）+ Agent 接口。
  */
 export function createL2 (cfg, ctx) {
   if (!cfg.l2?.enabled) return null
   const logger = ctx.logger.child({ module: 'l2' })
   const provider = createProvider(cfg, logger)
-  const skills = createSkillRegistry(ctx)
-  return new AgentInterface(ctx, { provider, skills, config: cfg.l2 })
+  const executor = createActionExecutor(ctx)
+  return new AgentInterface(ctx, { provider, executor, config: cfg.l2 })
 }

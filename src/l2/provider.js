@@ -68,6 +68,7 @@ class CloudProvider {
     this.maxTokens = l2.maxTokens ?? DEFAULT_MAX_TOKENS
     // 第六轮 C10：云端上下文窗口（预算守卫用）——l2.cloudMaxContextWindow 可配
     this.kind = 'cloud'
+    this.mode = 'cloud' // !agent doctor 展示（v1.0.0：唯一 provider）
     this.contextWindowValue = l2.cloudMaxContextWindow ?? DEFAULT_CLOUD_CONTEXT_WINDOW
   }
 
