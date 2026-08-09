@@ -70,6 +70,14 @@ export class ScriptTask extends BaseTask {
     try { this.bot.collectBlock?.cancelTask() } catch { /* 插件可能已卸载 */ }
     stopPathfinding(this.bot)
   }
+
+  /** 终态重启（F4）：必须重建 _abort——stop 已 abort 旧控制器，不复建则重启后
+   *  signal.aborted 恒真 → executor 每个动作步立即软失败（'动作被中断'）→
+   *  scheduled 任务第二次及以后触发全部僵尸（永不做事、永不自然完成）。 */
+  _reset () {
+    super._reset()
+    this._abort = new AbortController()
+  }
 }
 
 /**
@@ -97,14 +105,19 @@ export class ScriptRunner {
       plugins: null
     }
     this.executor = createActionExecutor(taskCtx)
-    for (const [name, handler] of Object.entries(task.scriptDef.ops ?? {})) {
+    for (const [name, def] of Object.entries(task.scriptDef.ops ?? {})) {
+      // ops 值支持函数（简写）或 { handler, timeoutMs }——timeoutMs 必须 ≥ 内部
+      // 动作最坏时长（explore spiral_step 内层 gotoPoint 45s——外层 30s 先触发会
+      // 造成"超时报失败但 handler 仍在走"的幽灵移动 + setGoal 竞态连坑下一站）
+      const handler = typeof def === 'function' ? def : def.handler
+      const timeoutMs = typeof def === 'function' ? 30000 : (def.timeoutMs ?? 30000)
       this.executor.primitives.set(name, {
         description: `任务局部原语 ${name}`,
         schema: { type: 'object', properties: {} },
         permission: 'op',
         exclusiveClass: 'flow',
         guardText: '',
-        timeoutMs: 30000,
+        timeoutMs,
         // 第四参注入任务实例（有状态算法如 explore 螺旋用）
         handler: async (ctx, args, runtime) => handler(ctx, args, runtime, this.task)
       })

@@ -91,12 +91,15 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '',
     timeoutMs: 5000,
     handler: async (c, { maxItems }) => {
+      const allItems = c.bot?.inventory?.items() ?? []
       const counts = {}
-      for (const it of c.bot?.inventory?.items() ?? []) {
+      for (const it of allItems) {
         counts[it.name] = (counts[it.name] ?? 0) + (it.count ?? 1)
       }
       const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, maxItems ?? 10)
-      return { items: entries.map(([name, count]) => ({ name, count })), total: entries.length ? entries.reduce((s, [, n]) => s + n, 0) : 0 }
+      // slotsUsed = 占用槽位数（items() 每槽一个实例——原 FishTask 背包满判定语义；
+      // items 数组是去重后的物品种类，不能当槽位用）
+      return { items: entries.map(([name, count]) => ({ name, count })), total: entries.length ? entries.reduce((s, [, n]) => s + n, 0) : 0, slotsUsed: allItems.length }
     }
   })
 
@@ -129,7 +132,11 @@ export function createPrimitiveRegistry (ctx) {
       let ents = []
       if (Array.isArray(filter)) {
         ents = nearbyEntities(c.bot, { maxDistance: maxDistance ?? 32, limit: 32 })
-        ents = ents.filter(e => filter.some(f => String(e.name ?? '').includes(f) || e.type === f))
+        // 大小写不敏感（与字符串路径 nearbyEntities 的 toLowerCase 语义一致——数组路径此前漏掉）
+        ents = ents.filter(e => filter.some(f => {
+          const needle = String(f).toLowerCase()
+          return String(e.name ?? '').toLowerCase().includes(needle) || String(e.type ?? '').toLowerCase() === needle
+        }))
       } else {
         ents = nearbyEntities(c.bot, { name: filter, kind: filter, maxDistance: maxDistance ?? 32, limit: 32 })
       }
@@ -176,6 +183,31 @@ export function createPrimitiveRegistry (ctx) {
       }
       const candidates = []
       const matchedNames = []
+      // 区域过滤 + 中心距离告警（两条路径共用——此前 regex 路径提前返回漏掉 area 过滤，
+      // 且 regex 用 findBlocks 扫任意位置含地下/洞穴，与 blockNames 的 findSurfaceBlocks
+      // 语义不一致；统一为过滤 + 告警）
+      const finish = () => {
+        const me = c.bot.entity?.position
+        const sorted = candidates
+          .map(p => ({ p, d: me ? dist2(p, me) : 0 }))
+          .sort((a, b) => a.d - b.d)
+          .map(x => x.p)
+        if (area && isArea(area)) {
+          if (me) {
+            const d = Math.hypot(me.x - (area.x1 + area.x2) / 2, me.z - (area.z1 + area.z2) / 2)
+            if (d > (maxDistance ?? 64)) {
+              c.logger.warn({ dist: Math.round(d), maxDistance: maxDistance ?? 64 }, 'bot 距区域中心超出扫描半径——请靠近区域或调整 area/maxDistance')
+            }
+          }
+          return {
+            blockNames: matchedNames,
+            candidates: sorted
+              .filter(([x, y, z]) => x >= area.x1 && x <= area.x2 && y >= area.y1 && y <= area.y2 && z >= area.z1 && z <= area.z2)
+              .slice(0, 50)
+          }
+        }
+        return { blockNames: matchedNames, candidates: sorted.slice(0, 50) }
+      }
       if (ids) {
         // 正则路径：按 id 匹配 findBlocks
         const found = c.bot.findBlocks({ matching: (b) => ids.has(b.type), maxDistance: maxDistance ?? 64, count: 100 })
@@ -186,8 +218,7 @@ export function createPrimitiveRegistry (ctx) {
           if (!matchedNames.includes(n)) matchedNames.push(n)
           candidates.push([p.x, p.y, p.z])
         }
-        candidates.sort((a, b) => dist2(a, c.bot.entity.position) - dist2(b, c.bot.entity.position))
-        return { blockNames: matchedNames, candidates }
+        return finish()
       }
       if (!names || names.length === 0) throw new Error('observe_blocks 需要 blockNames/blockName/regex 之一')
       for (const name of names) {
@@ -195,34 +226,12 @@ export function createPrimitiveRegistry (ctx) {
         try {
           found = findSurfaceBlocks(c.bot, name, { maxDistance: maxDistance ?? 64, maxCandidates: 32 })
         } catch {
-          throw new Error(`未知方块类型: ${name}`)
+          continue // 未知方块类型跳过该名（与 collect_blocks 一致——一个拼错不杀整批）
         }
         for (const p of found.candidates) candidates.push([p.x, p.y, p.z])
         matchedNames.push(name)
       }
-      const me = c.bot.entity?.position
-      const sorted = candidates
-        .map(p => ({ p, d: me ? dist2(p, me) : 0 }))
-        .sort((a, b) => a.d - b.d)
-        .map(x => x.p)
-      // 区域过滤（可选）+ 中心距离告警（mine.js 同款：bot 距区域中心超过扫描半径时
-      // 区域必然扫不到——明示而非静默空扫）
-      if (area && isArea(area)) {
-        const me = c.bot.entity?.position
-        if (me) {
-          const d = Math.hypot(me.x - (area.x1 + area.x2) / 2, me.z - (area.z1 + area.z2) / 2)
-          if (d > (maxDistance ?? 64)) {
-            c.logger.warn({ dist: Math.round(d), maxDistance: maxDistance ?? 64 }, 'bot 距区域中心超出扫描半径——请靠近区域或调整 area/maxDistance')
-          }
-        }
-        return {
-          blockNames: matchedNames,
-          candidates: sorted
-            .filter(([x, y, z]) => x >= area.x1 && x <= area.x2 && y >= area.y1 && y <= area.y2 && z >= area.z1 && z <= area.z2)
-            .slice(0, 50)
-        }
-      }
-      return { blockNames: matchedNames, candidates: sorted.slice(0, 50) }
+      return finish()
     }
   })
 
@@ -452,11 +461,13 @@ export function createPrimitiveRegistry (ctx) {
       // 解析候选：优先 positions；否则按名称扫描。
       // 契约（26.1.2 实测，mine.js 同款修复）：collectblock 的 Targets.getClosest()
       // 访问 target.position（Block/Entity 契约）——positions 必须经 blockAt 转
-      // Block（裸 Vec3 无 position 字段 → 收集异常）
+      // Block；blockAt 返回 null（跨会话坐标/区块卸载）或坐标非法（NaN）时**跳过
+      // 该点**——此前兜底裸 Vec3 会触发插件 collectAll 的 UnknownType 崩溃 → 整批
+      // 失败、已采数量全部不入账、mine 脚本对同一批坐标无限重试
       const toBlocks = (pts) => pts
         .map(p => {
-          const b = c.bot.blockAt?.(new Vec3(p[0], p[1], p[2]))
-          return b ?? new Vec3(p[0], p[1], p[2]) // blockAt 缺失兜底（不阻塞收集）
+          if (!Array.isArray(p) || p.length < 3 || !p.slice(0, 3).every(Number.isFinite)) return null
+          return c.bot.blockAt?.(new Vec3(p[0], p[1], p[2])) ?? null
         })
         .filter(Boolean)
       let targets = []
@@ -478,9 +489,14 @@ export function createPrimitiveRegistry (ctx) {
         targets = toBlocks(found)
       }
       if (targets.length === 0) return { collected: 0, inventoryFull: false }
-      // chestLocations 转 Vec3（collectblock 的 getClosestChest 调 c.distanceTo——配置普通对象必须转）
+      // chestLocations 转 Vec3（collectblock 的 getClosestChest 调 c.distanceTo——配置
+      // 普通对象必须转）；坐标非法/缺维度（NaN）过滤——此前 NaN chest 距离恒不可达
       const chests = Array.isArray(chestLocations)
-        ? chestLocations.map(c => new Vec3(c[0] ?? c.x, c[1] ?? c.y, c[2] ?? c.z))
+        ? chestLocations
+            .map(c => Array.isArray(c)
+              ? (c.length >= 3 && c.slice(0, 3).every(Number.isFinite) ? new Vec3(c[0], c[1], c[2]) : null)
+              : (c && Number.isFinite(c.x) && Number.isFinite(c.y) && Number.isFinite(c.z) ? new Vec3(c.x, c.y, c.z) : null))
+            .filter(Boolean)
         : undefined
       // 分批 ≤4（C4/J：批间 pause/stop 响应延迟有界——与 mine/chop 任务同款语义）
       let collected = 0
@@ -575,7 +591,7 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '攻击',
     timeoutMs: 60000,
     cooldownMs: ACTION_COOLDOWN_MS,
-    handler: async (c, { filter, maxHits }) => {
+    handler: async (c, { filter, maxHits }, runtime) => {
       // 冷却在实体扫描前（与原技能层一致：无目标也占冷却——防止"打不到"刷调用）
       checkActionCooldown('attack')
       if (!c.bot?.entities || !c.bot.entity?.position) throw new Error('实体表/位置不可用')
@@ -596,7 +612,11 @@ export function createPrimitiveRegistry (ctx) {
       const ATTACK_RANGE = 3.5
       const alive = () => (c.bot.entities instanceof Map ? c.bot.entities.has(target.id) : !!c.bot.entities?.[target.id])
       let hits = 0
+      let interruptedStreak = 0 // 连续被走位打断次数（目标持续移动时放弃追击，防无限重试）
       for (let i = 0; i < (maxHits ?? 5); i++) {
+        // 取消/断线信号贯通（任务 stop 不再"超时后幽灵追打"——executor 60s 超时
+        // 拦不住 approach 循环，handler 必须自查 signal）
+        if (runtime?.signal?.aborted) return { hits, targetGone: false, targetName: target.name, reason: '动作被中断' }
         if (!alive() || !target.position) return { hits, targetGone: true, targetName: target.name }
         const dist = me.position.distanceTo(target.position)
         if (dist > ATTACK_RANGE) {
@@ -606,7 +626,12 @@ export function createPrimitiveRegistry (ctx) {
             isInterrupted: () => !target?.position || me.position.distanceTo(target.position) > 64
           })
           if (r.ok) continue
-          if (r.reason === 'interrupted') continue
+          if (r.reason === 'interrupted') {
+            if (++interruptedStreak >= 2) {
+              return { hits, targetGone: false, targetName: target.name, reason: '目标持续移动，追击中断（稍后可重试）' }
+            }
+            continue
+          }
           return { hits, targetGone: false, targetName: target.name, reason: `无法接近: ${REASON_TEXT[r.reason] ?? r.err?.message}` }
         }
         try { c.bot.lookAt(target.position.offset(0, (target.height ?? 1.8) / 2, 0), true) } catch { /* 位置可能失效 */ }
@@ -762,14 +787,24 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '',
     timeoutMs: 305000,
     handler: async (c, { ms }, runtime) => {
-      // stop/pause/断线可打断（signal race——与任务 _internalWait 同语义）
-      await new Promise((resolve, reject) => {
+      // stop/pause/断线可打断（signal race——与任务 _internalWait 同语义）；
+      // 监听器必须配对移除——同一 AbortSignal 跨长任务（farm 30s 等待循环数小时）
+      // 累积 listener → 内存线性增长、abort 时触发数百次无意义回调
+      let onAbort = null
+      const wait = new Promise((resolve, reject) => {
         const timer = setTimeout(resolve, ms)
-        runtime?.signal?.addEventListener('abort', () => {
+        if (!runtime?.signal) return
+        onAbort = () => {
           clearTimeout(timer)
           reject(new Error('等待被中断'))
-        })
+        }
+        runtime.signal.addEventListener('abort', onAbort, { once: true })
       })
+      try {
+        await wait
+      } finally {
+        if (onAbort) runtime.signal.removeEventListener('abort', onAbort)
+      }
       return { waited: ms }
     }
   })
@@ -789,6 +824,13 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '',
     timeoutMs: 5000,
     handler: async (c, { x, y, z, yaw, pitch, relative }) => {
+      // relative 分支必须在 yaw 分支之前——afk 传 {yaw:0.05, relative:true} 时
+      // 此前命中 yaw 绝对分支，每次转动都把视角 snap 回绝对 0.05（并非增量漂移）
+      if (relative === true) {
+        const e = c.bot.entity
+        await withTimeout(c.bot.look(e.yaw + (yaw ?? 0.05), e.pitch + (pitch ?? 0), true), 5000, 'look timeout')
+        return '已转向（相对增量）'
+      }
       if (typeof x === 'number' && typeof y === 'number' && typeof z === 'number') {
         await withTimeout(c.bot.lookAt(new Vec3(x, y, z), true), 5000, 'look timeout')
         return `已转向 (${Math.floor(x)},${Math.floor(y)},${Math.floor(z)})`
@@ -796,11 +838,6 @@ export function createPrimitiveRegistry (ctx) {
       if (typeof yaw === 'number') {
         await withTimeout(c.bot.look(yaw, pitch ?? 0, true), 5000, 'look timeout')
         return `已转向 yaw=${yaw}`
-      }
-      if (relative === true) {
-        const e = c.bot.entity
-        await withTimeout(c.bot.look(e.yaw + (yaw ?? 0.05), e.pitch + (pitch ?? 0), true), 5000, 'look timeout')
-        return '已转向（相对增量）'
       }
       return 'look 需要 x,y,z 或 yaw（+可选 pitch）'
     }
@@ -835,16 +872,22 @@ export function createPrimitiveRegistry (ctx) {
     handler: async (c, { timeoutMs }, runtime) => {
       if (!c.bot?.fish) return { caught: false, reason: 'fish 能力不可用（插件缺失）' }
       // FishTask 同款：bot.fish() 无超时——withTimeout + 取消信号 race
+      //（任务 stop/断线不再"继续抛竿到上钩或 60s"——注释契约在此实现）
       let caught = false
       try {
-        await withTimeout(c.bot.fish(), timeoutMs ?? 60000, 'fish timeout')
+        await Promise.race([
+          withTimeout(c.bot.fish(), timeoutMs ?? 60000, 'fish timeout'),
+          new Promise((_, reject) => {
+            if (runtime?.signal?.aborted) return reject(new Error('等待被中断'))
+            runtime?.signal?.addEventListener('abort', () => reject(new Error('等待被中断')), { once: true })
+          })
+        ])
         caught = true
       } catch (err) {
         if (err?.name === 'AbortError' || err?.message?.includes('中断')) throw err
         // 上钩失败/超时不算错误——返回 false 供脚本重试
         caught = false
       }
-      void runtime
       return { caught }
     }
   })

@@ -1,6 +1,7 @@
 import { readFileSync, mkdirSync, accessSync, constants as FS_CONST } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { Cron } from 'croner'
 import { validateTaskOptions } from './task-schemas.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -118,6 +119,13 @@ const ENV_MAP = {
   MCBOT_RECONNECT_MAX_MS: ['reconnect', 'maxMs']
 }
 
+// 布尔型环境变量键白名单：'true'/'false' 只对这些键转布尔——其他键收到
+// 'true'/'false' 应保持字符串（如 MCBOT_L2_THINKING=false——thinking 的合法值是
+// 'enabled'/'disabled' 字符串，转布尔后校验报"当前: false"误导（第 8 轮修复））
+const BOOLEAN_ENV_KEYS = new Set([
+  'log.pretty', 'l2.enabled', 'l2.envInjection', 'http.enabled'
+])
+
 const CLI_KEYS = {
   '--config': { path: ['configPath'], type: 'string' },
   '--mc-version': { path: ['mcVersion'], type: 'string' },
@@ -174,7 +182,7 @@ function parseEnv (env) {
     let value
     if (pathArr[0] === 'ops') {
       value = raw.split(',').map(s => s.trim()).filter(Boolean)
-    } else if (raw === 'true' || raw === 'false') {
+    } else if ((raw === 'true' || raw === 'false') && BOOLEAN_ENV_KEYS.has(pathArr.join('.'))) {
       value = raw === 'true'
     } else if (!Number.isNaN(Number(raw)) && /^-?\d+(\.\d+)?$/.test(raw) && pathArr[pathArr.length - 1].toLowerCase().includes('ms')) {
       value = Number(raw)
@@ -390,6 +398,16 @@ export function validateConfig (cfg) {
     }
     if (t.schedule && !NATURAL_COMPLETION_TYPES.includes(t.type) && !t.options?.durationMinutes) {
       errors.push(`${label} 类型 ${t.type} 无自然完成，scheduled 时必须配 options.durationMinutes`)
+    }
+    // 第 8 轮：非法 cron 表达式启动即报错——此前 scheduled.js catch 吞错返回 null →
+    // 任务注册但永不触发、只留一条 error 日志（与 scheduleTimezone 同款"静默永不调度"
+    // 失败模式，当时区有启动校验而表达式没有）
+    if (t.schedule) {
+      try {
+        new Cron(t.schedule)
+      } catch {
+        errors.push(`${label} schedule 非法 cron 表达式: ${t.schedule}（任务将永不触发）`)
+      }
     }
     const opts = t.options ?? {}
     if (opts.blockTypes !== undefined) {

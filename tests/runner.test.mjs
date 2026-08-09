@@ -578,3 +578,34 @@ test('explore 脚本: stopWhenDone 环满 → 自然完成', async () => {
   await task.start()
   assert.equal(task.state, 'completed', '环满 + stopWhenDone → 完成')
 })
+
+test('第 8 轮：stop 后同实例重启（F4）——_abort 重建，动作正常执行（僵尸任务修复）', async () => {
+  const ctx = makeCtx()
+  const calls = []
+  ctx.bot.look = (yaw, pitch, force) => { calls.push([yaw, pitch, force]) }
+  const loopScript = {
+    id: 'loop-look',
+    exclusive: false,
+    naturalCompletion: false,
+    maxActions: 10000,
+    script: { steps: [
+      { ctrl: 'loop', max: 'infinite', body: [
+        { op: 'look', args: { yaw: 0.05, relative: true } },
+        { ctrl: 'wait', ms: 5 }
+      ] }
+    ] }
+  }
+  const task = makeTask(loopScript, {}, ctx) // 必须传 ctx——look spy 挂在它上面
+  const p1 = task.start()
+  await new Promise(r => setTimeout(r, 20))
+  await task.stop()
+  await p1
+  const before = calls.length
+  assert.ok(before > 0, '重启前任务应已执行动作')
+  // 重启（F4：终态后再次 start）——修复前 _abort 已 abort → 动作全部立即软失败
+  const p2 = task.start()
+  await new Promise(r => setTimeout(r, 30))
+  assert.ok(calls.length > before, `重启后动作应继续执行（修复前 signal 已 abort 全部软失败）: before=${before} after=${calls.length}`)
+  await task.stop()
+  await p2
+})

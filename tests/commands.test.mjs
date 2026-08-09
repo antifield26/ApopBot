@@ -70,3 +70,9 @@ test('registry 未命中返回 false', async () => {
   const hit = await registry.dispatch('!nonexistent', { sender: 'x', ctx: { bot: { chat () {} }, cfg: { ops: [] } } })
   assert.equal(hit, false)
 })
+
+test('第 8 轮：引号内花括号不计 braceDepth（JSON 字符串值含 {} 不吞后续参数）', () => {
+  const r = parseCommand('!agent act mine {"a": "x{"} more')
+  assert.equal(r.args.length, 4, '后续参数应独立')
+  assert.deepEqual(r.args, ['act', 'mine', '{"a": "x{"}', 'more'])
+})

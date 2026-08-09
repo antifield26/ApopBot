@@ -16,7 +16,9 @@ import { withTimeout } from '../util/promise-timeout.js'
 
 // v1.0.0 C11：确定性错误不反思（权限/参数/未知动作是模型无法从教训中获益的——
 // 它们是规则约束，不是运行时失败；NoPath/超时/NoChests 等运行时失败才值得沉淀）
-const DETERMINISTIC_ERROR = /权限不足|缺少参数|必须是|未知动作|未知技能|冷却中|不在 ops/
+// 第 8 轮扩词：exclusive 拒绝（"运行中"）、插件未启用、参数边界（不能大于/不能小于）——
+// 此前这些确定性规则错误被送进 LLM 反思（浪费 token，系统提示本就写明规则）
+const DETERMINISTIC_ERROR = /权限不足|缺少参数|必须是|未知动作|未知技能|冷却中|不在 ops|运行中|插件未启用|不能大于|不能小于/
 
 /** 经验教训注入（buildSystem 之后拼接——最近 8 条 ≤600 字符）。 */
 function experienceInjection (experience) {
@@ -32,6 +34,48 @@ function experienceInjection (experience) {
 const INPUT_MAX_CHARS = 1000 // 用户消息截断
 const REPLY_MAX_CHARS = 250 // 回复截断（与 chat.maxLength 默认一致）
 const TOOL_RESULT_MAX_CHARS = 2000 // 工具结果回填截断上限（预算裁剪的硬上限）
+
+/**
+ * 第 8 轮：工具结果截断——优先保持 JSON 结构完整（顶层数组/对象截到最后一个完整
+ * 元素，附 truncated 标记）；纯文本直接截。此前硬 slice 把 observe_* 结构化结果
+ * 切成未闭合无效 JSON 回填给模型（无法解析 → 幻觉编造/重复观察重试，成本放大）。
+ * 非严格 JSON（半截兜底）仍带截断标记——模型至少知道结果不完整。
+ */
+export function truncateJson (jsonStr, maxChars) {
+  if (typeof jsonStr !== 'string' || jsonStr.length <= maxChars) return jsonStr
+  const head = jsonStr.trimStart()
+  const isArr = head.startsWith('[')
+  const isObj = head.startsWith('{')
+  if (!isArr && !isObj) return jsonStr.slice(0, maxChars) + '…(截断)'
+  try {
+    const parsed = JSON.parse(jsonStr)
+    if (isArr && Array.isArray(parsed)) {
+      const keep = []
+      let len = 0
+      for (const el of parsed) {
+        const s = JSON.stringify(el)
+        if (len + s.length + 2 > maxChars) break
+        keep.push(el)
+        len += s.length + 2
+      }
+      if (keep.length === 0) return jsonStr.slice(0, maxChars) + '…(截断)'
+      return JSON.stringify({ items: keep, truncated: parsed.length - keep.length })
+    }
+    if (isObj && parsed && typeof parsed === 'object') {
+      const keep = {}
+      let len = 0
+      for (const [k, v] of Object.entries(parsed)) {
+        const s = JSON.stringify({ [k]: v })
+        if (len + s.length + 1 > maxChars) break
+        keep[k] = v
+        len += s.length + 1
+      }
+      if (Object.keys(keep).length === 0) return jsonStr.slice(0, maxChars) + '…(截断)'
+      return JSON.stringify({ ...keep, truncated: true })
+    }
+  } catch { /* 非严格 JSON——半截兜底 */ }
+  return jsonStr.slice(0, maxChars) + '…(截断)'
+}
 // A2：工具结果回填的下限——预算裁剪时也不得低于此（低于则整条丢弃更有意义）
 const TOOL_RESULT_MIN_CHARS = 200
 // A2：上下文预算的尾差缓冲（工具定义 schema/系统提示的估算误差 + 回复预留）
@@ -96,11 +140,16 @@ export function messageTokens (m) {
 export function applyTokenBudget (messages, fixedTokens, budget) {
   let over = fixedTokens + messages.reduce((s, m) => s + messageTokens(m), 0) - budget
   if (over <= 0) return false
-  // ① 丢最旧纯文本轮（保留最后一条——当前用户消息留给 ③ 按剩余预算截断）
+  // ① 丢最旧纯文本轮（保留最后一条——当前用户消息留给 ③ 按剩余预算截断）。
+  // 只丢 assistant 轮：对话恒以 user 开头、user/assistant 交替——丢 user 会造成
+  // assistant 孤立在开头，Anthropic 协议要求首条 user + 角色交替（DeepSeek 兼容
+  // 端点校验严格，孤立 assistant 轮直接 400 → 整轮 chat 持续失败直至历史滚动换掉）。
+  // 代价是 user 轮保留得更多（裁剪效率略降），由 ②③ 补偿
   let i = 0
   while (over > 0 && i < messages.length - 1) {
     const m = messages[i]
     if (m.toolCalls || m.toolResults) { i++; continue } // 工具轮不动（配对语义）
+    if (m.role !== 'assistant') { i++; continue } // 不丢 user 轮（配对完整性）
     over -= messageTokens(m)
     messages.splice(i, 1)
   }
@@ -113,8 +162,10 @@ export function applyTokenBudget (messages, fixedTokens, budget) {
       const targetPer = Math.max(TOOL_RESULT_MIN_CHARS, Math.floor(textBudget / results.length))
       for (const r of results) {
         if (r.output.length > targetPer) {
-          over -= estimateTokens(r.output) - estimateTokens(r.output.slice(0, targetPer))
-          r.output = r.output.slice(0, targetPer) + '…(截断)'
+          // 结构感知截断（第 8 轮）——预算二次截断不再破坏 2000 硬截的 JSON 结构
+          const truncated = truncateJson(r.output, targetPer)
+          over -= estimateTokens(r.output) - estimateTokens(truncated)
+          r.output = truncated
         }
       }
     }
@@ -356,10 +407,12 @@ export class AgentInterface {
         const results = []
         for (const tc of calls) {
           let r
+          // signal 贯通（第 8 轮）：stop()/断线中止不再只断 provider fetch——
+          // 进行中的动作（goto 最长 120s）也立即中断，busy 释放有界
           if (tc.name === 'act') {
-            r = await this.executor.executeBatch(tc.arguments?.actions ?? [], { user, source: 'llm' })
+            r = await this.executor.executeBatch(tc.arguments?.actions ?? [], { user, source: 'llm', signal: ac.signal })
           } else {
-            r = await this.executor.executeOne(tc.name, tc.arguments, { user, source: 'llm' })
+            r = await this.executor.executeOne(tc.name, tc.arguments, { user, source: 'llm', signal: ac.signal })
           }
           // 工具结果截断：maxSteps×多动作的大 JSON（observe_* 结构化结果）
           // 会撑爆上下文或放大云端成本
@@ -370,7 +423,7 @@ export class AgentInterface {
             output = r.ok ? (typeof r.result === 'string' ? r.result : JSON.stringify(r.result)) : r.result
           }
           if (typeof output !== 'string') output = JSON.stringify(output)
-          if (output.length > TOOL_RESULT_MAX_CHARS) output = output.slice(0, TOOL_RESULT_MAX_CHARS) + '…(截断)'
+          if (output.length > TOOL_RESULT_MAX_CHARS) output = truncateJson(output, TOOL_RESULT_MAX_CHARS)
           results.push({ id: tc.id, name: tc.name, output })
           // v1.0.0 C11：本轮运行时失败收集（反思触发源——排除确定性错误）
           if (tc.name === 'act') {
@@ -427,10 +480,17 @@ export class AgentInterface {
    */
   async act (user, name, params) {
     // P2-3（第五轮）：act 直调不经 busy 门——!agent act goto 可打进进行中的
-    // chat 工具循环（两个控制流并发改 pathfinder/装备状态）。busy 时拒绝
+    // chat 工具循环（两个控制流并发改 pathfinder/装备状态）。busy 时拒绝。
+    // 第 8 轮补齐反方向：act 执行期间也置 busy——!agent act goto（最长 120s）
+    // 运行中再发 !agent chat/!agent act 此前可打进长动作（双 goto 互覆盖 goal）。
+    // 代价：act 长动作占 busy 期间其他玩家的 chat 排队——这是串行化意图，非缺陷
     if (this.busy) return { ok: false, result: '上一个请求仍在处理中，请稍候' }
-    // v1.0.0 C4：直调动作原语（走执行器统一管线——权限/校验/守卫/审计）
-    return this.executor.executeOne(name, params, { user, source: 'act' })
+    this.busy = true
+    try {
+      return await this.executor.executeOne(name, params, { user, source: 'act' })
+    } finally {
+      this.busy = false
+    }
   }
 
   /**

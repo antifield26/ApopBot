@@ -213,12 +213,13 @@ test('primitives: observe_inventory 聚合数量（v1.0.0 结构化返回）', a
   const { agent } = makeAgent(ctx, [])
   const r = await agent.act('steve', 'observe_inventory', {})
   assert.equal(r.ok, true)
-  assert.deepEqual(r.result, { items: [{ name: 'diamond', count: 5 }], total: 5 })
+  // slotsUsed = 占用槽位数（第 8 轮新增——fish 背包满判定用槽位而非物品种类）
+  assert.deepEqual(r.result, { items: [{ name: 'diamond', count: 5 }], total: 5, slotsUsed: 1 })
   // 空背包 → 空态
   const ctx2 = makeCtx({ bot: { ...makeCtx().bot, inventory: { items: () => [] } } })
   const { agent: a2 } = makeAgent(ctx2, [])
   const empty = await a2.act('steve', 'observe_inventory', {})
-  assert.deepEqual(empty.result, { items: [], total: 0 })
+  assert.deepEqual(empty.result, { items: [], total: 0, slotsUsed: 0 })
 })
 
 test('provider: v1.0.0 单 provider（云端）——createProvider 忽略 provider 配置恒返回 cloud 实例', async () => {
@@ -426,12 +427,14 @@ test('primitives: observe_blocks 无候选 → 空数组', async () => {
   assert.deepEqual(r.result.candidates, [])
 })
 
-test('primitives: observe_blocks 未知方块 → ok:false', async () => {
+test('primitives: observe_blocks 未知方块 → 跳过该名（第 8 轮：不再整批死）', async () => {
+  // 与 collect_blocks 语义一致：一个拼错不杀整批——返回空候选 + 缺省 matchedNames
   const ctx = makeFindCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
   const r = await agent.act('op1', 'observe_blocks', { blockName: 'not_a_block' })
-  assert.equal(r.ok, false)
-  assert.ok(r.result.includes('未知方块类型'))
+  assert.equal(r.ok, true, '未知名应跳过而非抛错')
+  assert.deepEqual(r.result.candidates, [])
+  assert.deepEqual(r.result.blockNames, [], '未知名不进入 matchedNames')
 })
 
 test('primitives: observe_blocks 只读（all 权限）——非 op 可查询', async () => {
@@ -968,4 +971,49 @@ test('C2: 预算守卫仍生效——contextWindow 512 → 消息被裁不抛错
   await agent.chat('steve', 'x'.repeat(2000))
   assert.ok(provider.calls[0].system.includes('多步意图示例'), 'system 本身不受裁剪（fixed 超预算仅 warn）')
   // 不抛错即通过——云端窗口生效后裁剪路径兜底
+})
+
+test('第 8 轮：预算裁剪只丢 assistant 轮——首条恒 user（孤立 assistant 400 防线）', () => {
+  const msgs = [
+    { role: 'user', content: '第一条' },
+    { role: 'assistant', content: '回复一' },
+    { role: 'user', content: '第二条' },
+    { role: 'user', content: '当前消息' }
+  ]
+  // 预算小到必须丢轮（只够 3 条消息）
+  const total = msgs.reduce((s, m) => s + estimateTokens(m.content), 0)
+  const oneMsg = estimateTokens('回复一')
+  applyTokenBudget(msgs, 0, total - oneMsg + 1)
+  assert.equal(msgs[0].role, 'user', '裁剪后首条必须仍为 user（丢 user 会造成孤立 assistant → 严格端点 400）')
+  assert.ok(msgs.length < 4, `应发生裁剪: ${msgs.length}`)
+})
+
+test('第 8 轮：truncateJson 保 JSON 结构（工具结果截断不再无效）', async () => {
+  const { truncateJson } = await import('../src/l2/agent-interface.js')
+  const arr = JSON.stringify(Array.from({ length: 5 }, (_, i) => ({ op: `a${i}`, ok: true, result: 'ok' })))
+  const out = truncateJson(arr, 70)
+  assert.ok(!out.endsWith('…(截断)'), '结构化结果不应半截')
+  const parsed = JSON.parse(out)
+  assert.ok(Array.isArray(parsed.items), '截断后保留 items 数组')
+  assert.ok(parsed.items.length >= 1 && parsed.items.length < 5, `应保留部分元素: ${parsed.items.length}`)
+  assert.equal(parsed.truncated, 5 - parsed.items.length, '应标记截断条数')
+  // 单元素就超限 → 半截兜底（无法保留任何完整元素）
+  const big = JSON.stringify([{ op: 'a', result: 'x'.repeat(500) }])
+  assert.equal(truncateJson(big, 50).endsWith('…(截断)'), true)
+  // 纯文本直接截
+  assert.equal(truncateJson('你好'.repeat(100), 10).endsWith('…(截断)'), true)
+  // 未超限原样
+  assert.equal(truncateJson(arr, 100000), arr)
+})
+
+test('第 8 轮：act 执行期间置 busy——chat 被拒（双控制流防线）', async () => {
+  const ctx = makeCtx()
+  const { agent } = makeAgent(ctx, [])
+  const p = agent.act('steve', 'wait', { ms: 400 })
+  const r = await agent.chat('steve', 'hello')
+  assert.ok(r.reply.includes('仍在处理'), r.reply)
+  await p
+  // busy 释放后可正常 chat
+  const r2 = await agent.chat('steve', 'hi')
+  assert.ok(!r2.reply.includes('仍在处理'), r2.reply)
 })

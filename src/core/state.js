@@ -36,7 +36,14 @@ export function loadState (file = DEFAULT_FILE) {
  * @throws {Error} 快照版本高于当前（需升级 Bot）
  */
 export function migrateState (data) {
-  const v = data?.schemaVersion ?? 1 // 缺省 = v1
+  const raw = data?.schemaVersion
+  const v = (raw === undefined || raw === null) ? 1 : raw
+  // 手改损坏：版本号非法（0/负数/小数/非数字）——此前进入迁移循环 MIGRATIONS[0]
+  // 抛裸 TypeError → loadState 之外向上炸 → 启动崩溃（违背"损坏回退空态"承诺）。
+  // 按 v1 形状防御处理（normalize 兜底坏形状，输出 schemaVersion 2）
+  if (!Number.isInteger(v) || v < 1) {
+    return normalize({ ...(data ?? {}), schemaVersion: 1 })
+  }
   if (v > STATE_SCHEMA_VERSION) {
     throw new Error(`state.json schemaVersion=${v} 高于 Bot 支持的 ${STATE_SCHEMA_VERSION}——请升级 Bot 后再启动（勿手改版本号，数据可能不兼容）`)
   }

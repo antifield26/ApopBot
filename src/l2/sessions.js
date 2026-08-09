@@ -94,17 +94,23 @@ export function createSessionStore ({ file = DEFAULT_FILE, debounceMs = 2000, lo
     },
     /** 写入会话（内存为主存储；调度落盘）。 */
     set (user, value) {
+      // 第 8 轮：delete+set 刷新插入序——否则活跃玩家（内存命中从不触发 get 的
+      // 磁盘刷新）插入序停留在首次落盘位置，persist 的 LRU 裁尾会误裁活跃会话
+      delete last.sessions[user]
       last.sessions[user] = {
         history: Array.isArray(value?.history) ? value.history.slice(-20) : [],
         calls: Array.isArray(value?.calls) ? value.calls.slice(-50) : []
       }
       schedule()
     },
-    /** 删除会话并落盘。 */
+    /** 删除会话并立即落盘。 */
     reset (user) {
       if (!(user in last.sessions)) return
       delete last.sessions[user]
-      schedule()
+      // 立即落盘（第 8 轮）：!agent reset 语义要求崩溃窗口内不"复活"——
+      // 此前走 2s 防抖，SIGKILL/断电窗口内会话残留磁盘，重启后私密上下文恢复
+      dirty = true
+      persist()
     },
     /** 立即落盘（测试/优雅退出）。 */
     flush () {

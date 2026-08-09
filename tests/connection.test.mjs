@@ -236,3 +236,43 @@ test('致命原因后 end 事件不触发重连（_fatalExit 守卫）', async (
     process.exit = origExit
   }
 })
+
+test('第 8 轮：代际守卫（成功路径）——陈旧插件装载不得覆盖当前代际插件句柄', async () => {
+  // connect#1 插件装载慢（300ms），期间断线 → 退避 → connect#2（装载快）先完成；
+  // connect#1 的陈旧装载最后 resolve——此前成功路径无 seq 检查会覆盖 this.plugins
+  //（死 bot 句柄 → !follow 在死 client 上 setControlState → fatalExit 停服）
+  const bots = []
+  let loadCount = 0
+  const conn = new ConnectionManager(
+    makeCfg({ reconnect: { baseMs: 50, maxMs: 200, factor: 2, jitter: 0, minGapMs: 0 } }),
+    makeLogger(), {}, {
+      createBot: () => {
+        const b = new FakeBot()
+        bots.push(b)
+        return b
+      },
+      loadMineflayerPlugins: async () => {
+        loadCount++
+        if (loadCount === 1) await new Promise(r => setTimeout(r, 300)) // 陈旧装载慢
+        return { follow: { instance: `bot${loadCount}` } }
+      }
+    }
+  )
+  try {
+    const p1 = conn.connect()
+    bots[0].emit('error', new Error('ECONNRESET'))
+    // 注意：不能先 await p1（connect#1 装载 300ms）——期间 connect#2（50ms 建立）
+    // 的 spawn 超时（200ms）先触发 → quit → timeoutQuit 路径无限重连。顺序必须：
+    // connect#2 建立 → 立即 spawn → 再等 connect#1 陈旧装载 resolve
+    assert.ok(await pollUntil(() => bots.length >= 2), '应已重连到 connect#2')
+    assert.ok(await pollUntil(() => conn.plugins?.follow?.instance === 'bot2'), `当前代际插件应为 bot2（实际 ${conn.plugins?.follow?.instance}）`)
+    bots[1].emit('spawn') // 立即 spawn——取消 spawn 超时，打破重连循环
+    assert.equal(conn.state, 'connected')
+    // connect#1 的陈旧装载（t≈300ms）最后 resolve——不得覆盖
+    await p1
+    await new Promise(r => setTimeout(r, 100))
+    assert.equal(conn.plugins?.follow?.instance, 'bot2', '陈旧装载成功不得覆盖当前代际插件句柄')
+  } finally {
+    await conn.disconnect() // 断言失败也必须清理（残留重连循环会挂住测试进程）
+  }
+})

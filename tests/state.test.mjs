@@ -172,3 +172,14 @@ test('C5: 未来版本拒绝加载（明确报错而非静默降级）', (t) => 
   writeFileSync(file, JSON.stringify({ schemaVersion: 99, tasks: [] }))
   assert.throws(() => loadState(file), /schemaVersion=99/, '未来版本应报错')
 })
+
+test('第 8 轮：非法 schemaVersion（0/负数/小数）按空态处理（不抛裸 TypeError）', (t) => {
+  for (const bad of [0, -1, 1.5]) {
+    const dir = makeTmpDir(t)
+    const file = path.join(dir, 'bad-version.json')
+    writeFileSync(file, JSON.stringify({ schemaVersion: bad, tasks: [], counters: {}, memory: {} }))
+    const out = loadState(file)
+    assert.equal(out.schemaVersion, 2, `版本 ${bad} 应归一化`)
+    assert.deepEqual(out.tasks, [])
+  }
+})

@@ -23,7 +23,9 @@ export const TASK_OPTION_SCHEMAS = {
       // A2：radius 上限 256——bot.findBlocks 是同步八面体枚举（OctahedronIterator），
       // 无界 radius 在稀疏区域冻结主线程（与 findSurfaceBlocks 的 16-256 限幅一致；
       // 客户端区块加载上限本就框死可见范围）
-      radius: { type: 'integer', min: 1, max: 256 },
+      // 下限 16：脚本经 observe_blocks 扫描（maxDistance 最小 16）——radius 1-15 过
+      // schema 但每轮参数校验失败 → 任务静默空转永不工作（第 8 轮修复）
+      radius: { type: 'integer', min: 16, max: 256 },
       chestLocations: { type: 'array' },
       stopWhenDone: { type: 'boolean' }
     }
@@ -62,7 +64,7 @@ export const TASK_OPTION_SCHEMAS = {
       // 被拒而 config 同配置照跑（命令/配置两路径行为不一致，F2）
       logTypes: { type: 'array', items: { type: 'string' }, minItems: 1 },
       maxBlocks: { type: 'integer', min: 1 },
-      radius: { type: 'integer', min: 1, max: 256 }, // A2：同步枚举限幅（同 mine）
+      radius: { type: 'integer', min: 16, max: 256 }, // A2：同步枚举限幅（同 mine；下限 16 同 observe_blocks）
       stopWhenDone: { type: 'boolean' }
     }
   },

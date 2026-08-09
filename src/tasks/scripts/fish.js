@@ -13,10 +13,11 @@ export default {
       { ctrl: 'loop', max: 'infinite', body: [
         // 时长到 → 自然完成
         { ctrl: 'if', cond: { type: 'deadline', passed: true }, then: [{ ctrl: 'return', value: 'completed' }] },
-        // 背包满（可用槽位 <2 视为满，留手持/盔甲位——原 _inventoryFull 同款）
+        // 背包满（占用槽位 ≥34 视为满，留手持/盔甲位——原 _inventoryFull 语义：
+        // 槽位数而非物品种类数——observe_inventory 的 slotsUsed 字段）
         { ctrl: 'if', cond: { type: 'config', key: 'stopWhenInventoryFull', equals: true }, then: [
           { op: 'observe_inventory', args: { maxItems: 50 }, as: 'inv' },
-          { ctrl: 'if', cond: { type: 'result', ref: 'inv', field: 'items.length', gte: 34 }, then: [
+          { ctrl: 'if', cond: { type: 'result', ref: 'inv', field: 'slotsUsed', gte: 34 }, then: [
             { ctrl: 'return', value: 'completed' }
           ] }
         ] },

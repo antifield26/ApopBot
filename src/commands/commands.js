@@ -58,7 +58,10 @@ export function registerBuiltinCommands (registry, ctx) {
       if (action === 'list') {
         const status = c.tasks.getStatus()
         // U8：排队位置/时长剩余/下次 cron 触发（调度可见性——此前排队与时长只有日志）
-        const pad = (n) => String(n).padStart(2, '0')
+        // 第 8 轮：nextRunAt 按 scheduleTimezone 渲染——机器本地时区与调度时区
+        // 不一致时此前显示的"下次触发"与实际触发时间不符
+        const tz = c.cfg?.scheduleTimezone ?? 'Asia/Shanghai'
+        const fmt = new Intl.DateTimeFormat('zh-CN', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false })
         await sendChat(c.bot, status.length
           ? status.map(t => {
             const parts = [`${t.id}:${t.state}`]
@@ -66,7 +69,7 @@ export function registerBuiltinCommands (registry, ctx) {
             if (t.lastError) parts.push(`(err:${t.lastError})`)
             if (t.queuePosition) parts.push(`[排队#${t.queuePosition}]`)
             if (t.remainingMinutes !== undefined) parts.push(`[余${t.remainingMinutes}m]`)
-            if (t.nextRunAt) parts.push(`[下次${pad(t.nextRunAt.getHours())}:${pad(t.nextRunAt.getMinutes())}]`)
+            if (t.nextRunAt) parts.push(`[下次${fmt.format(t.nextRunAt)}]`)
             if (Object.keys(t.counters).length) parts.push(`[${JSON.stringify(t.counters)}]`)
             return parts.join('')
           }).join('; ')

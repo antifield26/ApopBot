@@ -341,3 +341,27 @@ test('C10: cloudMaxContextWindow 默认 65536 + env 数字转换 + 非法值报�
   assert.equal(ok, false)
   assert.ok(errors.some(e => e.includes('cloudMaxContextWindow')), errors.join('; '))
 })
+
+test('第 8 轮：MCBOT_L2_THINKING/effort 保持字符串（布尔键白名单——true/false 不再误转布尔）', () => {
+  const cfg = loadConfig({ argv: [], env: {
+    MCBOT_L2_THINKING: 'true',
+    MCBOT_L2_EFFORT: 'false',
+    MCBOT_L2_ENABLED: 'true',
+    MCBOT_HTTP_ENABLED: 'true'
+  } })
+  assert.equal(cfg.l2.enabled, true, '布尔键 l2.enabled 仍转布尔')
+  assert.equal(cfg.http.enabled, true)
+  assert.equal(cfg.l2.thinking, 'true', 'thinking 不是布尔键——保持字符串（与 JSON 通道一致）')
+  assert.equal(cfg.l2.effort, 'false')
+})
+
+test('第 8 轮：非法 cron 表达式启动校验报错（不再静默永不调度）', () => {
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
+  const bad = { ...cfg, tasks: [{ id: 't1', type: 'mine', schedule: 'not a cron', options: { blockTypes: ['iron_ore'] } }] }
+  const { ok, errors } = validateConfig(bad)
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => e.includes('cron')), errors.join('; '))
+  const good = { ...cfg, tasks: [{ id: 't2', type: 'mine', schedule: '0 20 * * *', options: { blockTypes: ['iron_ore'] } }] }
+  const g = validateConfig(good)
+  assert.equal(g.ok, true, g.errors.join('; '))
+})

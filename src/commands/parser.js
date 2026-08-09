@@ -19,6 +19,7 @@ export function parseCommand (line) {
   let tokenStarted = false
   let escaped = false
   let braceDepth = 0 // 以 { 开头的 JSON token：括号内空格不分割（支持 !task new 带空格的 JSON）
+  let inJsonStr = false // JSON token 内字符串值状态（引号成对切换）——字符串值里的 { } 不计 depth
 
   for (const ch of trimmed.slice(1)) {
     if (escaped) {
@@ -38,10 +39,21 @@ export function parseCommand (line) {
         tokens.push(current)
         current = ''
         tokenStarted = false
+        inJsonStr = false // token 结束：JSON 字符串状态复位（新 token 从 { 重新判定）
       }
     } else {
-      if (ch === '{') braceDepth++
-      else if (ch === '}') braceDepth = Math.max(0, braceDepth - 1)
+      // 第 8 轮：braceDepth 只对 JSON 顶层计数——JSON 字符串值里的 { } 此前也计入
+      // （'{"a": "x{"}' 的 { 使 depth=2），后续空格不再分割 → 整串合并为一个 token
+      // → JSON.parse 失败报"参数必须是 JSON"（吞掉本应独立的后续参数）。
+      // JSON token 的引号不走 inQuotes（shell 语义：仅 token 开头的 " 是引号分隔符）——
+      // 以 { 开头的 token 内单独跟踪字符串状态（合法 JSON 的引号必然成对）
+      if (!inQuotes) {
+        if (ch === '"' && current.startsWith('{')) inJsonStr = !inJsonStr
+        if (!inJsonStr) {
+          if (ch === '{') braceDepth++
+          else if (ch === '}') braceDepth = Math.max(0, braceDepth - 1)
+        }
+      }
       current += ch
       tokenStarted = true
     }

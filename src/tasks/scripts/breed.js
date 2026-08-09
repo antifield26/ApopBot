@@ -47,14 +47,21 @@ export default {
         ], else: [
           // 喂食最近动物（count 2 次 + useCooldownMs 间隔 + 目标存在检查由原语处理）
           { op: 'interact_entity', args: { filter: '${animalTypes}', foodName: '${foodItem}', count: 2, useCooldownMs: '${useCooldownMs}' }, as: 'feed' },
-          { ctrl: 'if', cond: { type: 'last', ok: false }, then: [
-            { ctrl: 'wait', ms: 30000 } // 无食物/目标消失（no-food 语义）
+          // 无食物时原语返回 ok:true + fed:0（"无事可做"是有效执行——约定不能改）——
+          // 脚本必须显式判 fed===0 才走 30s no-food 等待；last.ok:false 只覆盖
+          // 异常失败（equip 超时/位置失效）。此前只看 ok 导致无食物 5s 紧循环
+          { ctrl: 'if', cond: { type: 'not', cond: { type: 'last', ok: true } }, then: [
+            { ctrl: 'wait', ms: 30000 }
           ], else: [
-            // 繁殖成功（成年个体被幼崽替换）→ breedings 计数
-            { ctrl: 'if', cond: { type: 'result', ref: 'feed', field: 'targetGone', equals: true }, then: [
-              { ctrl: 'count', name: 'breedings', by: 1 }
-            ] },
-            { ctrl: 'wait', ms: 5000 } // 等待幼崽生成/替换
+            { ctrl: 'if', cond: { type: 'result', ref: 'feed', field: 'fed', equals: 0 }, then: [
+              { ctrl: 'wait', ms: 30000 } // 无食物（no-food 语义）
+            ], else: [
+              // 繁殖成功（成年个体被幼崽替换）→ breedings 计数
+              { ctrl: 'if', cond: { type: 'result', ref: 'feed', field: 'targetGone', equals: true }, then: [
+                { ctrl: 'count', name: 'breedings', by: 1 }
+              ] },
+              { ctrl: 'wait', ms: 5000 } // 等待幼崽生成/替换
+            ] }
           ] }
         ] }
       ] }

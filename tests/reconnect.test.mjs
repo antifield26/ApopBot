@@ -81,3 +81,13 @@ test('B1 修复：Server is closed（服务端重启）→ maintenance', () => {
   const r = classifyDisconnect('Server is closed.')
   assert.equal(r.type, 'maintenance')
 })
+
+test('第 8 轮：维护消息含 "version" → maintenance 非 fatal（不再误判致命停服）', () => {
+  const r = classifyDisconnect('Server is updating to version 1.21.5')
+  assert.equal(r.isFatal, false, '维护消息不得 fatal')
+  assert.equal(r.type, 'maintenance')
+  assert.equal(classifyDisconnect('Server restarting to install version 1.21').type, 'maintenance')
+  // 关键词收窄后明确的版本不匹配仍 fatal（不误伤）
+  assert.equal(classifyDisconnect('Outdated client! Please use 26.1.2').isFatal, true)
+  assert.equal(classifyDisconnect('This server is not compatible with your client').type, 'version_mismatch')
+})

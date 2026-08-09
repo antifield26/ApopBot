@@ -94,18 +94,38 @@ export function createActionExecutor (ctx, deps = {}) {
    *          rejected = 解析期拒绝原因（超预算/非法数组），results 为空
    */
   async function executeBatch (actions, opts = {}) {
+    // 解析期拒绝也写审计（第 8 轮）——自主行为追溯不得有静默空洞
+    // （LLM 发 9 个动作被拒/缺 op 整批拒：此前审计无任何痕迹）
+    const logRejected = (result) => {
+      if (!audit) return
+      try {
+        audit.append({ op: 'batch', args: null, ok: false, result, durationMs: 0, source: opts.source ?? 'llm', user: opts.user, taskId: opts.taskId })
+      } catch (err) { ctx.logger.warn({ err: err.message }, '审计写入失败') }
+    }
     if (!Array.isArray(actions) || actions.length === 0) {
       return { ok: false, results: [], failedAt: null, rejected: '动作数组为空或格式错误' }
     }
     if (actions.length > maxActionsPerCall) {
+      logRejected(`rejected: 动作数超限 ${actions.length}/${maxActionsPerCall}`)
       return { ok: false, results: [], failedAt: null, rejected: `动作数 ${actions.length} 超过单次上限 ${maxActionsPerCall}` }
+    }
+    // 解析期 shape 预校验（第 8 轮）：全部元素先过 op/args 形状检查——此前边执行
+    // 边校验，第 k 个元素非法时前 k-1 个已真实执行（dig/place 已生效）而结果整体
+    // 丢弃（rejected）→ LLM 不知情重复副作用。预校验保证"全执行或全拒绝"
+    for (let i = 0; i < actions.length; i++) {
+      const step = actions[i]
+      if (!step || typeof step.op !== 'string') {
+        logRejected(`rejected: 第 ${i + 1} 个动作缺少 op`)
+        return { ok: false, results: [], failedAt: i, rejected: `第 ${i + 1} 个动作缺少 op` }
+      }
+      if (step.args !== undefined && (typeof step.args !== 'object' || step.args === null || Array.isArray(step.args))) {
+        logRejected(`rejected: 第 ${i + 1} 个动作参数必须是对象`)
+        return { ok: false, results: [], failedAt: i, rejected: `第 ${i + 1} 个动作参数必须是对象` }
+      }
     }
     const results = []
     for (let i = 0; i < actions.length; i++) {
       const step = actions[i]
-      if (!step || typeof step.op !== 'string') {
-        return { ok: false, results, failedAt: i, rejected: `第 ${i + 1} 个动作缺少 op` }
-      }
       // 脚本暂停钩子（任务 pause——动作间检查，批内由原语内部处理）
       if (opts.waitIfPaused) await opts.waitIfPaused()
       if (opts.signal?.aborted) {
@@ -141,6 +161,11 @@ export function createActionExecutor (ctx, deps = {}) {
 export function validateParams (schema, params) {
   if (!schema) return { ok: true }
   params = params ?? {}
+  // 第 8 轮：顶层类型检查——字符串/数字/数组参数此前遍历属性全过（String 有索引
+  // 访问不抛），垃圾参数（args:123）漏进 handler → NaN 坐标/神秘错误不可归因
+  if (typeof params !== 'object' || params === null || Array.isArray(params)) {
+    return { ok: false, error: '参数必须是对象' }
+  }
   for (const k of schema.required ?? []) {
     if (params[k] === undefined) return { ok: false, error: `缺少参数: ${k}` }
   }

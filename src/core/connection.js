@@ -83,11 +83,16 @@ export class ConnectionManager {
 
     // 2. 异步插件装载（动态 import 可能较慢，设超时；失败为非致命网络类问题，重连重试）
     try {
-      this.plugins = await withTimeout(
+      const loaded = await withTimeout(
         this._deps.loadMineflayerPlugins(bot, this.cfg, this.log),
         PLUGIN_LOAD_TIMEOUT_MS,
         '插件装载超时'
       )
+      // 代际守卫（成功路径）：陈旧连接（已换代——装载期间断线重连）的装载结果
+      // 不得覆盖当前代际的插件句柄——否则死 bot 的 follow 实例在 !follow 时
+      // setControlState 于死 client 上抛错 → uncaughtException → fatalExit 停服
+      if (seq !== this._connectSeq) return
+      this.plugins = loaded
     } catch (err) {
       if (seq !== this._connectSeq) return // 陈旧连接（已换代）的失败不再调度重连
       this.log.error({ err: err.message }, '插件装载失败，断开后重试')

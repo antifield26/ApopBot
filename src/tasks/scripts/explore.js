@@ -70,63 +70,72 @@ export default {
   },
   ops: {
     /** 螺旋一站：推进环/裁剪判定/访问站点。返回 {done} 表示任务应完成。 */
-    spiral_step: async (ctx, args, runtime, task) => {
-      void args
-      let st = stateMap.get(task)
-      if (!st) {
-        st = initState(task)
-        stateMap.set(task, st)
-      }
-      if (!task._alive(task._runGen)) return { done: true, reason: 'stopped' }
-
-      // spiralWaypoints 一次生成全部环（1..maxRing）——列表耗尽 = 本轮螺旋完成：
-      // stopWhenDone → 完成；否则以当前位置为新中心重启（有界漫游，永不"走丢"）
-      if (!st.waypoints || st.ringIndex >= st.waypoints.length) {
-        if (st.stopWhenDone) return { done: true, reason: 'spiral-complete' }
-        task.incr('rings')
-        const p = task.bot.entity?.position
-        if (p) st.center = { x: Math.floor(p.x), z: Math.floor(p.z) }
-        st.waypoints = spiralWaypoints(st.center.x, st.center.z, st.maxDistance, SPIRAL_STEP)
-        st.ringIndex = 0
-      }
-
-      const wp = st.waypoints[st.ringIndex++]
-      // area 裁剪：站点在盒外 → 跳过（连续 16 站被裁 = 覆盖完成）
-      if (st.area && !inArea(wp, st.area)) {
-        st.consecutiveTrimmed++
-        if (st.consecutiveTrimmed >= 16 && st.stopWhenDone) {
-          return { done: true, reason: 'area-covered' }
+    spiral_step: {
+      // 外层超时必须 ≥ 内部 gotoPoint 45s（外层先触发 → 幽灵移动 + setGoal(null)
+      // 竞态：脚本进下一站覆盖旧 goal，旧 runOnce finally 清掉新 goal）
+      timeoutMs: 50000,
+      handler: async (ctx, args, runtime, task) => {
+        void args
+        let st = stateMap.get(task)
+        // 代际守卫：同实例重启（scheduled 再次触发）后 _runGen 已递增——旧 st 的
+        // waypoints 已耗尽 → stopWhenDone 时立即"完成"（零工作量秒完成）。按代际
+        // 重建状态，与 WeakMap 隔离语义一致
+        if (!st || st.gen !== task._runGen) {
+          st = initState(task)
+          st.gen = task._runGen
+          stateMap.set(task, st)
         }
-        return { done: false, trimmed: true }
-      }
-      st.consecutiveTrimmed = 0
+        if (!task._alive(task._runGen)) return { done: true, reason: 'stopped' }
 
-      // 一站：寻路到达 → 采样 → 实体扫描 → 锚点（原 _visitStation）
-      const move = createMovement(task.bot, task.log)
-      const r = await move.gotoPoint({ x: wp.x, y: groundY(task.bot, wp.x, wp.z), z: wp.z }, {
-        range: 3,
-        timeoutMs: 45000,
-        isInterrupted: () => task._stopRequested || task._pauseRequested
-      })
-      if (!r.ok && r.reason !== 'interrupted') {
-        task.log.warn({ reason: r.reason, wp }, '站点不可达，跳过')
-        task.incr('unreachable')
-      } else if (r.ok) {
-        task.incr('waypoints')
-        const found = sampleResources(task.bot)
-        if (found.length) {
-          task.incr('discovered', found.length)
-          for (const f of found) task.incr(`res:${f.name}`)
-          // D：重要资源 webhook 推送（节流；P2-2 实时配置）
-          notifyValuableFound(task.ctx.getConfig?.() ?? task.ctx.config, task.log, found)
+        // spiralWaypoints 一次生成全部环（1..maxRing）——列表耗尽 = 本轮螺旋完成：
+        // stopWhenDone → 完成；否则以当前位置为新中心重启（有界漫游，永不"走丢"）
+        if (!st.waypoints || st.ringIndex >= st.waypoints.length) {
+          if (st.stopWhenDone) return { done: true, reason: 'spiral-complete' }
+          task.incr('rings')
+          const p = task.bot.entity?.position
+          if (p) st.center = { x: Math.floor(p.x), z: Math.floor(p.z) }
+          st.waypoints = spiralWaypoints(st.center.x, st.center.z, st.maxDistance, SPIRAL_STEP)
+          st.ringIndex = 0
         }
-        const ents = scanEntities(task.bot)
-        if (ents.counts.hostile > 0) task.log.info({ hostile: ents.hostile }, '站点附近有敌对实体（只记录不接触）')
-        discovery.recordAnchor(task.bot.entity?.position)
+
+        const wp = st.waypoints[st.ringIndex++]
+        // area 裁剪：站点在盒外 → 跳过（连续 16 站被裁 = 覆盖完成）
+        if (st.area && !inArea(wp, st.area)) {
+          st.consecutiveTrimmed++
+          if (st.consecutiveTrimmed >= 16 && st.stopWhenDone) {
+            return { done: true, reason: 'area-covered' }
+          }
+          return { done: false, trimmed: true }
+        }
+        st.consecutiveTrimmed = 0
+
+        // 一站：寻路到达 → 采样 → 实体扫描 → 锚点（原 _visitStation）
+        const move = createMovement(task.bot, task.log)
+        const r = await move.gotoPoint({ x: wp.x, y: groundY(task.bot, wp.x, wp.z), z: wp.z }, {
+          range: 3,
+          timeoutMs: 45000,
+          isInterrupted: () => task._stopRequested || task._pauseRequested
+        })
+        if (!r.ok && r.reason !== 'interrupted') {
+          task.log.warn({ reason: r.reason, wp }, '站点不可达，跳过')
+          task.incr('unreachable')
+        } else if (r.ok) {
+          task.incr('waypoints')
+          const found = sampleResources(task.bot)
+          if (found.length) {
+            task.incr('discovered', found.length)
+            for (const f of found) task.incr(`res:${f.name}`)
+            // D：重要资源 webhook 推送（节流；P2-2 实时配置）
+            notifyValuableFound(task.ctx.getConfig?.() ?? task.ctx.config, task.log, found)
+          }
+          const ents = scanEntities(task.bot)
+          if (ents.counts.hostile > 0) task.log.info({ hostile: ents.hostile }, '站点附近有敌对实体（只记录不接触）')
+          discovery.recordAnchor(task.bot.entity?.position)
+        }
+        // 节奏等待（可被打断）
+        await task._internalWait(Math.min(st.checkIntervalMs, 500), 'explore-station')
+        return { done: false }
       }
-      // 节奏等待（可被打断）
-      await task._internalWait(Math.min(st.checkIntervalMs, 500), 'explore-station')
-      return { done: false }
     }
   },
   script: {

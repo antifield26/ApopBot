@@ -131,3 +131,34 @@ test('agent-interface 接入：重启后从磁盘回填会话（多轮上下文�
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('第 8 轮：reset 立即落盘（防抖窗口内崩溃不复活）', () => {
+  const { dir, file } = makeTmp()
+  try {
+    const s = createSessionStore({ file, debounceMs: 100000 })
+    s.set('steve', { history: [{ role: 'user', content: 'secret' }], calls: [] })
+    s.flush()
+    s.reset('steve')
+    const disk = JSON.parse(readFileSync(file, 'utf8'))
+    assert.equal('steve' in disk.sessions, false, 'reset 后磁盘立即无该会话（防抖窗口内崩溃也不复活）')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('第 8 轮：set 刷新 LRU 插入序（活跃会话不被裁尾误裁）', () => {
+  const { dir, file } = makeTmp()
+  try {
+    const s = createSessionStore({ file, debounceMs: 100000, maxSessions: 2 })
+    s.set('a', { history: [], calls: [] })
+    s.set('b', { history: [], calls: [] })
+    s.set('a', { history: [], calls: [] }) // a 再次写入——刷新到末尾
+    s.set('c', { history: [], calls: [] }) // 超限 → 裁最旧（修复前误裁 a）
+    s.flush()
+    const disk = JSON.parse(readFileSync(file, 'utf8'))
+    assert.ok('a' in disk.sessions && 'c' in disk.sessions, '活跃 a 保留')
+    assert.ok(!('b' in disk.sessions), '被裁的是最久未刷新的 b（修复前 a 会被误裁）')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

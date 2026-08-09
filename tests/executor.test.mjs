@@ -264,3 +264,22 @@ test('缺省 audit：无 log.dir 时 noop 不抛', async () => {
   const r = await ex.executeOne('dig', {}, { user: 'steve' })
   assert.equal(r.ok, true)
 })
+
+test('第 8 轮：shape 预校验——非法元素整批拒绝（前序动作不半执行）', async () => {
+  const { map, calls } = makePrims()
+  const ex = createActionExecutor(makeCtx({ cfg: { ops: ['steve'], l2: { maxActionsPerCall: 8 } } }), { primitives: map, audit: null })
+  const r = await ex.executeBatch([
+    { op: 'goto', args: { x: 1, y: 64, z: 2 } },
+    { args: { x: 9 } } // 缺 op
+  ], { user: 'steve' })
+  assert.ok(r.rejected.includes('缺少 op'), r.rejected)
+  assert.equal(calls.length, 0, '预校验失败——任何动作不得执行（修复前 goto 已真实执行、结果丢弃）')
+})
+
+test('第 8 轮：validateParams 顶层类型检查（args 非对象拒绝）', () => {
+  const schema = { type: 'object', properties: { x: { type: 'integer' } } }
+  assert.equal(validateParams(schema, 123).ok, false)
+  assert.equal(validateParams(schema, 'x').ok, false)
+  assert.equal(validateParams(schema, [1]).ok, false)
+  assert.equal(validateParams(schema, { x: 1 }).ok, true)
+})
