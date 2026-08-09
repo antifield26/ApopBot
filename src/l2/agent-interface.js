@@ -129,21 +129,16 @@ function getSession (user) {
   return null
 }
 
-/** 写入会话（LRU 上限驱逐最久未访问者）。 */
+/** 写入会话（LRU 上限驱逐最久未访问者——统一走 putBounded，第六轮 C11 去重）。 */
 function setSession (user, value) {
-  const session = Array.isArray(value) ? { history: value, calls: [] } : value
-  if (SESSIONS.has(user)) SESSIONS.delete(user)
-  SESSIONS.set(user, session)
-  if (SESSIONS.size > MAX_SESSIONS) {
-    SESSIONS.delete(SESSIONS.keys().next().value)
-  }
+  putBounded(SESSIONS, user, Array.isArray(value) ? { history: value, calls: [] } : value)
 }
 
-/** 有界 Map（按玩家冷却同款 LRU 上限）。 */
-function putBounded (map, key, value) {
+/** 有界 Map（LRU 上限驱逐最久未访问者；cooldowns 与 SESSIONS 共用）。 */
+function putBounded (map, key, value, max = MAX_SESSIONS) {
   if (map.has(key)) map.delete(key)
   map.set(key, value)
-  if (map.size > MAX_SESSIONS) map.delete(map.keys().next().value)
+  if (map.size > max) map.delete(map.keys().next().value)
 }
 
 // 核心层（第六轮 C10 分层）：所有 provider 共用——低配 4B 模型也 hold 得住的紧凑规则。

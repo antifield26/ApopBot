@@ -151,9 +151,7 @@ export function createSkillRegistry (ctx) {
       // P2-3（第五轮）：move_to 是唯一动 pathfinder 却无仲裁器防线的危险技能——
       // exclusive 任务运行中 setGoal 覆盖任务 goal → GoalChanged → 任务误计
       // unreachable 走回头路（find_block/explore/follow_player 均有防线）
-      if (hasExclusiveActive()) {
-        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法移动（任务结束后可试）`)
-      }
+      assertNoExclusive('移动')
       // 统一移动层阻塞式移动（C2）：到达/失败如实反馈，LLM 不再收到 fire-and-forget 假成功
       const { Vec3 } = await import('vec3')
       const { createMovement, REASON_TEXT } = await import('../core/movement.js')
@@ -261,6 +259,18 @@ export function createSkillRegistry (ctx) {
     lastActionAt.set(name, now)
   }
 
+  /**
+   * exclusive 任务仲裁器守卫（第六轮 C11 去重：此前 move_to/dig/place/attack/explore
+   * 五处样板复制，仅措辞差异）。文案与历史逐字一致（测试断言含 "exclusive 任务 g1"）。
+   * @param {string} action 动作名（错误信息插值，如 '挖掘'/'放置'）
+   * @param {string} [suffix] 追加建议（如 '，或先 !task stop'）
+   */
+  function assertNoExclusive (action, suffix = '') {
+    if (hasExclusiveActive()) {
+      throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法${action}（任务结束后可试${suffix}）`)
+    }
+  }
+
   register({
     name: 'dig',
     description: '挖掘指定坐标的方块（自动校验可挖性与距离；挖完立即返回，不收集掉落）。玩家说"挖这块"时用。',
@@ -274,9 +284,7 @@ export function createSkillRegistry (ctx) {
       }
     },
     handler: async (c, { x, y, z }) => {
-      if (hasExclusiveActive()) {
-        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法挖掘（任务结束后可试）`)
-      }
+      assertNoExclusive('挖掘')
       if (!c.bot?.dig || !c.bot.canDigBlock) throw new Error('dig 能力不可用（插件缺失）')
       const { Vec3 } = await import('vec3')
       const block = c.bot.blockAt(new Vec3(x, y, z))
@@ -305,9 +313,7 @@ export function createSkillRegistry (ctx) {
       }
     },
     handler: async (c, { x, y, z, face = 'up' }) => {
-      if (hasExclusiveActive()) {
-        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法放置（任务结束后可试）`)
-      }
+      assertNoExclusive('放置')
       if (!c.bot?.placeBlock) throw new Error('place 能力不可用（插件缺失）')
       const { Vec3 } = await import('vec3')
       const off = { up: [0, -1, 0], down: [0, 1, 0], north: [0, 0, 1], south: [0, 0, -1], east: [-1, 0, 0], west: [1, 0, 0] }[face]
@@ -361,9 +367,7 @@ export function createSkillRegistry (ctx) {
       properties: { filter: { type: 'string', description: '实体名子串或类型（hostile/zombie...）', example: 'zombie' } }
     },
     handler: async (c, { filter }) => {
-      if (hasExclusiveActive()) {
-        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法攻击（任务结束后可试）`)
-      }
+      assertNoExclusive('攻击')
       checkActionCooldown('attack')
       if (!c.bot?.entities || !c.bot.entity?.position) throw new Error('实体表/位置不可用')
       const { attackEntity } = await import('../core/entity-actions.js')
@@ -463,9 +467,7 @@ export function createSkillRegistry (ctx) {
     },
     handler: async (c, { maxDistance, direction }) => {
       // C1：exclusive 任务运行中拒绝（移动互斥——与 !follow/find_block 同款仲裁器防线）
-      if (hasExclusiveActive()) {
-        throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法探索（任务结束后可试，或先 !task stop）`)
-      }
+      assertNoExclusive('探索', '，或先 !task stop')
       const r = await exploreStep(c.bot, c.logger, { maxDistance, direction })
       if (!r.ok) return `探索失败: ${r.reason}`
       // D：重要资源 webhook 推送（节流 10 分钟/类型；失败静默）
