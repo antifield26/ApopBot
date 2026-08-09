@@ -7,7 +7,7 @@ import { validateTaskOptions } from '../core/task-schemas.js'
 // 第六轮 C3：run_task 的类型提示从注册表生成（不再硬编码类型串）
 import { TASK_TYPES } from '../tasks/types.js'
 import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
-import { environmentSnapshot } from './environment.js'
+import { environmentSnapshot } from '../core/environment.js'
 // 第六轮 C2：nearbyEntities 归位 core（skills 是组合层，可从 core 直接取）
 import { nearbyEntities } from '../core/entities.js'
 import * as discovery from '../core/discovery.js'

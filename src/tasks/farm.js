@@ -1,6 +1,7 @@
 import { BaseTask } from './base.js'
 import { Vec3 } from 'vec3' // blockAt 必须传 Vec3 实例（普通对象触发 pos.floored 崩溃）
 import { stopPathfinding } from '../core/movement.js'
+import { CROP_MATURITY, SEED_BY_CROP } from '../core/crops.js'
 
 // 农场任务：区域内 种植 → 等待成熟 → 收割 → 补种 的循环。
 // 成熟度按方块 state 的 age 属性对照成熟表；收割用 collectBlock（掉落物自动收集）。
@@ -179,11 +180,6 @@ export class FarmTask extends BaseTask {
   }
 }
 
-FarmTask.CROP_MATURITY = { wheat: 7, carrots: 7, potatoes: 7, beetroots: 3, nether_wart: 3 }
-FarmTask.SEED_BY_CROP = {
-  wheat: 'wheat_seeds',
-  carrots: 'carrot',
-  potatoes: 'potato',
-  beetroots: 'beetroot_seeds',
-  nether_wart: 'nether_wart'
-}
+// v1.0.0 C3：常量归位 core/crops.js（primitives 原语与任务共享）
+FarmTask.CROP_MATURITY = CROP_MATURITY
+FarmTask.SEED_BY_CROP = SEED_BY_CROP

@@ -9,7 +9,7 @@
 // 错误永不向上抛——以友好回复返回（配合 logger.error 留痕）。
 
 import { isOp } from '../commands/permissions.js'
-import { environmentLine } from './environment.js'
+import { environmentLine } from '../core/environment.js'
 
 // 文本长度上限（低配 4B 模型上下文与聊天消息长度双重约束；B6 从硬编码提为常量）
 const INPUT_MAX_CHARS = 1000 // 用户消息截断

@@ -10,7 +10,7 @@
 // 第六轮 C2：nearbyEntities/资源白名单已归位 src/core/{entities,resources}.js
 //（core/explore.js 的 scanEntities 依赖它们——放本模块造成 core→l2 上向引用）。
 
-import { distance, fmtPos, nearbyEntities } from '../core/entities.js'
+import { distance, fmtPos, nearbyEntities } from './entities.js'
 
 /** yaw → 8 向罗盘（原版：yaw=0 朝南 +Z，顺时针增大）。 */
 export function directionFromYaw (yaw) {
