@@ -133,7 +133,7 @@ export function createActionExecutor (ctx, deps = {}) {
     return r.results[0]
   }
 
-  return { executeBatch, executeOne, primitives, setExecUser: (u) => { execUser = u } }
+  return { executeBatch, executeOne, primitives, setExecUser: (u) => { execUser = u }, audit }
 }
 
 /** 极简 JSONSchema 校验（type + required + min/max；原 skills.validateParams 原样搬入）。 */

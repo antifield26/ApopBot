@@ -9,6 +9,13 @@ import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
 // 重连重建功能层时若残留 true，由 120s 墙钟超时自愈（goto 必然结束）
 let findBusy = false
 
+/** 命令层动作审计（v1.0.0 C5：!find/!follow 走 executor 的审计通道——L2 关闭时静默）。 */
+function auditCommand (c, op, args, ok, result) {
+  try {
+    c.agent?.executor?.audit?.append({ op, args, ok, result, durationMs: 0, source: 'command' })
+  } catch { /* 审计失败静默 */ }
+}
+
 /**
  * 注册内置命令。
  * ctx: { bot, cfg, logger, tasks, conn, agent, plugins, onReload }
@@ -219,6 +226,7 @@ export function registerBuiltinCommands (registry, ctx) {
       if (!c.plugins?.follow) { await sendChat(c.bot, '§c未启用 follow 插件', c.cfg.chat?.maxLength); return }
       if (name === 'off') {
         c.plugins.follow.stop()
+        auditCommand(c, 'follow_player', { name: 'off' }, true, '已停止跟随')
         await sendChat(c.bot, '§a已停止跟随', c.cfg.chat?.maxLength)
         return
       }
@@ -233,6 +241,7 @@ export function registerBuiltinCommands (registry, ctx) {
       const player = Object.values(c.bot.players).find(p => p.username.toLowerCase() === lower)
       if (!player?.entity) { await sendChat(c.bot, `§c找不到玩家 ${name}`, c.cfg.chat?.maxLength); return }
       c.plugins.follow.setTarget(player.entity)
+      auditCommand(c, 'follow_player', { name }, true, '开始跟随')
       await sendChat(c.bot, `§a开始跟随 ${name}`, c.cfg.chat?.maxLength)
     }
   })
@@ -271,6 +280,7 @@ export function registerBuiltinCommands (registry, ctx) {
         }
         const { candidates } = result
         if (candidates.length === 0) {
+          auditCommand(c, 'find_block', { blockName, maxDistance }, false, '无候选')
           await sendChat(c.bot, `§c范围内（${maxDistance} 格）没有暴露在地表的 ${blockName}`, c.cfg.chat?.maxLength)
           return
         }
@@ -294,8 +304,10 @@ export function registerBuiltinCommands (registry, ctx) {
           // C8/W 修复：汇报实际到达点——GoalCompositeAny 在最近候选不可达时会
           // 到达更远候选，报"最近候选"坐标与实际位置不符（误导玩家）
           const p = c.bot.entity.position
+          auditCommand(c, 'find_block', { blockName, maxDistance }, true, `已到达 ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`)
           await sendChat(c.bot, `§a找到 ${blockName}，已到达 ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}（水平距离 ${dist}m，耗时 ${el}s）`, c.cfg.chat?.maxLength)
         } else {
+          auditCommand(c, 'find_block', { blockName, maxDistance }, false, REASON_TEXT[r.reason] ?? '移动失败')
           await sendChat(c.bot, `§e找到 ${blockName} 但${REASON_TEXT[r.reason] ?? '移动失败'}：最近候选 ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}（水平距离 ${dist}m）`, c.cfg.chat?.maxLength)
         }
       } finally {

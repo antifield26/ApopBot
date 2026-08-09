@@ -12,21 +12,50 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const DEFAULT_FILE = path.join(ROOT, 'data', 'state.json')
 
-/** 读取快照（不存在/损坏 → 空态，不抛错）。 */
+// v1.0.0（C5）：快照 schema 版本——当前 2（v1 无版本号，结构相同仅补标记）。
+// 未来版本（> 当前）拒绝加载并明确报错（升级 Bot 而非静默降级/损坏）。
+export const STATE_SCHEMA_VERSION = 2
+
+/** 读取快照（不存在/损坏 → 空态，不抛错；未来版本 → 抛错）。 */
 export function loadState (file = DEFAULT_FILE) {
+  let data
   try {
-    return normalize(JSON.parse(readFileSync(file, 'utf8')))
+    data = JSON.parse(readFileSync(file, 'utf8'))
   } catch {
     // 修复（本地测试冷启动暴露）：漏 memory 键 → createStateStore 的 memory getter
     // JSON.parse(JSON.stringify(undefined)) 抛 '"undefined" is not valid JSON' →
     // feature layer rebuild 失败（生产机 state.json 已存在所以从未触发）
-    return { tasks: [], counters: {}, memory: {} }
+    return { schemaVersion: STATE_SCHEMA_VERSION, tasks: [], counters: {}, memory: {} }
   }
+  return migrateState(data)
+}
+
+/**
+ * 版本迁移链：旧版本快照按序迁移到当前 schemaVersion。
+ * 缺 schemaVersion 视为 v1（结构相同，仅补版本号）；未来版本拒绝。
+ * @throws {Error} 快照版本高于当前（需升级 Bot）
+ */
+export function migrateState (data) {
+  const v = data?.schemaVersion ?? 1 // 缺省 = v1
+  if (v > STATE_SCHEMA_VERSION) {
+    throw new Error(`state.json schemaVersion=${v} 高于 Bot 支持的 ${STATE_SCHEMA_VERSION}——请升级 Bot 后再启动（勿手改版本号，数据可能不兼容）`)
+  }
+  let cur = data ?? {}
+  for (let target = v; target < STATE_SCHEMA_VERSION; target++) {
+    cur = MIGRATIONS[target](cur)
+  }
+  return normalize(cur)
+}
+
+/** 迁移器表：key = 源版本，产出目标版本（当前 v1→v2 结构不变仅补版本号）。 */
+const MIGRATIONS = {
+  1: (d) => ({ ...d, schemaVersion: 2 })
 }
 
 /** 形状防御：坏数据按空处理（旧版本/手改损坏）。 */
 function normalize (data) {
   return {
+    schemaVersion: STATE_SCHEMA_VERSION,
     tasks: Array.isArray(data?.tasks) ? data.tasks.filter(t => t && typeof t === 'object' && t.id && t.type) : [],
     counters: data?.counters && typeof data.counters === 'object' && !Array.isArray(data.counters) ? data.counters : {},
     // B1（L2 进化）：探索记忆（discovery.js 快照）——非对象/坏形状按空处理
@@ -52,7 +81,7 @@ export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logg
     const tmp = file + '.tmp'
     try {
       mkdirSync(path.dirname(file), { recursive: true })
-      writeFileSync(tmp, JSON.stringify(last, null, 2))
+      writeFileSync(tmp, JSON.stringify({ ...last, schemaVersion: STATE_SCHEMA_VERSION }, null, 2))
       renameSync(tmp, file)
     } catch (err) {
       rmSync(tmp, { force: true }) // 清理半写 tmp（写成功但 rename 失败场景）

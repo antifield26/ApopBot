@@ -228,6 +228,8 @@ export class AgentInterface {
     this.provider = deps.provider
     this.executor = deps.executor
     this.cfg = deps.config ?? {}
+    // v1.0.0 C5：会话落盘通道（缺省 null = 不落盘——测试/无持久化场景）
+    this.sessionStore = deps.sessionStore ?? null
     this.log = ctx.logger.child({ module: 'l2' })
     this.busy = false
     // 按玩家冷却（C7/T）：此前全局单值——一个 op 的请求冷却挡住所有玩家的 !agent chat
@@ -268,7 +270,15 @@ export class AgentInterface {
     try {
       // 会话注入：历史（裁剪后）+ 本轮用户消息（history 是副本，工具循环内 push 不污染存储）。
       // U15：session.calls 是跨对话工具操作记录（最近 20 条，注入用）
-      const session = getSession(user)
+      // v1.0.0 C5：内存优先，miss 时从磁盘回填（重启后恢复多轮上下文）
+      let session = getSession(user)
+      if (session === null && this.sessionStore) {
+        const disk = this.sessionStore.get(user)
+        if (disk) {
+          putBounded(SESSIONS, user, disk)
+          session = disk
+        }
+      }
       const history = (session?.history ?? []).slice(-MAX_HISTORY_MESSAGES)
       const toolCalls = session?.calls ?? []
       const userMsg = String(text).slice(0, INPUT_MAX_CHARS)
@@ -362,7 +372,10 @@ export class AgentInterface {
       // 回写会话：本轮 user 轮 + 最终 assistant 轮（纯文本，裁剪到上限）+ 工具操作记录
       history.push({ role: 'user', content: userMsg })
       history.push({ role: 'assistant', content: reply.slice(0, REPLY_MAX_CHARS) })
-      setSession(user, { history: history.slice(-MAX_HISTORY_MESSAGES), calls: toolCalls.slice(-20) })
+      const sessionValue = { history: history.slice(-MAX_HISTORY_MESSAGES), calls: toolCalls.slice(-20) }
+      setSession(user, sessionValue)
+      // v1.0.0 C5：落盘（2s 防抖 + exit flush）——重启/重连后多轮上下文不丢
+      this.sessionStore?.set(user, sessionValue)
       return { reply: reply.slice(0, REPLY_MAX_CHARS) }
     } catch (err) {
       if (err.name === 'AbortError') return { reply: '请求已中止' }
@@ -428,9 +441,10 @@ export class AgentInterface {
     return Array.isArray(r) ? r : [r]
   }
 
-  /** 清空指定玩家的会话记忆（!agent reset）。 */
+  /** 清空指定玩家的会话记忆（!agent reset；v1.0.0 C5 同步清磁盘）。 */
   reset (user) {
     SESSIONS.delete(user)
+    this.sessionStore?.reset(user)
   }
 
   /** 当前会话数（U3 /metrics 用）。 */

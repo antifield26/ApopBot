@@ -15,14 +15,14 @@ function makeTmpDir (t) {
 
 test('loadState: 文件不存在 → 空态', (t) => {
   const dir = makeTmpDir(t)
-  assert.deepEqual(loadState(path.join(dir, 'missing.json')), { tasks: [], counters: {}, memory: {} })
+  assert.deepEqual(loadState(path.join(dir, 'missing.json')), { schemaVersion: 2, tasks: [], counters: {}, memory: {} })
 })
 
 test('loadState: 损坏 JSON → 空态（不抛错）', (t) => {
   const dir = makeTmpDir(t)
   const file = path.join(dir, 'bad.json')
   writeFileSync(file, '{ not json')
-  assert.deepEqual(loadState(file), { tasks: [], counters: {}, memory: {} })
+  assert.deepEqual(loadState(file), { schemaVersion: 2, tasks: [], counters: {}, memory: {} })
 })
 
 test('修复: 文件不存在（冷启动）→ memory getter 不抛（回归："undefined" is not valid JSON）', (t) => {
@@ -142,3 +142,33 @@ test('B1: loadState 形状防御——memory 非对象按空处理', (t) => {
 function fileExists (f) {
   try { readFileSync(f); return true } catch { return false }
 }
+
+// ---- v1.0.0（C5）：schemaVersion + 迁移器 ----
+
+test('C5: 落盘含 schemaVersion=2（写往返）', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 's.json')
+  const store = createStateStore({ file })
+  store.setCounter('m1', { mined: 3 })
+  store.flush()
+  const disk = JSON.parse(readFileSync(file, 'utf8'))
+  assert.equal(disk.schemaVersion, 2, '写盘应带版本号')
+  assert.equal(disk.counters.m1.mined, 3)
+})
+
+test('C5: 旧版（v1 无 schemaVersion）→ 迁移到 v2 数据保留', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 's.json')
+  writeFileSync(file, JSON.stringify({ tasks: [{ id: 'a', type: 'mine' }], counters: { a: { mined: 1 } }, memory: {} }))
+  const store = createStateStore({ file })
+  assert.equal(store.tasks.length, 1, 'v1 任务数据保留')
+  assert.equal(store.counters.a.mined, 1)
+  assert.equal(loadState(file).schemaVersion, 2, '迁移后版本为 2')
+})
+
+test('C5: 未来版本拒绝加载（明确报错而非静默降级）', (t) => {
+  const dir = makeTmpDir(t)
+  const file = path.join(dir, 's.json')
+  writeFileSync(file, JSON.stringify({ schemaVersion: 99, tasks: [] }))
+  assert.throws(() => loadState(file), /schemaVersion=99/, '未来版本应报错')
+})
