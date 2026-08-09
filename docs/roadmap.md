@@ -1,6 +1,23 @@
-# 项目路线图（2026-08-06 第二轮 / 2026-08-07 第三轮 / 2026-08-07 第四轮 / L2 进化 / 第五轮）
+# 项目路线图（2026-08-06 第二轮 / 2026-08-07 第三轮 / 2026-08-07 第四轮 / L2 进化 / 第五轮 / 第六轮）
 
-第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施；L2 进化（环境感知 + 自由探索）2026-08-07 实施；第五轮（L2 深度控制与易用性，10 项全部 CONFIRMED）2026-08-07 实施。本文档记录已完成项、缓做项与明确不做项。
+第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施；L2 进化（环境感知 + 自由探索）2026-08-07 实施；第五轮（L2 深度控制与易用性，10 项全部 CONFIRMED）2026-08-07 实施；第六轮（工程治理六领域，12 commit）2026-08-09 实施。本文档记录已完成项、缓做项与明确不做项。
+
+## 第六轮已完成（2026-08-09，c55fa6e..115e5d9 共 12 commit）
+
+用户需求：探索/理解/评估/规划 + 方案覆盖六领域（依赖治理 / Windows 兼容 / 结构规范化 / CI / 版本管理 / LLM 深化）。3 Explore + 1 Plan（对抗性核验修正 10 项事实）+ 用户决策（LLM 提示词按 provider 分层；版本管理做 CHANGELOG + 流程）：
+
+- **C1 依赖治理**：幽灵依赖 vec3/minecraft-protocol 显式声明（vec3 是 mineflayer 传递依赖 hoist 顶层——运气性可用）；axios 0.21.4 评估后文档化接受（覆盖有破坏 prismarine-auth 风险，offline 不触达）
+- **C2 结构**：core→l2 上向引用破除——nearbyEntities/资源白名单归位 `core/{entities,resources}.js`（scanEntities 依赖 l2 是历史归位错误）
+- **C3 结构（R1 缓做项）**：任务类型单一注册表 `src/tasks/types.js`（factory + naturalCompletion 单点，config 派生键集，run_task 提示从注册表生成）
+- **C4 版本管理**：CHANGELOG.md（Keep a Changelog）+ scripts/release.mjs（package.json 单一来源 + lockfile 双处同步 + git 命令只打印不执行）+ check:compat 3.6 改交叉校验 + docs/l2.md 版本硬编码消除
+- **C5 Windows**：SIGBREAK 优雅退出（NSSM Ctrl+C 超时后发 CTRL_BREAK 不再硬杀）+ AppStopMethodConsole 10s→20s（覆盖 15s 优雅预算，两处互引声明不变量）
+- **C6 Windows**：deploy.ps1 三连——哈希门控恒失效（Set-Content 尾换行 vs -Raw 含尾换行 → 每次重跑 npm ci；改 WriteAllText 无尾换行 + 读取归一）、service.env UTF8 读取 + KEY=VALUE 校验 + 引号包裹、UTF-8 BOM（PS 5.1 按 ANSI 读中文乱码）
+- **C7 Windows**：scheduleTimezone IANA 名校验（Intl.supportedValuesOf + 放行 UTC——Windows 时区名此前静默不调度）
+- **C8 Windows**：state.json 原子写（tmp+rename，锁文件不再静默丢快照）+ smoke 默认配置路径 ROOT 解析
+- **C9**：清理 tests/logs/bot.log.1 工作树残留
+- **C10 LLM 深化（核心）**：分层提示词——核心层（Ollama 共用）+ 云端扩展层（多步意图示例 5 条/技能选择策略/任务规划与异常恢复/安全边界，≈620 tokens）；buildSystem 按 provider.kind() 动态分支（每轮重生成支持 auto 粘滞切换）；auto 回退与粘滞分支剥除扩展层（ollama 从不收到）；`l2.cloudMaxContextWindow`（默认 65536）→ 云端也走预算守卫（此前 provider=cloud 无窗口裁剪路径跳过）
+- **C11 结构**：exclusive 守卫样板提 assertNoExclusive helper（5 处）+ putBounded/setSession LRU 去重
+- **C12 CI**：GitHub Actions（ubuntu×Node22/24 + windows×Node22；git+ssh→https 重写前置；npm test + check:compat 门禁；audit 信息性不门禁）
 
 ## 第五轮已完成（2026-08-07）
 
