@@ -1,6 +1,21 @@
-# 项目路线图（2026-08-06 第二轮 / 2026-08-07 第三轮 / 2026-08-07 第四轮 / L2 进化 / 第五轮 / 第六轮）
+# 项目路线图（第二轮..第七轮）
 
-第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施；L2 进化（环境感知 + 自由探索）2026-08-07 实施；第五轮（L2 深度控制与易用性，10 项全部 CONFIRMED）2026-08-07 实施；第六轮（工程治理六领域，12 commit）2026-08-09 实施。本文档记录已完成项、缓做项与明确不做项。
+第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施；L2 进化（环境感知 + 自由探索）2026-08-07 实施；第五轮（L2 深度控制与易用性，10 项全部 CONFIRMED）2026-08-07 实施；第六轮（工程治理六领域，12 commit）2026-08-09 实施；**第七轮（v1.0.0 革命性重构，12 commit）2026-08-09 实施**。本文档记录已完成项、缓做项与明确不做项。
+
+## 第七轮已完成（2026-08-09，v1.0.0 革命性重构，12 commit）
+
+用户需求：v1.0.0 正式版——根治 PR 分支依赖 + LLM 直接操作协议（打破「提示词→固定技能」映射）+ 由我设计的更多方面。用户四项决策：patch-package 依赖治理 / 移除本地 provider 仅云端 non-reasoning / 任务系统脚本化重写 / 附加四项全选（反思记忆、审计日志、状态版本化、会话落盘）：
+
+- **C1 依赖根治**：mineflayer 4.37.1 + protocol 1.66.2 + minecraft-data 3.113.0 全切官方 npm，26.1.2 适配以 patches/ 补丁承载（postinstall 自动应用，零 git 依赖——CI 删 git+ssh hack、audit 正常）；check:compat 3.7 补丁哨兵门禁
+- **C2 单 provider**：删 Ollama/auto/分层提示词（-624 行）；config 契约冻结（l2 子键白名单，残留 ollama 键启动即报错；CONFIG_SCHEMA_VERSION=2）
+- **C3 原语+执行器**：core/primitives.js（28 原语）+ core/executor.js（统一管线：权限/exclusive/校验/冷却/超时/审计）+ core/audit.js（JSONL 按天轮转）；environment.js 归位 core（破 core→l2）
+- **C4 act 协议**：工具集 = act（动作数组 ≤8）+ 观察/回复；CORE_SYSTEM_PROMPT 重写为行动协议；删 skills.js（-548 行净删）
+- **C5 持久化**：sessions.js 会话落盘 + state.js schemaVersion 2 + 迁移器（未来版本拒绝加载）+ 命令层审计挂点
+- **C6-C10 任务脚本化**：runner.js（ScriptTask + ScriptRunner——BaseTask 状态机外壳保留，DSL：loop/if/break/continue/return/count + 条件六型 + 模板求值 + 任务局部 op）；8 个任务全部重写为 scripts/*.js，旧类文件删除；任务与 LLM act 共用执行层
+- **C11 反思与经验记忆**：experience.js（失败→一句话总结→跨会话注入 system）
+- **C12 发布收口**：CHANGELOG 1.0.0（Breaking 清单）+ docs 全面更新 + tag v1.0.0
+
+**关键修复沉淀**：collect_blocks 契约（positions 转 Block/chestLocations Vec3）；${options} 与 $引用分支顺序；loop max 模板化；cond 的 gte/equals 模板化（ref 的 '$last' 不解析）；validateParams 联合 type；冷却移回原语 handler（只对实际执行生效）；follow_player off 不受 exclusive 限制；脚本动作软失败语义 + maxActions 死循环兜底
 
 ## 第六轮已完成（2026-08-09，c55fa6e..115e5d9 共 12 commit）
 

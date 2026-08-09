@@ -6,25 +6,29 @@
 minecraft-bot (Node.js ≥22, ESM)
 ├── src/index.js              入口：配置 → logger → ConnectionManager → 功能层 → 信号
 ├── src/core/                 基础设施
-│   ├── config.js             配置分层加载与校验（默认值 < default.json < --config < MCBOT_* < CLI）
+│   ├── config.js             配置分层加载与校验（默认值 < default.json < --config < MCBOT_* < CLI；
+│   │                          v1.0.0 契约冻结：l2 子键白名单 + CONFIG_SCHEMA_VERSION）
 │   ├── logger.js             pino 结构化日志（文件按天轮转 + stdout）
 │   ├── connection.js         ConnectionManager：连接/退避重连/spawn 超时/致命退出
 │   ├── reconnect.js          断线分类（classifyDisconnect）+ 指数退避（nextBackoff），纯函数
 │   ├── bot.js                createBot（同步）+ loadMineflayerPlugins（异步，事件零丢失窗口）
 │   ├── feature-layer.js      功能层生命周期（每次 spawn 全量重建 tasks/commands/L2 + chat 监听）
 │   ├── chat.js               聊天安全层（256 字符分片发送）
-│   └── signals.js            SIGINT/SIGTERM 优雅退出；热重载（配置监视/!reload，Linux 另支持 SIGHUP）
-├── src/tasks/                任务系统
+│   ├── signals.js            SIGINT/SIGTERM 优雅退出；热重载（配置监视/!reload，Linux 另支持 SIGHUP）
+│   ├── primitives.js         动作原语注册表（v1.0.0：28 个原语——观察/移动/构建/战斗/交互/物品/流程/任务）
+│   ├── executor.js           动作执行器（LLM act 数组与任务脚本共用：权限/exclusive/校验/超时/审计）
+│   ├── audit.js              动作审计日志（logs/audit.log JSONL 按天轮转）
+│   ├── state.js              schemaVersion 2 + 迁移器（未来版本拒绝加载）
+│   ├── movement.js / entity-actions.js / arbiter.js / entities.js / resources.js / crops.js / discovery.js / explore.js / environment.js
+│   └── (task-schemas.js)     任务 options schema 校验（!task new 与 start_task 共用入口）
+├── src/tasks/                任务系统（v1.0.0 脚本化：任务 = 动作原语脚本）
 │   ├── base.js               BaseTask 状态机（created→init→running⇄paused→stopped/completed/failed；
 │   │                          run-completion 语义 + 终态重启 + _cancel 取消钩子 + _internalWait）
 │   ├── manager.js            TaskManager：装载/启停/热重载 diff/cron 调度/临时任务/防重叠
-│   ├── mine.js               MineTask：collectblock+pathfinder 按区域挖矿（背包满暂停/stopWhenDone）
-│   ├── fish.js               FishTask：bot.fish() 循环（60s 超时兜底）
-│   ├── afk.js                AfkTask：周期视角转动防踢
-│   ├── farm.js               FarmTask：种植/等待成熟/收割循环
-│   ├── chop.js               ChopTask：按区域伐木
-│   ├── combat.js             CombatTask：区域内敌对实体战斗巡逻
-│   ├── breed.js              BreedTask：动物喂养繁殖
+│   ├── runner.js             ScriptTask（BaseTask 子类）+ ScriptRunner（脚本 DSL 解释器：
+│   │                          loop/if/break/continue/return/count + 条件六型 + 模板求值 + 任务局部 op）
+│   ├── scripts/              mine/fish/afk/farm/chop/combat/breed/explore 8 个任务脚本
+│   ├── types.js              任务类型单一注册表（factory → ScriptTask + 脚本定义）
 │   └── scheduled.js          croner 调度包装（单一 onTrigger 回调）
 ├── src/commands/             聊天命令系统
 │   ├── parser.js             shell 式引号感知解析（token 内 " 按字面，支持 JSON 参数；未闭合引号报错）
@@ -32,7 +36,12 @@ minecraft-bot (Node.js ≥22, ESM)
 │   ├── registry.js           注册/分发/权限校验/op 命令速率限制
 │   └── commands.js           内置命令
 ├── src/plugins/              mineflayer 生态插件装载（pathfinder→collectBlock→autoEat→armorManager→follow（条件装载））
-├── src/l2/                   LLM 层（l2.enabled=false 时零依赖；双 Provider 见 docs/l2.md）
+├── src/l2/                   LLM 层（l2.enabled=false 时零依赖；单 Provider 见 docs/l2.md）
+│   ├── agent-interface.js    chat 工具循环（act 动作数组 + 观察工具）+ 反思钩子（经验沉淀）
+│   ├── provider.js           云端 Anthropic 兼容 API（non-reasoning）
+│   ├── sessions.js           会话落盘（data/sessions.json）
+│   ├── experience.js         经验记忆库（data/experience.json）
+│   └── index.js              createL2 组装
 └── src/util/                 promise-timeout
 ```
 
@@ -54,12 +63,13 @@ minecraft-bot (Node.js ≥22, ESM)
 - 热重载：配置文件变化（fs.watch 防抖 500ms，rename 重挂）/ `!reload`（Linux 另支持 SIGHUP）走同一串行队列 → 校验 → updateCfg → 日志配置变化重建 logger → 任务 diff 重载
 - **退出不变量（第六轮 C5）**：`NSSM stop 总窗口（AppStopMethodConsole 20s）> signals SHUTDOWN_TIMEOUT_MS（15s）`——Ctrl+C 超时后 NSSM 发 CTRL_BREAK，Node 注册 SIGBREAK handler 走同一优雅路径；两处互引声明，改动需同步
 
-## 任务运行语义
+## 任务运行语义（v1.0.0 脚本化）
 
-- **run-completion**：`startTask` 返回 run 完成 Promise；run 自然退出 → `completed`，stop → `stopped`，抛错 → `failed`；终态可重启（`!task start` 生效）
-- **调度**：cron 触发 `runScheduled`（防重叠：运行中触发跳过；时长上限强制停止；完成/失败聊天通知，`notifyChat:false` 关闭）
-- **暂停**：用户 pause 与任务内部等待（`_internalWait` + `waitingReason`）互不干扰
-- 完成语义表：mine(stopWhenDone) / fish(时长) / farm / chop / combat / breed 有自然完成；afk 无，scheduled 时必须配 `options.durationMinutes`
+- **统一执行层**：8 个任务 = 动作原语脚本（`src/tasks/scripts/*.js`），与 LLM 的 act 动作数组**共用同一执行器**（`core/executor.js`——权限/exclusive/校验/超时/审计一致）。脚本 DSL：动作步 {op,args,as?,count?} + 控制步（loop/if/break/continue/return/count）+ 条件六型（last/result/counter/config/deadline/not）+ 模板求值（$结果引用/${options}/{expr 白名单四则}）+ 任务局部 op（有状态算法如 explore 螺旋）
+- **BaseTask 状态机外壳保留**：run-completion（run 自然退出 → completed）、暂停（用户 pause 与 `_internalWait` 互不干扰）、取消（_cancel + abort signal 贯通）、代际守卫、stop 10s 上限、终态重启——全部原样继承
+- **软失败语义**：脚本动作失败（ok:false）记录 lastResult 由 if 条件处理（重试/等待/退出）——原任务循环容错等价；maxActions 死循环兜底；脚本 init 钩子承载原任务 init 校验
+- **调度**：cron 触发 `runScheduled`（防重叠；时长上限强制停止；完成/失败通知）；exclusive 互斥由 manager 仲裁（脚本内 bypassExclusive——owner 自己）
+- 完成语义表：mine(stopWhenDone) / fish(时长|背包满) / farm(stopWhenIdle) / chop / combat(maxTargets|stopWhenNoTargets) / breed(maxBreedings|stopWhenNoAnimals) / explore(stopWhenDone 环满|area 覆盖) 有自然完成；afk 无，scheduled 时必须配 `options.durationMinutes`
 
 ## 依赖 pin 策略（v1.0.0 C1：官方 npm + patch-package）
 

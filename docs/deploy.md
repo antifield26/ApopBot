@@ -5,7 +5,7 @@
 ```
 树莓派 5 8G (LAN 192.168.3.93)            Windows PC
 ├── PaperMC 26.1.2 服务端                 ├── Bot —— NSSM 服务 minecraft-bot
-│   └── systemd/minecraft-server.service  ├── Ollama（qwen3.5:4b，L2 本地推理）
+│   └── systemd/minecraft-server.service
 │   └── 白名单: mcbot / mcbot-test           └── deploy.ps1 一键部署
 └── white-list=true
 ```
@@ -43,13 +43,13 @@ winget install --id Git.Git                                                     
   "host": "mc.antifield.work",
   "username": "mcbot",
   "ops": ["steve", "alex"],
-  "l2": { "enabled": true, "provider": "ollama", "ollamaModel": "qwen3.5:4b" }
+  "l2": { "enabled": true, "model": "claude-sonnet-5" }
 }
 ```
 
 - `host` 指向服务端域名 `mc.antifield.work`（DNS 指向 Pi 的当前 IP；Pi 换 IP 只改 DNS，Bot 重连时自动解析新地址，DNS 解析失败归类为 network_error 自动退避重连而非 fatal）。`localhost` 仅限开发机连本机服务端
 - `username: mcbot` 已在服务端白名单；smoke 用 `config/smoke.json` 以 mcbot-test 身份登录（同样需白名单）
-- L2 默认 `ollama` + `qwen3.5:4b`（已是代码默认值）；云端回退/密钥见 [docs/l2.md](l2.md)
+- L2 仅云端 Anthropic 兼容 API（v1.0.0）；API key 走 `l2.cloudApiKeyEnv` 指定环境变量（service.env 注入），见 [docs/l2.md](l2.md)
 
 ## 部署（管理员 PowerShell）
 
@@ -71,7 +71,7 @@ deploy.ps1 流程：预检（node ≥22、非 Store 存根、nssm 存在）→ �
 | `StartLimitBurst=5`（fatal 后停止） | `AppExit 2 Exit`：fatal（exit 2：白名单拒绝/名字冲突/版本不匹配）→ 服务一次即停等人工；修复后 `nssm start minecraft-bot` |
 | `ExecReload`（SIGHUP） | Windows 无 SIGHUP。热重载 = 改 config 自动生效（fs.watch 500ms 防抖）/ 游戏内 `!reload` / `nssm restart` |
 | `EnvironmentFile=/etc/minecraft-bot/env` | `AppEnvironmentExtra`（deploy.ps1 从 `config/service.env` 注入）；改动后重跑 deploy 或手动 `nssm set` + restart |
-| `CPUWeight=30` | `AppPriority BELOW_NORMAL_PRIORITY_CLASS`（低优先级：同机 Ollama/其他程序优先） |
+| `CPUWeight=30` | `AppPriority BELOW_NORMAL_PRIORITY_CLASS`（低优先级：其他程序优先） |
 | `MemoryHigh` / `MemoryMax` | **无等价**（Windows 无 cgroup）→ 内存靠预算与监控（见性能） |
 | `LogsDirectory` + `StandardOutput=journal` | pino `logs/bot.log` 按天轮转 + `AppStdout/AppStderr` → `logs/nssm-*.log` |
 | `systemctl status` / `journalctl -u minecraft-bot -f` | `nssm status minecraft-bot` / `Get-Content logs\bot.log -Encoding UTF8 -Wait` |
@@ -89,22 +89,22 @@ Get-Content logs\nssm-stderr.log -Encoding UTF8 -Tail 50  # 启动期 stderr（�
 
 游戏内命令（op 白名单在 `config.ops`）：`!ping` `!status` `!task list` `!task new <type> <id> [json]` `!task remove <id>` `!task start|stop|pause|resume <id>` `!reload` `!say` `!pos` `!find <方块> [距离]` `!follow <player>|off` `!agent chat|act|doctor|reset ...`。完整说明见 README 指令列表（含 `!task list` 的排队位置/剩余时长/下次 cron 字段与 `!find` 的 16-256 限幅）。
 
-## 性能（低配 PC：i7-4720HQ / 8GB DDR3 + 同机 Ollama）
+## 性能（低配 PC：i7-4720HQ / 8GB DDR3）
 
 内存预算（约）：
 
 | 组件 | 占用 |
 |---|---|
 | Windows + 系统进程 | ~2GB |
-| Ollama qwen3.5:4b（Q4 量化，部分层卸载到 GTX 960M） | ~2.5–5GB |
+| （v1.0.0 起推理在云端——本地无 LLM 进程） | — |
 | Bot（Node） | 200–400MB |
 | 余量 | ~1GB（浏览器等重程序按需关闭） |
 
 - 依赖安装 `--omit=dev`（deploy.ps1 默认，省 dev 包）
-- Bot 已设 `BELOW_NORMAL_PRIORITY_CLASS`：Ollama 推理与其他程序优先；卡顿可 `nssm set minecraft-bot AppPriority NORMAL_PRIORITY_CLASS` 后 restart
-- `maxSteps: 5` 保持默认（防 LLM 工具循环吃 CPU）；`l2.cooldownMs` 可调大（如 10000）降低 Ollama 负载；`l2.ollamaTimeoutMs` 默认 60s（低配机长回复放宽到 120s）
+- Bot 已设 `BELOW_NORMAL_PRIORITY_CLASS`：其他程序优先；卡顿可 `nssm set minecraft-bot AppPriority NORMAL_PRIORITY_CLASS` 后 restart
+- `maxSteps: 8` / `maxActionsPerCall: 8` 保持默认（防 LLM 工具循环吃 CPU）；`l2.cooldownMs` 可调大（如 10000）降低请求负载；`l2.cloudTimeoutMs` 默认 60s
 - 任务均为区域限定；farm/chop/combat/breed 为 exclusive 互斥（不会并发抢寻路/采集）
-- 无 MemoryMax 等价物：用任务管理器观察；Ollama 吃紧时换更小量化档（`ollama ps` 查看当前模型）或关浏览器
+- 无 MemoryMax 等价物：用任务管理器观察；LLM 推理在云端（v1.0.0），本地负载主要是 Bot 自身
 
 ## 验证清单
 
@@ -126,6 +126,6 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 | 启动即退出 "日志目录不可写" | `log.dir` 指向不可写路径；改用默认 `./logs` 或确认运行账户写权限 |
 | 连不上服务端 | `Test-NetConnection mc.antifield.work -Port 25565`（IP 直测可换 `192.168.3.93`）；确认 DNS 解析正确、服务端在线、`host` 正确、Windows 防火墙放行出站 25565 |
 | `unsupported protocol version` | 本地 `npm run check:compat` 未过；overrides 被意外改动 |
-| Ollama 内存不足/无响应 | 任务管理器看内存；`ollama ps` 确认模型已加载；换小量化档或 `ollama stop` 后重试 |
+| LLM 请求超时/无响应 | 检查云端端点连通（`!agent doctor`）与 `l2.cloudTimeoutMs` |
 | 挖矿任务不动 | `!task list` 看 waitingReason（no-target/inventory-full/collect-retry）；背包满需配置 `chestLocations` 或清空背包 |
 | 定时任务不执行 | 检查 `schedule` 表达式与 `scheduleTimezone`；afk 类无自然完成的任务必须配 `options.durationMinutes` |
