@@ -94,19 +94,28 @@ export function followPlugin (bot) {
     const yDiff = tp.y - p.y
 
     if (dist <= REACH) {
-      // 已跟上：停下；目标在 Bot 上方（高台上）时补跳对齐（按前方方块判定——
-      // 台壁在前方即跳）。必须清残留寻路 goal——否则 pathfinder 的 monitorMovement
-      // 每 physicsTick 覆盖控制状态继续走向旧目标（双控制器冲突 → 跟随失效/原地不动）
-      stopMoving()
+      // 已跟上：停下。目标在 Bot 上方且前方是台壁（1 格高障碍）时——
+      // 前进+跳跃爬升对齐；此前只 set jump 不 forward → 原地跳永远上不去
+      //（实测"1 格障碍前停止移动"根因）。必须清残留寻路 goal——否则
+      // pathfinder 的 monitorMovement 每 physicsTick 覆盖控制状态继续走向
+      // 旧目标（双控制器冲突 → 跟随失效/原地不动）
+      const dx = dist > 0 ? (tp.x - p.x) / dist : 0
+      const dz = dist > 0 ? (tp.z - p.z) / dist : 0
+      const wallAhead = yDiff > 0.3 && shouldJump(p, dx, dz)
+      if (wallAhead) {
+        bot.setControlState('forward', true)
+        bot.setControlState('jump', true)
+      } else {
+        stopMoving()
+        // 目标在正上方（无台壁）时原地补跳对齐（旧行为）
+        bot.setControlState('jump', yDiff > 0.3 && shouldJump(p, dx, dz))
+      }
       pathing = false
       clearGoal()
       lastPos = p.clone()
       stuckCount = 0
       jumpHeld = false
       jumpClearTicks = 0
-      const dx = dist > 0 ? (tp.x - p.x) / dist : 0
-      const dz = dist > 0 ? (tp.z - p.z) / dist : 0
-      bot.setControlState('jump', yDiff > 0.3 && shouldJump(p, dx, dz))
       return
     }
 

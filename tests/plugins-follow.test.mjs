@@ -197,17 +197,19 @@ test('follow: 跳跃中卡住（y 无位移，前方持续实心）→ 切寻路
   assert.ok(bot.setGoalCalls.length >= 1, '跳跃失败应切 pathfinder 绕行')
 })
 
-test('follow: 到达（dist ≤ REACH）且前方台壁 → 补跳对齐', (t) => {
+test('follow: 到达（dist ≤ REACH）且目标在面前高台 → 前进+跳跃爬升（1 格障碍不停）', (t) => {
   useMockTimers(t)
   const bot = makeBot(new Vec3(0, 64, 0), solidAhead)
   const player = { id: 7, position: new Vec3(1, 65.8, 0) } // 水平 1 格（≤REACH），目标在台上
   bot.follow.setTarget(player)
   mock.timers.tick(500)
-  assert.equal(bot.controls.forward, false, '已跟上应停下')
-  assert.equal(bot.controls.jump, true, '目标在台上且前方台壁 → 补跳对齐')
-  // 跳上后（y 对齐）→ 不再跳
+  // 回归：此前只 set jump 不 forward → 原地跳永远上不去台 → "1 格障碍前停止移动"
+  assert.equal(bot.controls.forward, true, '目标在台上且前方台壁 → 应前进爬升（此前只跳不前进）')
+  assert.equal(bot.controls.jump, true, '爬升应持续跳跃')
+  // 爬上台后（y 对齐）→ 停下不再跳
   bot.entity.position.y = 65.8
   mock.timers.tick(500)
+  assert.equal(bot.controls.forward, false)
   assert.equal(bot.controls.jump, false)
 })
 
