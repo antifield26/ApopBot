@@ -305,6 +305,13 @@ export function validateConfig (cfg) {
   }
   if (cfg.scheduleTimezone !== undefined && (typeof cfg.scheduleTimezone !== 'string' || !cfg.scheduleTimezone)) {
     errors.push('scheduleTimezone 必须是非空字符串')
+  } else if (cfg.scheduleTimezone !== undefined &&
+    cfg.scheduleTimezone !== 'UTC' && // UTC 是合法 IANA 名但 supportedValuesOf 排除（协调世界时非时区）
+    !Intl.supportedValuesOf('timeZone').includes(cfg.scheduleTimezone)) {
+    // 第六轮 C7：croner 只接受 IANA 时区名——Windows 控制面板时区名（"China Standard
+    // Time"）此前通过校验但 scheduled.js catch 吞错 → 任务静默永不调度（失败模式隐蔽）
+    errors.push(`scheduleTimezone 必须是 IANA 时区名（如 Asia/Shanghai/UTC），当前: ${cfg.scheduleTimezone}——` +
+      'Windows 控制面板时区名（如 "China Standard Time"）不被支持，用 `tzutil /l` 对照或直接查 IANA 表')
   }
   if (!cfg.l2 || typeof cfg.l2.enabled !== 'boolean') errors.push('l2.enabled 必须是布尔值')
   if (cfg.l2?.enabled) {

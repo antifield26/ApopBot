@@ -177,6 +177,28 @@ test('M6: L2 环境变量映射与数值转换', () => {
   assert.equal(validateConfig(cfg).ok, true)
 })
 
+test('C7: scheduleTimezone 合法 IANA 名通过（Asia/Shanghai 默认值）', () => {
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
+  assert.equal(cfg.scheduleTimezone, 'Asia/Shanghai')
+  assert.equal(validateConfig(cfg).ok, true)
+})
+
+test('C7: Windows 控制面板时区名拒绝（croner 只接受 IANA——此前静默不调度）', () => {
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
+  const c = { ...cfg, scheduleTimezone: 'China Standard Time' } // cfg 是 deepFreeze——浅拷贝改顶层
+  const { ok, errors } = validateConfig(c)
+  assert.equal(ok, false)
+  const e = errors.find(x => x.includes('scheduleTimezone'))
+  assert.ok(e?.includes('IANA'), `错误应提示 IANA: ${e}`)
+  assert.ok(e?.includes('China Standard Time'), `错误应带当前值: ${e}`)
+})
+
+test('C7: MCBOT_SCHEDULE_TIMEZONE=UTC env 覆盖通过（IANA 名）', () => {
+  const cfg = loadConfig({ argv: [], env: { MCBOT_SCHEDULE_TIMEZONE: 'UTC' } }, { skipProdConfig: true })
+  assert.equal(cfg.scheduleTimezone, 'UTC')
+  assert.equal(validateConfig(cfg).ok, true)
+})
+
 test('未知顶层键拒绝（拼写错误不再静默忽略）', () => {
   const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
   const { ok, errors } = validateConfig({ ...cfg, mcversion: '1.20' })
