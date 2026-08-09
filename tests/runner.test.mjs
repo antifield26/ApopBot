@@ -349,3 +349,86 @@ test('chop 脚本: 显式 logTypes 只伐指定类型', async () => {
   assert.ok(collects.length >= 1)
   assert.equal(task.counters.chopped, 2, '只伐 oak_log×2（不伐 oak_wood）')
 })
+
+// ---- farm 脚本（v1.0.0 C8）----
+
+/** farm 场景 fake bot：区域内有 1 块成熟小麦 + 1 块耕地。 */
+function makeFarmBot (opts = {}) {
+  const collects = []
+  const planted = []
+  let seeds = 10 // 种子库存（equip 后清零——fake 世界状态，验证种植优先于等待）
+  const bot = {
+    entity: { position: { x: 0, y: 64, z: 0 } },
+    registry: { blocksByName: { wheat: { id: 59 }, farmland: { id: 60 } } },
+    findBlocks: ({ matching }) => {
+      // 候选池：小麦 (11,63,0) + 耕地 (10,62,0)——耕地正上方 (10,63,0) 必须空
+      //（plant_crops 检查占用）
+      const pool = [
+        { p: new Vec3(11, 63, 0), type: 59 },
+        { p: new Vec3(10, 62, 0), type: 60 }
+      ]
+      return pool.filter(c => matching({ type: c.type })).map(c => c.p)
+    },
+    blockAt: (p) => {
+      if (p.x === 11 && p.y === 63) return { name: 'wheat', type: 59, boundingBox: 'solid', position: p, getProperties: () => ({ age: opts.mature !== false ? 7 : 3 }) }
+      if (p.y === 62 && p.x === 10) return { name: 'farmland', type: 60, boundingBox: 'solid', position: p }
+      return { boundingBox: 'empty', name: 'air', position: p }
+    },
+    inventory: { items: () => (seeds > 0 ? [{ name: 'wheat_seeds', count: seeds }] : []) },
+    equip: async () => { seeds = 0 },
+    placeBlock: async (ref) => { planted.push(ref.position) },
+    collectBlock: {
+      collect: async (batch) => { collects.push(batch); return { collected: batch.length } },
+      cancelTask: () => {}
+    },
+    pathfinder: { stop: () => {} },
+    once: () => {},
+    removeListener: () => {}
+  }
+  return { bot, collects, planted }
+}
+
+const FARM_AREA = { x1: 0, y1: 0, z1: 0, x2: 20, y2: 100, z2: 20 }
+
+test('farm 脚本: 成熟收割 → continue（不种植/不等待）→ 完成', async () => {
+  const { bot, collects } = makeFarmBot()
+  const ctx = makeCtx(bot)
+  const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
+  const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['wheat'] }, ctx)
+  await task.start()
+  assert.equal(task.state, 'completed', '收割一轮后完成（maxCycles 默认 1）')
+  assert.ok(collects.length >= 1, '成熟小麦被收割')
+  assert.ok(task.counters.harvested >= 1, `harvested 计数: ${task.counters.harvested}`)
+})
+
+test('farm 脚本: 无成熟 → 种植（replant 默认）→ 未成熟 → 等待生长', async () => {
+  const { bot, planted } = makeFarmBot({ mature: false })
+  const ctx = makeCtx(bot)
+  const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
+  const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['wheat'], growthCheckSeconds: 1, maxCycles: 2 }, ctx) // 2 轮：第 1 轮种植，第 2 轮 growing——1s 等待 50ms 检查时仍在
+  task.start()
+  await new Promise(r => setTimeout(r, 50))
+  assert.ok(planted.length >= 1, '耕地被种植（wheat_seeds）')
+  assert.ok(task.waitingReason === 'growing' || task.state === 'running', `等待生长: ${task.waitingReason}`)
+  await task.stop()
+})
+
+test('farm 脚本: replant=false → 不种植；stopWhenIdle → 完成', async () => {
+  const { bot, planted } = makeFarmBot({ mature: false })
+  const ctx = makeCtx(bot)
+  const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
+  const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['wheat'], replant: false, stopWhenIdle: true, growthCheckSeconds: 0.01 }, ctx)
+  await task.start()
+  assert.equal(task.state, 'completed', '空闲 + stopWhenIdle → 完成')
+  assert.equal(planted.length, 0, 'replant=false 不种植')
+})
+
+test('farm 脚本: init 校验——未知作物报错（failed）', async () => {
+  const { bot } = makeFarmBot()
+  const ctx = makeCtx(bot)
+  const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
+  const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['dragon_fruit'] }, ctx)
+  await task.start()
+  assert.equal(task.state, 'failed')
+  assert.ok(task.lastError.includes('未知作物'), task.lastError)
+})

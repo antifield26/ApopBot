@@ -27,6 +27,8 @@ import { stopPathfinding } from '../core/movement.js'
 class ScriptReturn { constructor (value) { this.value = value } }
 /** 脚本 break 信号（跳出当前 loop）。 */
 class ScriptBreak {}
+/** 脚本 continue 信号（跳到当前 loop 下一轮——farm 收获后跳过种植/等待语义）。 */
+class ScriptContinue {}
 
 export class ScriptTask extends BaseTask {
   /**
@@ -169,7 +171,10 @@ export class ScriptRunner {
   async runCtrl (step) {
     switch (step.ctrl) {
       case 'loop': {
-        const max = step.max === 'infinite' ? Infinity : (Number(step.max) || 1)
+        // max: 'infinite' 或 0 → 无限循环（farm 的 maxCycles 0 = 不限轮数语义）；
+        // 支持模板（'${maxCycles}' → options 值）
+        const maxRaw = this.resolveValue(step.max)
+        const max = (maxRaw === 'infinite' || Number(maxRaw) === 0) ? Infinity : (Number(maxRaw) || 1)
         for (let i = 0; i < max; i++) {
           if (!this.task._alive(this.gen)) return
           await this.task._waitIfPaused()
@@ -177,6 +182,7 @@ export class ScriptRunner {
             await this.runSteps(step.body ?? [])
           } catch (err) {
             if (err instanceof ScriptBreak) break
+            if (err instanceof ScriptContinue) continue // 跳到下一轮（farm 收获后不种植语义）
             throw err
           }
         }
@@ -184,6 +190,8 @@ export class ScriptRunner {
       }
       case 'break':
         throw new ScriptBreak()
+      case 'continue':
+        throw new ScriptContinue()
       case 'if': {
         if (evalCond(step.cond, this)) await this.runSteps(step.then ?? [])
         else await this.runSteps(step.else ?? [])

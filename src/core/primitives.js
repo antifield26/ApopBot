@@ -489,6 +489,7 @@ export function createPrimitiveRegistry (ctx) {
       properties: {
         area: { type: 'object', description: '区域 {x1,y1,z1,x2,y2,z2}' },
         cropTypes: { type: 'array', items: { type: 'string' }, description: '作物列表（默认全部）' },
+        seedOverrides: { type: 'object', description: '作物→种子物品名覆盖（farm 任务 seedOverrides 同款）' },
         max: { type: 'integer', min: 1, max: 32, description: '单次最多种植数（默认 8）' }
       }
     },
@@ -497,10 +498,12 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '种植',
     timeoutMs: 60000,
     cooldownMs: ACTION_COOLDOWN_MS,
-    handler: async (c, { area, cropTypes, max }, runtime) => {
+    handler: async (c, { area, cropTypes, seedOverrides, max }, runtime) => {
       void cropTypes // 预留：按作物匹配种子（v1.0.0 先自动匹配全部种子）
       if (!isArea(area)) throw new Error('plant_crops 需要完整 area（x1..z2 六坐标）')
       if (!c.bot?.placeBlock || !c.bot?.equip) throw new Error('plant 能力不可用（插件缺失）')
+      // farm._seedByCrop 同款：SEED_BY_CROP + seedOverrides 合并（值 = 种子物品名）
+      const seedByCrop = { ...SEED_BY_CROP, ...(seedOverrides ?? {}) }
       // farm._scanArea 同款扫描（找区域内耕地）
       const anchor = new Vec3((area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2, (area.z1 + area.z2) / 2)
       const diag = Math.hypot(area.x2 - area.x1, area.y2 - area.y1, area.z2 - area.z1)
@@ -523,7 +526,7 @@ export function createPrimitiveRegistry (ctx) {
         const soil = c.bot.blockAt(farmland[i])
         const above = soil ? c.bot.blockAt(soil.position.offset(0, 1, 0)) : null
         if (above && above.boundingBox !== 'empty') continue // 已占用
-        const seeds = c.bot.inventory?.items()?.find(it => Object.values(SEED_BY_CROP).includes(it.name))
+        const seeds = c.bot.inventory?.items()?.find(it => Object.values(seedByCrop).includes(it.name))
         if (!seeds) return { planted, noSeeds: true }
         try {
           await withTimeout(c.bot.equip(seeds, 'hand'), 10000, 'equip timeout')
