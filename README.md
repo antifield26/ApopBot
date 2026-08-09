@@ -67,10 +67,10 @@ npm start                   # 连接 localhost:25565
 
 ## 部署（Windows PC）
 
-Bot 以 NSSM Windows 服务运行于低配 PC（同机跑 Ollama 做 L2 本地推理）；PaperMC 服务端仍在树莓派（systemd）。见 [docs/deploy.md](docs/deploy.md)。
+Bot 以 NSSM Windows 服务运行于 PC（同机跑 Ollama 做 L2 本地推理）；PaperMC 服务端仍在树莓派（systemd）。见 [docs/deploy.md](docs/deploy.md)。
 
 ```powershell
-# Windows PC，管理员 PowerShell（前置：Node 22 LTS + NSSM，见 docs/deploy.md）
+# Windows PC，管理员 PowerShell（前置：Node 24 LTS + NSSM，见 docs/deploy.md）
 powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Smoke
 ```
 

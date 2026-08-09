@@ -3,6 +3,20 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { ConnectionManager } from '../src/core/connection.js'
 
+/**
+ * 轮询等待条件成立（替换固定 setTimeout——CI 慢机器/Node 版本差异下固定等待
+ * 时序漂移，windows-latest Node 26 实测失败：状态断言在 80ms 后仍是 connecting）。
+ * @returns {Promise<boolean>} 超时返回 false（调用方断言给出实际值）
+ */
+async function pollUntil (fn, timeoutMs = 3000, intervalMs = 10) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeoutMs) {
+    if (fn()) return true
+    await new Promise(r => setTimeout(r, intervalMs))
+  }
+  return fn()
+}
+
 // 可注入的假 bot：EventEmitter + quit（quit 触发 end，模拟 mineflayer 语义）
 class FakeBot extends EventEmitter {
   constructor () {
@@ -88,14 +102,13 @@ test('代际守卫：陈旧 bot 的 spawn 超时不得 quit/调度重连（防�
   await p1
   assert.equal(conn.reconnectCount, 1)
 
-  // t≈50ms：重连建立 connect#2（bot B，换代 seq=2）
-  await new Promise(r => setTimeout(r, 120))
-  assert.equal(bots.length, 2, '应已建立第二个连接')
+  // t≈50ms：重连建立 connect#2（bot B，换代 seq=2）——轮询等待（CI 慢机器时序漂移）
+  assert.ok(await pollUntil(() => bots.length >= 2), `应已建立第二个连接（实际 ${bots.length}）`)
 
   // 时序：A 的超时挂于 t≈0+500，B 的超时挂于 t≈50+500。
-  // 等 t≈650（两者都已触发）：A 的陈旧超时被代际守卫拦截（不得 quit A——
-  // 否则陈旧 end 会调度 connect#3 造成双 bot 并发）；B 的超时属当前代际正常 quit。
-  await new Promise(r => setTimeout(r, 530))
+  // 等两者都已触发：A 的陈旧超时被代际守卫拦截（不得 quit A——否则陈旧 end
+  // 会调度 connect#3 造成双 bot 并发）；B 的超时属当前代际正常 quit。
+  assert.ok(await pollUntil(() => bots[1]?.quitCalls >= 1), 'B 的超时应触发 quit')
   try {
     assert.equal(bots[0].quitCalls, 0, '陈旧 spawn 超时不得 quit 旧 bot（拦截点：seq 1 ≠ 2）')
     assert.equal(bots[1].quitCalls, 1, '当前代际的 spawn 超时正常 quit')
@@ -125,8 +138,7 @@ test('onSpawn 每次 spawn 触发（B1 前提：重连产生新 bot 实例）', 
   // 模拟断线重连：end（无 reason → M2 语义非 fatal）→ 退避 → 新 connect（新 bot）
   bots[0].emit('end')
   assert.equal(conn.state, 'reconnecting')
-  await new Promise(r => setTimeout(r, 100)) // baseMs 50 + 缓冲
-  assert.equal(bots.length, 2, '退避后应创建第二个 bot 实例')
+  assert.ok(await pollUntil(() => bots.length >= 2), '退避后应创建第二个 bot 实例')
   bots[1].emit('spawn')
   assert.equal(spawnSpy.count, 2, '重连后的 spawn 再次触发 onSpawn（B1 前提）')
   assert.equal(conn.state, 'connected')
@@ -151,10 +163,9 @@ test('M5 修复：updateCfg 更新连接管理器配置', async () => {
 test('spawn 超时 → 主动 quit → end 走重连路径（非 fatal）', async () => {
   const { conn, bots } = makeConn({ cfg: makeCfg({ spawnTimeoutMs: 30 }) })
   await conn.connect()
-  // 等待 spawn 超时触发 quit
-  await new Promise(r => setTimeout(r, 80))
-  assert.ok(bots[0].quitCalls >= 1, '超时应主动 quit')
-  assert.equal(conn.state, 'reconnecting')
+  // 等待 spawn 超时触发 quit（轮询——固定 80ms 在 CI 慢机器上漂移）
+  assert.ok(await pollUntil(() => bots[0].quitCalls >= 1), '超时应主动 quit')
+  assert.ok(await pollUntil(() => conn.state === 'reconnecting'), `应进入 reconnecting（实际 ${conn.state}）`)
   await conn.disconnect()
 })
 
@@ -169,8 +180,8 @@ test('断线分类：致命原因 → 不调度重连并 exit(2)', async () => {
     bots[0].emit('kicked', 'Your username is already logged in!')
     assert.equal(conn.state, 'connecting') // fatal 路径不进入 reconnecting
     assert.equal(conn.reconnectCount, 1)
-    // 等待 500ms 的 flush 窗口：必须真的 exit(2)
-    await new Promise(r => setTimeout(r, 650))
+    // 等待 flush 窗口：必须真的 exit(2)（轮询）
+    assert.ok(await pollUntil(() => exitCodes.length >= 1), 'fatal 应调用 process.exit(2)')
     assert.deepEqual(exitCodes, [2], 'fatal 应调用 process.exit(2)')
     await conn.disconnect()
   } finally {
@@ -216,7 +227,7 @@ test('致命原因后 end 事件不触发重连（_fatalExit 守卫）', async (
     await conn.connect()
     bots[0].emit('kicked', 'You are not white-listed on this server')
     bots[0].emit('end') // kicked 后 mineflayer 会关闭连接 → end
-    await new Promise(r => setTimeout(r, 650))
+    assert.ok(await pollUntil(() => exitCodes.length >= 1), 'fatal 应 exit(2)')
     assert.deepEqual(exitCodes, [2])
     assert.equal(conn.state, 'connecting', 'fatal 后不得进入 reconnecting')
     assert.ok(conn.attempt <= 1, 'fatal 后不得调度重连')
