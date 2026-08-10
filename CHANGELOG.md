@@ -5,6 +5,7 @@
 
 ## [Unreleased]
 
+- **地形记忆失效三管齐下（第 10 轮，commit 67857a5）**：探索记忆（DiscoveryMap）此前只增不减（仅 explore 的 recordResource 写入、永不删除）——dig 挖掉/玩家改动的方块长期残留，query_map 返回过期坐标误导 LLM/玩家（用户实测误判 find 技能失效的根因）。三管齐下：**A 挖除即删**（dig/collect_blocks 成功后 `removeResourceAt`）；**B blockUpdate 监听**（方块变化→该坐标记忆删除，覆盖玩家/环境改动）；**C 查询验证**（query_map 返回前逐条 blockAt 核对——已加载且仍是该方块 → `verified:true`；已加载但不是 → **自动删除（记忆自愈）**；未加载 → `verified:false`，LLM 提示词说明需 observe_block 确认后行动）
 - **爬升卡住彻底根治（第 9 轮，三机制）**：真服务器 packet 级诊断（完整 C→S/S→C 时间线）确认三条独立根因链并全部修复——
   - **float32 上报精度 → 贴墙拉回循环**（commit 511a170，最主要）：本地物理贴墙停在 `minX = 块 maxX`（double 精确）→ 协议 float32 上报舍入（416.3 → 416.29998779）→ 服务器算的 AABB 与墙块重叠（1.2e-5）→ Paper 位置校验拒绝 → 每 tick 拉回 → bot 钉死。修复：patch prismarine-physics 1.11.1——贴墙截断停在"块面 ± 1e-4"（`F32_EPS`，float32 ulp 3e-5 的安全余量，0.1mm 不可见）且贴墙区完全挡（不渐进）；半嵌位前进/后退**挤回块外脱嵌**（位移 = 嵌入量 ≤0.3 服务器接受）
   - **执行器起跳中停 forward → "半格高悬停"**（commit 511a170）：pathfinder 执行器每 tick 判 `canWalkJump`，bot 起跳中（onGround=false）模拟必然失败 → else 分支停 forward → bot 起跳后失去前进 → 反复原地跳。修复：patch mineflayer-pathfinder 2.4.5——else 分支保留 forward（本地物理挡在障碍前），只停 jump
