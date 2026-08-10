@@ -20,10 +20,14 @@ export function directionFromYaw (yaw) {
   return names[Math.round(deg / 45) % 8]
 }
 
-/** 时间 hh:mm（timeOfDay 0-24000 ticks）。 */
-function formatTime (timeOfDay) {
+/**
+ * 时间 hh:mm（timeOfDay 0-24000 ticks）。
+ * Minecraft 语义：timeOfDay 0 = 日出（游戏钟 6:00）——必须加 6000 ticks（6 小时）
+ * 偏移。此前直接映射把 0 → 00:00，Bot 输出恒比游戏钟早 6 小时（第 9 轮实测确认）。
+ */
+export function formatTime (timeOfDay) {
   if (!Number.isFinite(timeOfDay)) return '?'
-  const totalMin = Math.floor((timeOfDay % 24000) / 1000 * 60)
+  const totalMin = Math.floor(((timeOfDay % 24000) + 6000) % 24000 / 1000 * 60)
   const h = String(Math.floor(totalMin / 60)).padStart(2, '0')
   const m = String(totalMin % 60).padStart(2, '0')
   return `${h}:${m}`
