@@ -320,3 +320,49 @@ test('findSurfaceBlocks: 未知方块名 → throw', () => {
   })
   assert.throws(() => findSurfaceBlocks(bot, 'not_a_block'), /未知方块类型/)
 })
+
+// ---- 第 9 轮：卡住自愈（26.1 区块时序 → A* 路径穿墙 → 位置停滞 → 重试） ----
+
+test('第 9 轮：位置停滞 → stuck 重试——第二次 goto 成功', async () => {
+  const d1 = deferredGoto()
+  const d2 = deferredGoto()
+  let call = 0
+  const bot = makePathBot(() => {
+    call++
+    if (call === 1) return d1.impl()
+    bot.entity.position = new Vec3(10, 64, 10) // 第二次"走到"目标（停滞检测不触发）
+    return d2.impl()
+  })
+  const mv = createMovement(bot, makeLogger(), { stuckGraceMs: 30, stuckDetectMs: 30 })
+  const p = mv.goto(new goals.GoalBlock(10, 64, 10), { timeoutMs: 5000, pollMs: 10 })
+  // 第一次 goto 位置不动（fake bot position 恒 0,64,0）→ 停滞检测 → stop → PathStopped
+  // → runOnce 返回 stuck → goto 自动重试（第二次）→ d2 稍后 resolve
+  setTimeout(() => d2.resolve('ok'), 200)
+  const r = await p
+  assert.equal(r.ok, true, `重试后应到达: ${JSON.stringify(r)}`)
+  assert.ok(bot.setGoalCalls.length >= 2, `应重试（setGoal ≥2 次，实际 ${bot.setGoalCalls.length}）`)
+})
+
+test('第 9 轮：卡住重试 3 次仍失败 → 返回 stuck（不无限重试）', async () => {
+  const bot = makePathBot(() => new Promise(() => {})) // 永不 settle + 位置不动
+  const mv = createMovement(bot, makeLogger(), { stuckGraceMs: 20, stuckDetectMs: 20, sidestepTimeoutMs: 30 })
+  const r = await mv.goto(new goals.GoalBlock(10, 64, 10), { timeoutMs: 5000, pollMs: 10 })
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'stuck', `reason 应为 stuck（实际 ${r.reason}）`)
+  assert.ok(r.stuck === true, '应带 stuck 标记')
+  assert.ok(bot.stopCalls >= 4, '初始 1 次 + 3 次重试各 1 次 + sidestep 超时 stop（stuck 上限 3）')
+})
+
+test('第 9 轮：谓词中断优先于停滞检测（stop 请求不被卡住重试吞掉）', async () => {
+  const d = deferredGoto()
+  const bot = makePathBot(() => d.impl())
+  const mv = createMovement(bot, makeLogger(), { stuckGraceMs: 20, stuckDetectMs: 20 })
+  let interrupted = false
+  const p = mv.goto(new goals.GoalBlock(10, 64, 10), { timeoutMs: 5000, pollMs: 10, isInterrupted: () => interrupted })
+  // 中断在停滞检测触发后转真（100ms > 40ms）——第二次 runOnce 检测到中断 →
+  // reason=interrupted → goto 不继续 stuck 重试（while 条件 !isInterrupted）
+  setTimeout(() => { interrupted = true }, 100)
+  const r = await p
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'interrupted', '中断转真后不应再返回 stuck（重试被中断语义接管）')
+})

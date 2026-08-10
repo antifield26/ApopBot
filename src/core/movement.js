@@ -15,6 +15,7 @@
 //   no-path      goto 拒绝 NoPath / approachEntity 收到 path_update noPath
 //   timeout      墙钟超时（调用方 timeoutMs）或 goto 拒绝 Timeout（A* 预算）
 //   interrupted  谓词为真 / PathStopped（他人 stop）
+//   stuck        位置停滞（卡住自愈触发——goto 内部自动重试 ≤3 次后仍失败）
 //   goal-changed 他人 setGoal 覆盖（任务互斥下不应发生，如实上报）
 //   error        其他异常（位置不可用等）
 
@@ -25,11 +26,23 @@ const { goals } = pathfinderPkg
 // （goto 只 setGoal 一次，路径不随目标实时重算——目标静止时 A* 不被重置）
 const RECALC_DIST = 2
 
+// 卡住自愈（第 9 轮）：26.1 区块数据时序问题——A* 路径生成/直线合并的物理模拟
+// 可能用未加载的区块数据（blockAt null → 模拟中障碍不存在 → 路径穿过实际墙）→
+// bot 撞墙停滞，futility 重算反复算错（实测：goto 4 格目标 60s 超时、path_update
+// 恒 1 节点直线）。自愈：位置停滞 STUCK_DETECT_MS 后主动 stopPathfinding（触发
+// PathStopped → runOnce 失败标记 stuck）→ goto 重试全新 A*——区块加载后重试成功。
+const STUCK_DETECT_MS = 4000
+// 卡住重试次数上限（每次全新 A*——区块通常 1-2 次重试内加载完成）
+const STUCK_RETRY_LIMIT = 3
+// A* 计算期免检窗口（goto 启动后 bot 不动是正常的——等 pathfinder 算完路径）
+const STUCK_GRACE_MS = 5000
+
 /** 失败原因文案（move_to 技能/命令反馈用）。 */
 export const REASON_TEXT = {
   'no-path': '无法到达（无路径）',
   timeout: '移动超时',
   interrupted: '移动被中断',
+  stuck: '移动卡住（已自动重试）',
   'goal-changed': '目标被其他移动覆盖',
   error: '移动出错'
 }
@@ -54,6 +67,59 @@ export function stopPathfinding (bot) {
   try { bot.pathfinder?.stop() } catch { /* 插件可能已卸载 */ }
 }
 
+/**
+ * 卡住自愈的横移步（第 9 轮）：向目标垂直方向移动 2 格，离开贴墙位置。
+ * 26.1 实测：bot 贴墙时起跳有水平碰撞延迟 → canWalkJump 闪烁 → 永远跳不过 1 格墙。
+ * 横移后重试原目标，起跳无延迟即可通过。失败（侧向也是墙/超时）不阻塞——返回
+ * 后由 goto 重试兜底。
+ * @param {import('mineflayer').Bot} bot
+ * @param {object} goal 原目标（用于计算侧向方向）
+ */
+async function sidestep (bot, goal, timeoutMs = 8000) {
+  try {
+    const p = bot.entity?.position
+    if (!p || !bot.pathfinder?.setGoal) return
+    const dx = (goal.x ?? 0) - p.x
+    const dz = (goal.z ?? 0) - p.z
+    const len = Math.hypot(dx, dz)
+    if (len < 0.5) return // 目标就在脚下，无侧向可言
+    // 垂直向量（左右横移）：绕开贴墙方向
+    const sx = -dz / len
+    const sz = dx / len
+    const side = new goals.GoalNear(p.x + sx * 2, Math.floor(p.y), p.z + sz * 2, 1.5)
+    const g = bot.pathfinder.goto(side)
+    const timer = setTimeout(() => { try { bot.pathfinder.stop() } catch { /* 插件可能已卸载 */ } }, timeoutMs)
+    try {
+      await g
+    } catch { /* 横移失败：不阻塞，交给重试 */ }
+    clearTimeout(timer)
+  } catch { /* 任何异常不阻塞主流程 */ }
+}
+
+/**
+ * 卡住自愈的跳跃试探（第 9 轮）：贴墙起跳时 canWalkJump 模拟误判失败
+ * （20 tick 不够——起跳前 2 tick 水平碰撞延迟），但真实物理贴墙跳可行。
+ * 连续 forward+jump ~800ms：起跳 → 上升 → 越过 1 格墙顶 → 落回墙上。
+ * 失败无副作用（bot 原地跳几下），重试 goto 兜底。
+ */
+async function jumpProbe (bot) {
+  try {
+    if (!bot.setControlState) return
+    // pathfinder 执行器（path=[] → fullStop）每 tick 覆盖 controlState 为 false——
+    // 这里每 40ms 重设 forward+jump，保证物理 tick 采样到 jump=true（起跳条件）
+    const interval = setInterval(() => {
+      try {
+        bot.setControlState('forward', true)
+        bot.setControlState('jump', true)
+      } catch { /* bot 可能已断开 */ }
+    }, 40)
+    await new Promise(r => setTimeout(r, 800))
+    clearInterval(interval)
+    bot.setControlState('jump', false)
+    bot.setControlState('forward', false)
+  } catch { /* 任何异常不阻塞主流程 */ }
+}
+
 /** 统一清残留 goal（非移动时的状态清理：无目标分支/攻击前/低血前）。 */
 export function clearGoal (bot) {
   try { bot.pathfinder?.setGoal(null) } catch { /* 插件可能已卸载 */ }
@@ -65,7 +131,7 @@ export function clearGoal (bot) {
  * @param {object} logger
  * @param {{ pollMs?: number, thinkTimeoutMs?: number, tickTimeoutMs?: number }} [opts]
  */
-export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeoutMs = null } = {}) {
+export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeoutMs = null, stuckGraceMs = STUCK_GRACE_MS, stuckDetectMs = STUCK_DETECT_MS, sidestepTimeoutMs = 8000 } = {}) {
   const log = logger?.child ? logger.child({ module: 'movement' }) : logger
 
   // 低配机调优：A* 分片预算（默认 40ms/tick 主线程分片 + 5s 总预算）——默认不覆盖
@@ -78,22 +144,38 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
    * @param {{ isInterrupted?: (() => boolean)|null, timeoutMs?: number, pollMs?: number }} [opts]
    */
   async function goto (goal, { isInterrupted = null, timeoutMs = 60000, pollMs = 500 } = {}) {
-    const first = await runOnce(goal, { isInterrupted, timeoutMs, pollMs })
+    let result = await runOnce(goal, { isInterrupted, timeoutMs, pollMs })
+    // 卡住自愈（第 9 轮）：位置停滞 → stuck 标记 → 横移避开贴墙 → 重试全新 A*（最多 3 次）。
+    // 26.1 实测根因链：A* 路径正确（4 节点含跳上 68 台面），但 bot 贴墙起跳有 2 tick
+    // 水平碰撞延迟 → canWalkJump 20 tick 模拟闪烁（跳 1 tick 落下）→ 永远跳不过墙。
+    // 横移 2 格离开贴墙位置后重试 → 起跳无延迟 → 跳上成功。中断不重试
+    let stuckRetries = 0
+    while (result.stuck && stuckRetries < STUCK_RETRY_LIMIT && !isInterrupted?.()) {
+      stuckRetries++
+      log?.warn({ retry: stuckRetries }, '移动卡住，横移/跳跃试探后重新寻路')
+      // 1) 横移 2 格：离开局部贴墙位置（侧向有空地时有效）
+      await sidestep(bot, goal, sidestepTimeoutMs)
+      // 2) 真实跳跃试探：canWalkJump 模拟对贴墙起跳误判失败（20 tick 不够），
+      //    但真实物理贴墙跳可行——连续跳 ~800ms 越过 1 格墙顶后落回
+      await jumpProbe(bot)
+      result = await runOnce(goal, { isInterrupted, timeoutMs, pollMs })
+    }
     // 仅 goto 自身的 A* 预算 Timeout 重试一次——fresh A* 常因区块数据稳定后成功
     // （低配机大范围搜索的偶发 5s 预算超时是真实场景）。墙钟超时（我们主动 stop）
     // 与中断不重试：重试会吃到陈旧的 path_stop，且超时重试无意义
-    if (first.retryable && !isInterrupted?.()) {
+    if (result.retryable && !isInterrupted?.()) {
       log?.warn('寻路超时，重试一次')
-      return runOnce(goal, { isInterrupted, timeoutMs, pollMs })
+      result = await runOnce(goal, { isInterrupted, timeoutMs, pollMs })
     }
-    return first
+    return result
   }
 
-  /** goto 单次执行（含中断/超时守卫与失败清理）。 */
+  /** goto 单次执行（含中断/超时/停滞守卫与失败清理）。 */
   async function runOnce (goal, { isInterrupted, timeoutMs, pollMs }) {
     const started = Date.now()
     let succeeded = false
     let stoppedByUs = false
+    let stuckDetected = false
     const p = bot.pathfinder.goto(goal)
     // 断线一致性（C2）：断线后 physics tick 停止 → path_stop 永不到达 → goto promise
     // 永不 settle → runOnce 挂死（轮询器泄漏 + findBusy 不复发 + 任务 run 永不返回）。
@@ -103,6 +185,10 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
     const ended = new Promise((resolve) => { endResolve = resolve })
     const onEnd = () => { disconnected = true; endResolve() }
     bot.once('end', onEnd)
+    // 停滞检测状态（第 9 轮卡住自愈）：A* 计算期（STUCK_GRACE_MS）后位置连续
+    // STUCK_DETECT_MS 不动 → 主动 stop → PathStopped → 标记 stuck 供 goto 重试
+    let lastPos = null
+    let stuckSince = null
     const timer = setInterval(() => {
       // 双保险：error 路径可能先于 end 到达——轮询器检测到断线立即收尾
       if (!disconnected && bot._client?.state === 'disconnected') onEnd()
@@ -112,6 +198,21 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
       } else if (Date.now() - started > timeoutMs) {
         stoppedByUs = true
         stopPathfinding(bot)
+      } else if (Date.now() - started > stuckGraceMs && bot.entity?.position) {
+        const p = bot.entity.position
+        const moved = lastPos !== null && p.distanceTo(lastPos) > 0.1
+        if (!moved && lastPos !== null) {
+          if (stuckSince === null) stuckSince = Date.now()
+          else if (Date.now() - stuckSince > stuckDetectMs) {
+            stuckSince = null
+            stuckDetected = true
+            stoppedByUs = true
+            stopPathfinding(bot)
+          }
+        } else {
+          stuckSince = null
+        }
+        lastPos = p.clone()
       }
     }, pollMs)
     timer.unref?.()
@@ -129,12 +230,14 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
       else if (err?.name === 'GoalChanged') reason = 'goal-changed'
       else if (err?.name === 'Timeout') reason = 'timeout'
       else if (err?.name === 'PathStopped') {
+        // 卡住自愈优先（我们主动 stop 触发）：stuck 标记供 goto 重试
+        if (stuckDetected) reason = 'stuck'
         // 墙钟超时优先于 err.name 分类（我们主动 stop 触发的 PathStopped）
-        reason = stoppedByUs ? (isInterrupted?.() ? 'interrupted' : 'timeout') : 'interrupted'
+        else reason = stoppedByUs ? (isInterrupted?.() ? 'interrupted' : 'timeout') : 'interrupted'
       }
       // 兜底：谓词转真优先（竞态窗口内 PathStopped 可能先于谓词检查到达）
       if (isInterrupted?.() && reason !== 'no-path') reason = 'interrupted'
-      return { ok: false, reason, err, retryable: err?.name === 'Timeout' }
+      return { ok: false, reason, err, retryable: err?.name === 'Timeout', stuck: stuckDetected }
     } finally {
       clearInterval(timer)
       bot.removeListener('end', onEnd)
