@@ -98,22 +98,40 @@ async function sidestep (bot, goal, timeoutMs = 8000) {
 
 /**
  * 卡住自愈的跳跃试探（第 9 轮）：贴墙起跳时 canWalkJump 模拟误判失败
- * （20 tick 不够——起跳前 2 tick 水平碰撞延迟），但真实物理贴墙跳可行。
- * 连续 forward+jump ~800ms：起跳 → 上升 → 越过 1 格墙顶 → 落回墙上。
+ * （20 tick 不够——起跳前 2 tick 水平碰撞延迟），但真实物理贴墙跳可行
+ * （实测连续跳 y 升 2 格越过 1 格墙顶）。
+ * 面向目标方向连续 forward+jump ~1.2s（25ms 重设——pathfinder 执行器
+ * fullStop 每 tick 覆盖 controlState，重设频率必须高于 tick 频率）。
  * 失败无副作用（bot 原地跳几下），重试 goto 兜底。
  */
-async function jumpProbe (bot) {
+async function jumpProbe (bot, goal) {
   try {
     if (!bot.setControlState) return
-    // pathfinder 执行器（path=[] → fullStop）每 tick 覆盖 controlState 为 false——
-    // 这里每 40ms 重设 forward+jump，保证物理 tick 采样到 jump=true（起跳条件）
+    // 面向目标方向（墙在目标方向——跳越过墙；bot yaw 可能残留旧朝向，
+    // forward 不朝墙则跳不过去）
+    const p = bot.entity?.position
+    if (p && goal && bot.look) {
+      const dx = (goal.x ?? 0) - p.x
+      const dz = (goal.z ?? 0) - p.z
+      if (Math.hypot(dx, dz) > 0.5) {
+        bot.look(Math.atan2(-dx, -dz), 0)
+      }
+    }
+    // 先后退半步（第 9 轮实测）：bot 停在墙块重叠位（中心在块内、AABB 底与
+    // 前方墙块垂直重叠）时起跳瞬间被碰撞解算 velY=0（跳不起来）——后退
+    // ~0.4 格脱离重叠后起跳无碰撞（430.5 处实测跳跃正常、y 升 2 格越过墙顶）
+    try {
+      bot.setControlState('back', true)
+      await new Promise(r => setTimeout(r, 400))
+      bot.setControlState('back', false)
+    } catch { /* bot 可能已断开 */ }
     const interval = setInterval(() => {
       try {
         bot.setControlState('forward', true)
         bot.setControlState('jump', true)
       } catch { /* bot 可能已断开 */ }
-    }, 40)
-    await new Promise(r => setTimeout(r, 800))
+    }, 25)
+    await new Promise(r => setTimeout(r, 1200))
     clearInterval(interval)
     bot.setControlState('jump', false)
     bot.setControlState('forward', false)
@@ -155,9 +173,17 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
       log?.warn({ retry: stuckRetries }, '移动卡住，横移/跳跃试探后重新寻路')
       // 1) 横移 2 格：离开局部贴墙位置（侧向有空地时有效）
       await sidestep(bot, goal, sidestepTimeoutMs)
-      // 2) 真实跳跃试探：canWalkJump 模拟对贴墙起跳误判失败（20 tick 不够），
-      //    但真实物理贴墙跳可行——连续跳 ~800ms 越过 1 格墙顶后落回
-      await jumpProbe(bot)
+      // 2) 强制停执行器：pathfinder.stop() 只设 stopPathing（stop() 清 path 只在
+      //    "到达节点"时触发——bot 卡住时执行器继续跑旧路径，每 tick 覆盖
+      //    controlState 与跳跃试探竞争）。stop()+setGoal(null) → resetPath 见
+      //    stopPathing → 立即 stop()（path=[] + stateGoal=null → 执行器 return）
+      try { bot.pathfinder?.stop() } catch { /* 插件可能已卸载 */ }
+      try { bot.pathfinder?.setGoal(null) } catch { /* 插件可能已卸载 */ }
+      await new Promise(r => setTimeout(r, 200))
+      // 3) 真实跳跃试探：canWalkJump 模拟对贴墙起跳误判失败（20 tick 不够），
+      //    但真实物理贴墙跳可行（实测连续跳 y 升 2 格越过墙顶）——面向目标
+      //    方向连续跳 ~1.2s 越过 1 格墙
+      await jumpProbe(bot, goal)
       result = await runOnce(goal, { isInterrupted, timeoutMs, pollMs })
     }
     // 仅 goto 自身的 A* 预算 Timeout 重试一次——fresh A* 常因区块数据稳定后成功
