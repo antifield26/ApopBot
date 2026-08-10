@@ -75,9 +75,11 @@ minecraft-bot (Node.js ≥22, ESM)
 
 - `mineflayer ^4.37.1` / `minecraft-protocol ^1.66.2` / `minecraft-data ^3.113.0`：**全部官方 npm 版**（供应链干净、npm audit 正常、CI 无 git hack）。官方最新版仅支持到 1.21.11——26.1.2 协议 775 适配由 `patches/` 的 patch-package 补丁承担（mineflayer PR #3902 的 lib/ 适配：bed 属性新格式 / entityVelocityIsLpVec3 / use_entity 门控分支 / attack 独立包 / update_time clockUpdates；protocol PR #1487 的 src/version.js 支持列表），`postinstall` 自动应用
 - `minecraft-data 3.113.0`：官方版已含 26.1.2 数据（实测 version 775），零补丁
-- `prismarine-chunk 1.41.0` / `prismarine-physics 1.11.1`：官方 npm 版，overrides 固定（已含 26.1 支持）
+- `prismarine-chunk 1.41.0`：官方 npm 版，overrides 固定（已含 26.1 支持）
+- `prismarine-physics 1.11.1`：官方 npm 版 + **本地补丁（爬升根治，第 9 轮）**——`computeOffsetX/Z` 半嵌位挤回脱嵌 + 贴墙截断停在"块面 ± 1e-4"（`F32_EPS`：协议位置 float32 上报舍入 3e-5 级，贴墙若停在"恰好块面"，服务器算的 AABB 与块重叠 1e-5 级 → Paper 位置校验拒绝 → 每 tick 拉回钉死；真实玩家贴墙位移 0 不触发校验所以没事）
+- `mineflayer-pathfinder 2.4.5`：官方 npm 版 + **本地补丁（爬升根治，第 9 轮）**——执行器 `canWalkJump` 失败分支保留 forward（bot 起跳中 onGround=false 模拟必然失败，停 forward 会让起跳后失去前进 → 反复原地跳"半格高悬停"）
 - `.npmrc`：`legacy-peer-deps=true`（补丁不改版本号，peer 校验解析依赖官方版本即可，保留以维持单一副本解析）；无 git 依赖 → 无 `allow-git`
-- 门禁：`npm run check:compat`（含 3.7 补丁哨兵门禁——补丁缺失/未应用即 FAIL；每次部署预检）；上游合并后迁移 = 删 patches + 删 postinstall（见 scripts/upstream-lib.mjs 头注释）
+- 门禁：`npm run check:compat`（含 3.7 补丁哨兵门禁——4 个补丁缺失/未应用即 FAIL；每次部署预检）；上游合并后迁移 = 删 patches + 删 postinstall（见 scripts/upstream-lib.mjs 头注释）
 
 ## 已知风险
 

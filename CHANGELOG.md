@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+- **爬升卡住彻底根治（第 9 轮，三机制）**：真服务器 packet 级诊断（完整 C→S/S→C 时间线）确认三条独立根因链并全部修复——
+  - **float32 上报精度 → 贴墙拉回循环**（commit 511a170，最主要）：本地物理贴墙停在 `minX = 块 maxX`（double 精确）→ 协议 float32 上报舍入（416.3 → 416.29998779）→ 服务器算的 AABB 与墙块重叠（1.2e-5）→ Paper 位置校验拒绝 → 每 tick 拉回 → bot 钉死。修复：patch prismarine-physics 1.11.1——贴墙截断停在"块面 ± 1e-4"（`F32_EPS`，float32 ulp 3e-5 的安全余量，0.1mm 不可见）且贴墙区完全挡（不渐进）；半嵌位前进/后退**挤回块外脱嵌**（位移 = 嵌入量 ≤0.3 服务器接受）
+  - **执行器起跳中停 forward → "半格高悬停"**（commit 511a170）：pathfinder 执行器每 tick 判 `canWalkJump`，bot 起跳中（onGround=false）模拟必然失败 → else 分支停 forward → bot 起跳后失去前进 → 反复原地跳。修复：patch mineflayer-pathfinder 2.4.5——else 分支保留 forward（本地物理挡在障碍前），只停 jump
+  - **半嵌穿墙**（commit cf3834c）：本地 computeOffsetX/Z 允许半嵌位水平穿墙 → 服务器拒绝 → 拉回。修复：patch prismarine-physics——半嵌位水平移动挤回
+  - 验证：follow 隔墙自行跳墙跟随 / goto 1 格高台目标 / 贴墙——全部 0 拉回（此前每 tick 拉回钉死、半格高悬停）；`patches/` 增至 4 个（minecraft-protocol / mineflayer / mineflayer-pathfinder / prismarine-physics），check:compat 哨兵门禁同步
+  - 剩余已知边缘：跨台后偶发完全静止（疑似半嵌深 >0.3 挤回超限或树叶数据不一致，见 GitHub issue #1）
 - **L2 预设切换 DeepSeek**：`l2.model` 默认 `deepseek-v4-flash`、`l2.cloudBaseUrl` 默认 `https://api.deepseek.com/anthropic`（Anthropic 兼容端点——裸域名补全会落到 OpenAI 路由 404）；新增 `l2.thinking`（默认 `disabled`：显式发 `thinking:{type:"disabled"}` 且**不传 reasoning_effort**——DeepSeek 端点将两者视为互斥 400）/ `l2.effort`（默认 `low`，`thinking: enabled` 时注入 `reasoning_effort`）。ENV_MAP 新增 `MCBOT_L2_THINKING`/`MCBOT_L2_EFFORT`；l2 白名单同步扩展，向后兼容
 
 ## [1.0.0] - 2026-08-09
