@@ -20,22 +20,34 @@ test('computeOffsetX: 未重叠前进 → 原截断（贴墙停）', () => {
   assert.ok(Math.abs(off - (1.0 - 1.0)) < 1e-9, `截断到贴墙，实际 ${off}`)
 })
 
-test('computeOffsetX: 半嵌前进 → 挡（不穿墙——patch 核心）', () => {
-  // bot 右缘 1.2 已嵌入墙块 0.2，前进 0.2 → 挡（0）
+test('computeOffsetX: 半嵌前进 → 挤回块外（脱嵌，非死锁）', () => {
+  // bot 右缘 1.2 已嵌入墙块 0.2，前进 0.2 → 挤回 -0.2（右缘到块左 1.0，脱嵌）
   const player = new AABB(0.6, 65, 0, 1.2, 66.8, 1)
-  assert.equal(wall.computeOffsetX(player, 0.2), 0, '半嵌位前进必须完全挡')
+  const off = wall.computeOffsetX(player, 0.2)
+  assert.ok(Math.abs(off - (1 - 1.2 - 1e-4)) < 1e-9, `半嵌前进应挤回（-0.2001），实际 ${off}`)
+  // 挤回后恰好贴墙（右缘 = 块左）→ 后续前进走截断分支（稳定贴墙）
+  const pushed = new AABB(0.6, 65, 0, 1.0, 66.8, 1)
+  assert.ok(Math.abs(wall.computeOffsetX(pushed, 0.2) - 0) < 1e-9, '贴墙后前进被截断')
 })
 
-test('computeOffsetX: 半嵌后退 → 自由（离开方向）', () => {
-  // bot 半嵌（左缘 0.8 在墙左、右缘 1.2 在墙内），后退 -0.2 → 自由（不挡）
+test('computeOffsetX: 半嵌向 -X（深入块方向）→ 挤回（脱嵌）', () => {
+  // bot 半嵌（左缘 0.8 在墙左、右缘 1.2 在墙内），向 -X 走 -0.2
+  // （bot 左缘在块左——向 -X 是离开方向，应自由）
   const player = new AABB(0.8, 65, 0, 1.2, 66.8, 1)
-  assert.equal(wall.computeOffsetX(player, -0.2), -0.2, '后退（离开墙）必须自由')
+  assert.equal(wall.computeOffsetX(player, -0.2), -0.2, '左缘在块左时向 -X 离开自由')
+  // bot 完全在块内偏右（左缘 1.5 在块 [1,2] 内），向 -X 走 → 挤回（脱嵌到块左）
+  const deep = new AABB(1.5, 65, 0, 2.1, 66.8, 1)
+  const off = wall.computeOffsetX(deep, -0.2)
+  assert.ok(Math.abs(off - (2 - 1.5 + 1e-4)) < 1e-9, `块内左移应挤回 +0.5001，实际 ${off}`)
 })
 
 test('computeOffsetX: 实体在块另一侧前进 → 自由（离开方向）', () => {
   // bot 完全在墙右（[2.2, 2.8]），前进（+X 远离墙）→ 自由
   const player = new AABB(2.2, 65, 0, 2.8, 66.8, 1)
   assert.equal(wall.computeOffsetX(player, 0.2), 0.2, '远离方向必须自由')
+  // 半嵌但移动方向是离开（右缘已出块另一侧 [1.5, 2.1]，向 +X）→ 自由
+  const leaving = new AABB(1.5, 65, 0, 2.1, 66.8, 1)
+  assert.equal(wall.computeOffsetX(leaving, 0.2), 0.2, '右缘已出块时前进（离开）必须自由')
 })
 
 test('computeOffsetX: 垂直不重叠（bot 在墙顶上方）→ 自由（不挡水平）', () => {
@@ -44,10 +56,11 @@ test('computeOffsetX: 垂直不重叠（bot 在墙顶上方）→ 自由（不�
   assert.equal(wall.computeOffsetX(player, 0.2), 0.2, '墙顶上方水平移动自由')
 })
 
-test('computeOffsetZ: 半嵌前进 → 挡（对称性）', () => {
+test('computeOffsetZ: 半嵌前进 → 挤回（对称性）', () => {
   const wallZ = new AABB(-10, 65, 1, 10, 66, 2) // 墙块 z∈[1,2]
   const player = new AABB(0, 65, 0.6, 1, 66.8, 1.2) // 半嵌 z 0.2
-  assert.equal(wallZ.computeOffsetZ(player, 0.2), 0, '半嵌位 Z 前进必须完全挡')
+  const off = wallZ.computeOffsetZ(player, 0.2)
+  assert.ok(Math.abs(off - (1 - 1.2 - 1e-4)) < 1e-9, `半嵌位 Z 前进应挤回（-0.2001），实际 ${off}`)
   const player2 = new AABB(0, 65, 0.8, 1, 66.8, 1.2) // 半嵌后退
   assert.equal(wallZ.computeOffsetZ(player2, -0.2), -0.2, '后退（离开）必须自由')
 })

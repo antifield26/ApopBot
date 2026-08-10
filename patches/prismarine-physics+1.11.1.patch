@@ -1,41 +1,77 @@
 diff --git a/node_modules/prismarine-physics/lib/aabb.js b/node_modules/prismarine-physics/lib/aabb.js
 --- a/node_modules/prismarine-physics/lib/aabb.js
 +++ b/node_modules/prismarine-physics/lib/aabb.js
-@@ -66,8 +66,17 @@
+@@ -1,3 +1,9 @@
++// float32 精度安全余量（第 9 轮爬升根治）：协议位置经 float32 上报后舍入误差
++// ~3e-5（坐标 400+ 时 ulp ≈ 3.05e-5）。贴墙截断/挤回若停在"恰好块面"，上报后
++// 服务器算的 AABB 与块重叠（1e-5 级）→ Paper 位置校验拒绝 → 每 tick 拉回 →
++// bot 贴墙卡死（实测）。贴墙停在"块面 ± 1e-4"（0.1mm 不可见）→ 上报后不重叠。
++const F32_EPS = 1e-4
++
+ class AABB {
+   constructor (x0, y0, z0, x1, y1, z1) {
+     this.minX = x0
+@@ -66,10 +72,30 @@
  
    computeOffsetX (other, offsetX) {
      if (other.maxY > this.minY && other.minY < this.maxY && other.maxZ > this.minZ && other.minZ < this.maxZ) {
 -      if (offsetX > 0.0 && other.maxX <= this.minX) {
 -        offsetX = Math.min(this.minX - other.maxX, offsetX)
+-      } else if (offsetX < 0.0 && other.minX >= this.maxX) {
+-        offsetX = Math.max(this.maxX - other.minX, offsetX)
 +      if (offsetX > 0.0) {
-+        if (other.maxX <= this.minX) {
-+          // 未重叠：截断到恰好贴墙（原逻辑）
-+          offsetX = Math.min(this.minX - other.maxX, offsetX)
-+        } else if (other.minX < this.maxX) {
-+          // 半嵌（X 重叠）：挡——本地不再穿墙（与服务器 vanilla 语义一致；
-+          // 服务器对"位置与方块重叠的水平移动"拒绝并拉回 → mineflayer 把
-+          // onGround 置 false → 起跳冻结 → 卡死）
-+          offsetX = 0
++        if (other.maxX <= this.minX + F32_EPS) {
++          // 未重叠（含贴墙余量区）：截断到"块面 - F32_EPS"，贴墙区内完全挡（0）——
++          // 不渐进。渐进贴墙会让 bot 停在 minX = 块 maxX，float32 上报后位置与块
++          // 重叠（1e-5 级）→ Paper 位置校验拒绝 → 每 tick 拉回 → 贴墙卡死。
++          offsetX = Math.min(Math.max(this.minX - other.maxX - F32_EPS, 0), offsetX)
++        } else if (other.maxX < this.maxX) {
++          // 右缘在块内（半嵌深入）：挤回块外 + 余量（位移 = 嵌入量 ≤0.3，服务器
++          // 接受）。不能用"挡"（钳 0）：bot 半嵌后所有方向被本地挡 → 无法脱嵌 →
++          // 死锁（实测 spawn 半嵌位 follow 直接卡死）。挤回与服务器 vanilla 语义
++          // 一致（服务器拒绝"穿墙深入"但接受"脱嵌位移"），自动恢复。
++          offsetX = Math.min(this.minX - other.maxX - F32_EPS, offsetX)
 +        }
-+        // 实体完全在块右（minX >= this.maxX）：前进=离开，自由
-       } else if (offsetX < 0.0 && other.minX >= this.maxX) {
-         offsetX = Math.max(this.maxX - other.minX, offsetX)
++        // 右缘 ≥ 块 maxX（已出块另一侧）：前进=离开，自由
++      } else if (offsetX < 0.0) {
++        if (other.minX >= this.maxX - F32_EPS) {
++          // 未重叠（含贴墙余量区）：截断到"块面 + F32_EPS"，贴墙区内完全挡（0）
++          offsetX = Math.max(Math.min(this.maxX - other.minX + F32_EPS, 0), offsetX)
++        } else if (other.minX > this.minX) {
++          // 左缘在块内（半嵌深入）：挤回块外 + 余量（同前进分支——bot 面向 -X
++          // 走此分支时原条件（minX >= maxX）浮点不成立 → 自由穿墙 → 服务器拉回）
++          offsetX = Math.max(this.maxX - other.minX + F32_EPS, offsetX)
++        }
++        // 左缘 ≤ 块 minX（已出块另一侧）：后退=离开，自由
        }
-@@ -88,8 +97,15 @@
+     }
+     return offsetX
+@@ -88,10 +114,24 @@
  
    computeOffsetZ (other, offsetZ) {
      if (other.maxX > this.minX && other.minX < this.maxX && other.maxY > this.minY && other.minY < this.maxY) {
 -      if (offsetZ > 0.0 && other.maxZ <= this.minZ) {
 -        offsetZ = Math.min(this.minZ - other.maxZ, offsetZ)
+-      } else if (offsetZ < 0.0 && other.minZ >= this.maxZ) {
+-        offsetZ = Math.max(this.maxZ - other.minZ, offsetZ)
 +      if (offsetZ > 0.0) {
-+        if (other.maxZ <= this.minZ) {
-+          // 未重叠：截断到恰好贴墙（原逻辑）
-+          offsetZ = Math.min(this.minZ - other.maxZ, offsetZ)
-+        } else if (other.minZ < this.maxZ) {
-+          // 半嵌（Z 重叠）：挡——本地不再穿墙（同 computeOffsetX）
-+          offsetZ = 0
++        if (other.maxZ <= this.minZ + F32_EPS) {
++          // 未重叠（含贴墙余量区）：完全挡（同 computeOffsetX）
++          offsetZ = Math.min(Math.max(this.minZ - other.maxZ - F32_EPS, 0), offsetZ)
++        } else if (other.maxZ < this.maxZ) {
++          // 右缘在块内（半嵌深入）：挤回块外 + 余量（同 computeOffsetX）
++          offsetZ = Math.min(this.minZ - other.maxZ - F32_EPS, offsetZ)
 +        }
-+        // 实体完全在块后（minZ >= this.maxZ）：前进=离开，自由
-       } else if (offsetZ < 0.0 && other.minZ >= this.maxZ) {
-         offsetZ = Math.max(this.maxZ - other.minZ, offsetZ)
++        // 右缘 ≥ 块 maxZ（已出块另一侧）：前进=离开，自由
++      } else if (offsetZ < 0.0) {
++        if (other.minZ >= this.maxZ - F32_EPS) {
++          // 未重叠（含贴墙余量区）：完全挡（同 computeOffsetX）
++          offsetZ = Math.max(Math.min(this.maxZ - other.minZ + F32_EPS, 0), offsetZ)
++        } else if (other.minZ > this.minZ) {
++          // 左缘在块内（半嵌深入）：挤回块外 + 余量（同 computeOffsetX）
++          offsetZ = Math.max(this.maxZ - other.minZ + F32_EPS, offsetZ)
++        }
++        // 左缘 ≤ 块 minZ（已出块另一侧）：后退=离开，自由
        }
+     }
+     return offsetZ

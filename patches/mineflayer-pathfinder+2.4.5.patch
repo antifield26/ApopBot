@@ -1,0 +1,16 @@
+diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
+--- a/node_modules/mineflayer-pathfinder/index.js
++++ b/node_modules/mineflayer-pathfinder/index.js
+@@ -624,7 +624,11 @@
+       bot.setControlState('jump', true)
+       bot.setControlState('sprint', false)
+     } else {
+-      bot.setControlState('forward', false)
++      // 爬升修复（第 9 轮）：起跳中（onGround=false）canWalkJump 模拟必然失败
++      //（模拟从空中状态起跳无效）——停 forward 会让 bot 起跳后失去前进 →
++      // 反复原地跳（实测"卡在爬升点半格高悬停"）。保留 forward（本地物理
++      // 挡在障碍前，安全），只停 jump 防无效跳跃。
++      bot.setControlState('jump', false)
+       bot.setControlState('sprint', false)
+     }
+ 

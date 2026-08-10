@@ -29,9 +29,10 @@ const EXPECTED = {
 const PATCH_SENTINELS = {
   'mineflayer+4.37.1.patch': ['node_modules/mineflayer/lib/version.js', "'26.1.2'"],
   'minecraft-protocol+1.66.2.patch': ['node_modules/minecraft-protocol/src/version.js', "'26.1.2'"],
-  // 半嵌挡（第 9 轮爬升根治）：computeOffsetX/Z 对"位置与方块重叠的水平移动"挡——
-  // 本地不再穿墙（与服务器 vanilla 语义一致，消除服务器拉回循环导致的上报卡死）
-  'prismarine-physics+1.11.1.patch': ['node_modules/prismarine-physics/lib/aabb.js', '半嵌（X 重叠）：挡']
+  // 半嵌挤回 + float32 余量（第 9 轮爬升根治）：computeOffsetX/Z 对"位置与方块
+  // 重叠的水平前进"挤回块外脱嵌；贴墙停在"块面 ± F32_EPS"（float32 上报不重叠，
+  // 消除 Paper 拉回循环与半嵌死锁）
+  'prismarine-physics+1.11.1.patch': ['node_modules/prismarine-physics/lib/aabb.js', 'F32_EPS']
 }
 
 // 目标协议版本（与 mcVersion 对应；上游更新时在 docs/upstream-migration.md 说明）
