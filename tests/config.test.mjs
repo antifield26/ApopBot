@@ -53,7 +53,7 @@ test('CLI 参数优先级最高', () => {
 
 test('--config 文件合并覆盖 default.json', () => {
   const cfg = loadConfig({ argv: ['--config', 'config/smoke.json'], env: {} })
-  assert.equal(cfg.username, 'smokebot')
+  assert.equal(cfg.username, 'mcbot-test')
   assert.equal(cfg.spawnTimeoutMs, 30000)
   assert.equal(cfg.mcVersion, '26.1.2') // 未被 smoke.json 覆盖 → 保持默认
 })

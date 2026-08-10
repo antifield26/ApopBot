@@ -1,5 +1,5 @@
 {
-  "username": "smokebot",
+  "username": "mcbot-test",
   "spawnTimeoutMs": 30000,
   "reconnect": { "baseMs": 2000, "maxMs": 10000 },
   "ops": [],

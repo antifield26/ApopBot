@@ -263,7 +263,7 @@ if ($Smoke) {
   $smokeArgs = @('scripts\smoke.mjs', '--config', 'config\smoke.json', '--host', $targetHost, '--steps', 'connect,spawn,chat')
   if ($targetPort) { $smokeArgs += '--port'; $smokeArgs += [string]$targetPort }
   & node @smokeArgs
-  if ($LASTEXITCODE -ne 0) { Write-Error '冒烟失败（确认服务端在线、smokebot 已加入服务端白名单）'; exit 1 }
+  if ($LASTEXITCODE -ne 0) { Write-Error '冒烟失败（确认服务端在线、mcbot-test 已加入服务端白名单）'; exit 1 }
 }
 
 Write-Host ''
