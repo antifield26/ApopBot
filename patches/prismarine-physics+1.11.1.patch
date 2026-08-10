@@ -1,0 +1,41 @@
+diff --git a/node_modules/prismarine-physics/lib/aabb.js b/node_modules/prismarine-physics/lib/aabb.js
+--- a/node_modules/prismarine-physics/lib/aabb.js
++++ b/node_modules/prismarine-physics/lib/aabb.js
+@@ -66,8 +66,17 @@
+ 
+   computeOffsetX (other, offsetX) {
+     if (other.maxY > this.minY && other.minY < this.maxY && other.maxZ > this.minZ && other.minZ < this.maxZ) {
+-      if (offsetX > 0.0 && other.maxX <= this.minX) {
+-        offsetX = Math.min(this.minX - other.maxX, offsetX)
++      if (offsetX > 0.0) {
++        if (other.maxX <= this.minX) {
++          // 未重叠：截断到恰好贴墙（原逻辑）
++          offsetX = Math.min(this.minX - other.maxX, offsetX)
++        } else if (other.minX < this.maxX) {
++          // 半嵌（X 重叠）：挡——本地不再穿墙（与服务器 vanilla 语义一致；
++          // 服务器对"位置与方块重叠的水平移动"拒绝并拉回 → mineflayer 把
++          // onGround 置 false → 起跳冻结 → 卡死）
++          offsetX = 0
++        }
++        // 实体完全在块右（minX >= this.maxX）：前进=离开，自由
+       } else if (offsetX < 0.0 && other.minX >= this.maxX) {
+         offsetX = Math.max(this.maxX - other.minX, offsetX)
+       }
+@@ -88,8 +97,15 @@
+ 
+   computeOffsetZ (other, offsetZ) {
+     if (other.maxX > this.minX && other.minX < this.maxX && other.maxY > this.minY && other.minY < this.maxY) {
+-      if (offsetZ > 0.0 && other.maxZ <= this.minZ) {
+-        offsetZ = Math.min(this.minZ - other.maxZ, offsetZ)
++      if (offsetZ > 0.0) {
++        if (other.maxZ <= this.minZ) {
++          // 未重叠：截断到恰好贴墙（原逻辑）
++          offsetZ = Math.min(this.minZ - other.maxZ, offsetZ)
++        } else if (other.minZ < this.maxZ) {
++          // 半嵌（Z 重叠）：挡——本地不再穿墙（同 computeOffsetX）
++          offsetZ = 0
++        }
++        // 实体完全在块后（minZ >= this.maxZ）：前进=离开，自由
+       } else if (offsetZ < 0.0 && other.minZ >= this.maxZ) {
+         offsetZ = Math.max(this.maxZ - other.minZ, offsetZ)
+       }
