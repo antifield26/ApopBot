@@ -20,6 +20,29 @@ const state = {
   store: null // stateStore（attachStore 注入）
 }
 
+// 第 11 轮：坐标反查索引（'fx,fy,fz' → Set<blockName>）——blockUpdate 监听每事件
+// 调用 removeResourceAt，全表扫描（≤512 条 × Object.entries）在大挖掘/森林大火时
+// 每格一次主线程压力。索引使未命中路径 O(1)（绝大多数事件坐标不在记忆里）。
+// 与 resources 双写同步：recordResource/removeResourceAt/importSnapshot/_reset 均维护。
+const byCoord = new Map()
+
+function coordKey (x, y, z) {
+  return `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`
+}
+
+/** 重建 byCoord 索引（importSnapshot/_reset 后同步）。 */
+function rebuildIndex () {
+  byCoord.clear()
+  for (const [name, list] of Object.entries(state.resources)) {
+    for (const r of list) {
+      const k = coordKey(r.x, r.y, r.z)
+      const s = byCoord.get(k)
+      if (s) s.add(name)
+      else byCoord.set(k, new Set([name]))
+    }
+  }
+}
+
 function now () {
   return Date.now()
 }
@@ -59,16 +82,25 @@ export function importSnapshot (memory) {
     while (entries.length > MAX_RESOURCES_TOTAL) entries.shift()
     state.resources = {}
     for (const e of entries) {
-      (state.resources[e.name] ??= []).push({ x: e.x, y: e.y, z: e.z, ts: e.ts })
+      // 第 11 轮 G1：快照往返保留维度（重建时漏拷 dimension——下界记录回灌后
+      // 丢失维度字段，query 按维度过滤查不到）
+      (state.resources[e.name] ??= []).push({
+        x: e.x, y: e.y, z: e.z, ts: e.ts,
+        ...(e.dimension ? { dimension: e.dimension } : {})
+      })
     }
   }
+  rebuildIndex() // 第 11 轮：索引与回灌同步
   persist()
 }
 
-/** 登记访问锚点（explore 任务每站调用）。 */
-export function recordAnchor (pos) {
+/** 登记访问锚点（explore 任务每站调用）。第 11 轮 G1：带维度（下界/末地坐标独立）。 */
+export function recordAnchor (pos, dimension = null) {
   if (!pos) return
-  state.anchors.push({ x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z), ts: now() })
+  state.anchors.push({
+    x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z), ts: now(),
+    ...(dimension ? { dimension } : {})
+  })
   if (state.anchors.length > MAX_ANCHORS) state.anchors.shift()
   persist()
 }
@@ -77,7 +109,7 @@ export function recordAnchor (pos) {
  * 登记资源发现（chunk 坐标去重：同 chunk 已记录只刷新 ts 不新增）。
  * @returns {boolean} 是否是新记录（首次发现该 chunk 的该资源）
  */
-export function recordResource (name, pos) {
+export function recordResource (name, pos, dimension = null) {
   if (!name || !pos) return false
   const list = state.resources[name] ?? (state.resources[name] = [])
   const chunkKey = (pos) => `${Math.floor(pos.x) >> 4},${Math.floor(pos.z) >> 4}`
@@ -85,10 +117,27 @@ export function recordResource (name, pos) {
   const existing = list.find(r => chunkKey(r) === key)
   if (existing) {
     existing.ts = now()
+    // 第 11 轮 G1：旧记录补维度（同 chunk 跨维度记录已不可能——chunkKey 按
+    // x/z 去重，维度不同则记录冲突；此处仅补旧数据缺失的维度）
+    if (!existing.dimension && dimension) existing.dimension = dimension
     return false
   }
-  list.push({ x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z), ts: now() })
-  if (list.length > MAX_RESOURCES_PER_NAME) list.shift()
+  // 第 11 轮 G1：维度字段——下界/末地坐标与主世界混存会误导查询（8:1 映射），
+  // query 按维度过滤；旧数据（无维度）仅匹配主世界查询
+  list.push({ x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z), ts: now(), ...(dimension ? { dimension } : {}) })
+  // 第 11 轮：索引维护（与 resources 双写）
+  const ck = coordKey(pos.x, pos.y, pos.z)
+  const s = byCoord.get(ck)
+  if (s) s.add(name)
+  else byCoord.set(ck, new Set([name]))
+  if (list.length > MAX_RESOURCES_PER_NAME) {
+    const dropped = list.shift()
+    if (dropped) {
+      const ds = byCoord.get(coordKey(dropped.x, dropped.y, dropped.z))
+      ds?.delete(name)
+      if (ds && ds.size === 0) byCoord.delete(coordKey(dropped.x, dropped.y, dropped.z))
+    }
+  }
   // 全局上限：从全局最旧开始淘汰
   let total = 0
   for (const l of Object.values(state.resources)) total += l.length
@@ -99,7 +148,12 @@ export function recordResource (name, pos) {
       if (l[0]?.ts < oldestTs) { oldestTs = l[0].ts; oldestName = name }
     }
     if (!oldestName) break
-    state.resources[oldestName].shift()
+    const dropped = state.resources[oldestName].shift()
+    if (dropped) {
+      const ds = byCoord.get(coordKey(dropped.x, dropped.y, dropped.z))
+      ds?.delete(oldestName)
+      if (ds && ds.size === 0) byCoord.delete(coordKey(dropped.x, dropped.y, dropped.z))
+    }
     if (state.resources[oldestName].length === 0) delete state.resources[oldestName]
     total--
   }
@@ -117,23 +171,34 @@ export function recordResource (name, pos) {
 export function removeResourceAt (x, y, z) {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return 0
   const fx = Math.floor(x); const fy = Math.floor(y); const fz = Math.floor(z)
+  // 第 11 轮：byCoord 索引 O(1) 判空——blockUpdate 高频事件（挖掘/火烧/水流）的
+  // 绝大多数坐标不在记忆里，此前全表扫描（≤512 条 × Object.entries + filter）
+  const names = byCoord.get(coordKey(fx, fy, fz))
+  if (!names) return 0
   let removed = 0
-  for (const [name, list] of Object.entries(state.resources)) {
+  for (const name of [...names]) {
+    const list = state.resources[name]
+    if (!list) { names.delete(name); continue }
     const kept = list.filter(r => !(Math.floor(r.x) === fx && Math.floor(r.y) === fy && Math.floor(r.z) === fz))
     removed += list.length - kept.length
     if (kept.length) state.resources[name] = kept
     else delete state.resources[name]
   }
+  byCoord.delete(coordKey(fx, fy, fz)) // 该坐标已无任何记录
   if (removed > 0) persist()
   return removed
 }
 
 /**
  * 查询已知资源（按与 pos 的欧氏距离升序；不重新扫描）。
- * @returns {Array<{x,y,z,ts}>}
+ * 第 11 轮 G1：dimension 提供时按维度过滤——旧记录（无维度字段，主世界时代
+ * 数据）只对主世界查询匹配；下界/末地查询只返回带对应维度的记录（8:1 坐标
+ * 映射下跨维度坐标会误导 LLM/玩家）。
+ * @returns {Array<{x,y,z,ts,dimension?}>}
  */
-export function query (name, pos, maxCount = 5) {
-  const list = state.resources[name] ?? []
+export function query (name, pos, maxCount = 5, dimension = null) {
+  const list = (state.resources[name] ?? [])
+    .filter(r => !dimension || r.dimension === dimension || (!r.dimension && dimension === 'overworld'))
   if (!pos || list.length === 0) return list.slice(0, maxCount)
   return [...list]
     .sort((a, b) => {
@@ -163,11 +228,18 @@ export function stats () {
     : state.anchors.length === 1
       ? `单点 (${state.anchors[0].x},${state.anchors[0].z})`
       : '无'
+  // 第 11 轮 G1：维度分布（运维看"探索到哪个维度"）
+  const dimCounts = {}
+  for (const r of Object.values(state.resources).flat()) {
+    const d = r.dimension ?? 'overworld'
+    dimCounts[d] = (dimCounts[d] ?? 0) + 1
+  }
   return {
     anchors: state.anchors.length,
     resources: total,
     covered,
-    topResources: names
+    topResources: names,
+    dimensions: dimCounts
   }
 }
 
@@ -175,6 +247,7 @@ export function stats () {
 export function _reset () {
   state.anchors = []
   state.resources = {}
+  byCoord.clear()
 }
 
 function persist () {

@@ -7,9 +7,10 @@
 // 磁盘为启动真相（加载时回填 Map），运行中以内存为准（防旧文件覆盖新会话）。
 // LRU 上限与内存一致（MAX_SESSIONS=32，超限按最近访问裁剪落盘）。
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createDebouncedFileStore } from '../util/debounced-file-store.js' // 第 11 轮 F3
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const DEFAULT_FILE = path.join(ROOT, 'data', 'sessions.json')
@@ -46,41 +47,19 @@ export function loadSessions (file = DEFAULT_FILE) {
  */
 export function createSessionStore ({ file = DEFAULT_FILE, debounceMs = 2000, logger = null, maxSessions = DEFAULT_MAX_SESSIONS } = {}) {
   let last = loadSessions(file)
-  let dirty = false
-  let timer = null
-
-  function persist () {
-    if (!dirty) return
-    dirty = false
-    // LRU 裁剪：只落最近 maxSessions 个会话（按 Object 插入序近似 LRU——读时刷新）
-    const entries = Object.entries(last.sessions)
-    if (entries.length > maxSessions) {
-      last.sessions = Object.fromEntries(entries.slice(-maxSessions))
+  // 第 11 轮 F3：落盘样板（dirty/防抖/tmp+rename 原子写/exit flush）提取共享——
+  // 语义与既有实现逐条等价；LRU 裁剪在 encode 内（persist 时执行）
+  const store = createDebouncedFileStore({
+    file,
+    debounceMs,
+    logger,
+    encode: () => {
+      const entries = Object.entries(last.sessions)
+      if (entries.length > maxSessions) {
+        last.sessions = Object.fromEntries(entries.slice(-maxSessions))
+      }
+      return JSON.stringify(last, null, 2)
     }
-    const tmp = file + '.tmp'
-    try {
-      mkdirSync(path.dirname(file), { recursive: true })
-      writeFileSync(tmp, JSON.stringify(last, null, 2))
-      renameSync(tmp, file)
-    } catch (err) {
-      rmSync(tmp, { force: true })
-      logger?.warn?.({ err: err.message }, 'sessions save failed')
-    }
-  }
-
-  function schedule () {
-    dirty = true
-    if (timer) return
-    timer = setTimeout(() => {
-      timer = null
-      persist()
-    }, debounceMs)
-    timer.unref?.()
-  }
-
-  process.on('exit', () => {
-    if (timer) { clearTimeout(timer); timer = null }
-    persist()
   })
 
   return {
@@ -101,7 +80,7 @@ export function createSessionStore ({ file = DEFAULT_FILE, debounceMs = 2000, lo
         history: Array.isArray(value?.history) ? value.history.slice(-20) : [],
         calls: Array.isArray(value?.calls) ? value.calls.slice(-50) : []
       }
-      schedule()
+      store.schedule()
     },
     /** 删除会话并立即落盘。 */
     reset (user) {
@@ -109,13 +88,11 @@ export function createSessionStore ({ file = DEFAULT_FILE, debounceMs = 2000, lo
       delete last.sessions[user]
       // 立即落盘（第 8 轮）：!agent reset 语义要求崩溃窗口内不"复活"——
       // 此前走 2s 防抖，SIGKILL/断电窗口内会话残留磁盘，重启后私密上下文恢复
-      dirty = true
-      persist()
+      store.flush()
     },
     /** 立即落盘（测试/优雅退出）。 */
     flush () {
-      if (timer) { clearTimeout(timer); timer = null }
-      persist()
+      store.flush()
     },
     /** 会话数（测试）。 */
     size () {

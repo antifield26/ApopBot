@@ -34,6 +34,10 @@ function experienceInjection (experience) {
 const INPUT_MAX_CHARS = 1000 // 用户消息截断
 const REPLY_MAX_CHARS = 250 // 回复截断（与 chat.maxLength 默认一致）
 const TOOL_RESULT_MAX_CHARS = 2000 // 工具结果回填截断上限（预算裁剪的硬上限）
+// 第 11 轮：单轮工具调用上限（此前代码 slice(0,4) 与 CORE_SYSTEM_PROMPT 的 ≤8
+// 声明不符——多余调用静默丢弃，模型不知情会重复发出/误以为已执行。统一为 4，
+// 与 maxActionsPerCall 组合预算 = 4×8=32 动作/轮）
+const MAX_TOOL_CALLS_PER_ROUND = 4
 
 /**
  * 第 8 轮：工具结果截断——优先保持 JSON 结构完整（顶层数组/对象截到最后一个完整
@@ -225,7 +229,7 @@ const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手
    任务：start_task{type,id,options?} 启动任务；stop_task{id} 停止任务；follow_player{name|off} 跟随玩家
 2. 观测优先：行动前先观察（observe_*），不凭猜测行动、不编造世界状态。单步行动后读结果再决定下一步。
 3. 异常恢复：失败先读懂原因（如"移动失败: 无法到达"、"exclusive 任务 X 运行中"、"权限不足"、"先 goto 靠近"），同一失败操作不要盲目重试超过 2 次；需要等待用 wait{ms}。
-4. 预算：每次 act ≤8 动作、每轮对话 ≤8 次工具调用。移动/采集耗时长，拆小步执行。
+4. 预算：每次 act ≤8 动作、每轮对话 ≤4 次工具调用（超限动作将不执行）。移动/采集耗时长，拆小步执行。
 5. 安全：移动/建造/战斗/交互/物品/任务管理只有 op 玩家可用（系统强制校验，身份见"当前会话"）；exclusive 任务运行期间相关动作会被拒绝——这是任务保护机制不是故障，可等任务结束或用 start_task 排队。任务 = 长循环（挖矿/砍树/农场/战斗/繁殖/探索/钓鱼/AFK），单次操作用原语直接做，批量持续型需求用 start_task。
 6. 多步意图示例："帮我建个树屋"→ observe_inventory 确认木材 → equip 木材 → goto 目标 → place×N 逐层 → reply 汇报；"挖点铁"→ observe_blocks(iron_ore) 或 query_map → goto 靠近 → dig×N 或 collect_blocks → reply 汇报数量；"采 20 个木头"→ start_task(chop, area)（任务自动往返避障）→ observe_inventory 核对；"附近有危险吗"→ observe_entities(hostile) → attack 或如实汇报；"跟着我/跟随我"→ follow_player（name=当前会话玩家名——"我"指说话玩家，绝不是 Bot 自己）。
 7. 不要角色扮演，不要输出 Markdown，不要虚构玩家或世界状态。感知以"环境:"行与观察结果为准——没感知到的信息（如天气/生物群系/附近实体）如实说不知道。`
@@ -348,7 +352,11 @@ export class AgentInterface {
         }
       }
       const history = (session?.history ?? []).slice(-MAX_HISTORY_MESSAGES)
-      const toolCalls = session?.calls ?? []
+      // 第 11 轮：拷贝而非活引用——session 是 SESSIONS 中存储对象的引用（getSession
+      // 不克隆），循环内 toolCalls.push 直接改写存储；若本轮回写 setSession 因
+      // 中途抛错未执行（catch 路径），存储已残留无对应 user 消息的工具记录，
+      // 下次对话被 U15 注入"最近工具操作"→ 跨对话上下文自相矛盾
+      const toolCalls = (session?.calls ?? []).slice()
       const userMsg = String(text).slice(0, INPUT_MAX_CHARS)
       const messages = [...history, { role: 'user', content: userMsg }]
       const maxSteps = this.cfg.maxSteps ?? 5
@@ -397,7 +405,8 @@ export class AgentInterface {
           this.usage.outputTokens += res.usage.outputTokens ?? 0
         }
         this.usage.latencyMs = res.latencyMs ?? null
-        const calls = res.toolCalls?.slice(0, 4) ?? []
+        const allCalls = res.toolCalls ?? []
+        const calls = allCalls.slice(0, MAX_TOOL_CALLS_PER_ROUND)
         if (calls.length === 0) {
           reply = res.text ?? '（无回复）'
           finished = true
@@ -405,6 +414,11 @@ export class AgentInterface {
         }
         // v1.0.0 C4：执行工具调用（act → 动作数组走执行器；观察/回复 → 单动作）
         const results = []
+        // 第 11 轮：超限调用静默丢弃会让模型不知情（重复发出/误以为已执行）——
+        // 回填失败结果（不执行），模型下一轮能看到"未执行"并收敛
+        for (const tc of allCalls.slice(MAX_TOOL_CALLS_PER_ROUND)) {
+          results.push({ id: tc.id, name: tc.name, output: `未执行（单轮工具调用上限 ${MAX_TOOL_CALLS_PER_ROUND}，请减少本轮动作）` })
+        }
         for (const tc of calls) {
           let r
           // signal 贯通（第 8 轮）：stop()/断线中止不再只断 provider fetch——

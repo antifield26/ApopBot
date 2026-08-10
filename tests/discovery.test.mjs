@@ -108,3 +108,32 @@ test('B1: removeResourceAt 触发持久化', () => {
   assert.equal(saved.at(-1).resources.coal_ore, undefined, '快照中该记录已删')
   discovery.attachStore(null)
 })
+
+// 第 11 轮 G1：维度感知——下界/末地记录独立存储，跨维度查询过滤。
+// 注意 chunk 去重（x>>4,z>>4）——测试坐标必须跨 chunk（x 相差 ≥16）
+test('G1: 维度感知——recordResource 带维度，query 按维度过滤', () => {
+  // 主世界（含旧数据无维度字段——兼容主世界查询）
+  discovery.recordResource('iron_ore', { x: 10, y: 60, z: 8 }, 'overworld')
+  discovery.recordResource('iron_ore', { x: 40, y: 60, z: 8 }) // 旧数据形态（跨 chunk）
+  // 下界记录（同名字不同维度）
+  discovery.recordResource('iron_ore', { x: 100, y: 30, z: 100 }, 'nether')
+  // 主世界查询：命中 2 条（overworld + 旧数据）
+  assert.equal(discovery.query('iron_ore', null, 5, 'overworld').length, 2)
+  // 下界查询：只命中 nether 记录（主世界/旧数据被过滤）
+  const nether = discovery.query('iron_ore', null, 5, 'nether')
+  assert.equal(nether.length, 1)
+  assert.equal(nether[0].dimension, 'nether')
+  // 不提供维度：不过滤（兼容旧调用方）
+  assert.equal(discovery.query('iron_ore', null, 5).length, 3)
+})
+
+test('G1: 维度感知——快照往返保留维度，stats 统计维度分布', () => {
+  discovery.recordResource('nether_gold_ore', { x: 5, y: 40, z: 5 }, 'nether')
+  discovery.recordResource('coal_ore', { x: 5, y: 61, z: 5 }, 'overworld')
+  const snap = discovery.snapshot()
+  assert.equal(snap.resources.nether_gold_ore[0].dimension, 'nether')
+  discovery._reset()
+  discovery.importSnapshot(snap)
+  assert.equal(discovery.query('nether_gold_ore', null, 5, 'nether').length, 1, '快照往返后维度保留')
+  assert.equal(discovery.stats().dimensions.nether, 1, '维度分布统计')
+})

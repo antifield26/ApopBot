@@ -1,3 +1,4 @@
+import { isArea } from '../util.js'
 // 战斗任务脚本（v1.0.0 C9）：区域内对敌对实体巡逻战斗。
 // 语义与原 CombatTask 逐条对应：
 // - init 校验（area 完整/aggroRange<attackRange 陷阱/pathfinder 插件）
@@ -28,7 +29,7 @@ export default {
   /** init 校验 + 武器解析（原 CombatTask.init 等价迁移）。 */
   async init (task) {
     const o = task.options
-    const isArea = (a) => a && ['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].every(k => Number.isInteger(a[k]))
+
     if (o.area !== undefined && !isArea(o.area)) {
       throw new Error('combat 任务 options.area 不完整（可省略或给全 x1..z2）')
     }

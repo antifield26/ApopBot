@@ -5,9 +5,10 @@
 //
 // 写入策略：5s 防抖（任务变更频繁时不刷盘），优雅退出 flush 立即落盘；损坏/不存在回退空态。
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createDebouncedFileStore } from '../util/debounced-file-store.js' // 第 11 轮 F3
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const DEFAULT_FILE = path.join(ROOT, 'data', 'state.json')
@@ -76,42 +77,13 @@ function normalize (data) {
  */
 export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logger = null } = {}) {
   let last = loadState(file)
-  let dirty = false
-  let timer = null
-
-  function persist () {
-    if (!dirty) return
-    dirty = false
-    // 第六轮 C8：原子写（tmp + rename）——Windows 下直接 writeFileSync 遇文件被占用
-    // （编辑器/杀软扫描）抛 EPERM/EBUSY → 快照静默丢弃；rename 覆盖是原子操作。
-    // 同步 API 在 exit 处理器中安全（不允许调度异步工作）。同目录保证同卷 rename。
-    const tmp = file + '.tmp'
-    try {
-      mkdirSync(path.dirname(file), { recursive: true })
-      writeFileSync(tmp, JSON.stringify({ ...last, schemaVersion: STATE_SCHEMA_VERSION }, null, 2))
-      renameSync(tmp, file)
-    } catch (err) {
-      rmSync(tmp, { force: true }) // 清理半写 tmp（写成功但 rename 失败场景）
-      logger?.warn?.({ err: err.message }, 'state save failed')
-    }
-  }
-
-  function schedule () {
-    dirty = true
-    if (timer) return
-    timer = setTimeout(() => {
-      timer = null
-      persist()
-    }, debounceMs)
-    timer.unref?.()
-  }
-
-  // 全 exit 路径同步落盘（C2/M 修复）：fatal exit(2)/优雅退出/裸崩溃都触发 'exit'——
-  // 一处覆盖所有调用方，防抖窗口内未 flush 的变更（ad-hoc 任务/计数）在进程消亡前落盘。
-  // 同步 writeFileSync 在 exit 处理器中安全（不允许调度异步工作）。
-  process.on('exit', () => {
-    if (timer) { clearTimeout(timer); timer = null }
-    persist()
+  // 第 11 轮 F3：落盘样板（dirty/防抖/tmp+rename 原子写/exit flush）提取共享——
+  // 原子写语义（Windows EPERM/EBUSY 防御）与 exit 覆盖保留在共享模块内
+  const store = createDebouncedFileStore({
+    file,
+    debounceMs,
+    logger,
+    encode: () => JSON.stringify({ ...last, schemaVersion: STATE_SCHEMA_VERSION }, null, 2)
   })
 
   return {
@@ -130,17 +102,17 @@ export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logg
     /** 全量更新探索记忆（discovery 修改后调用；5s 防抖合并落盘） */
     setMemory (memory) {
       last.memory = memory && typeof memory === 'object' ? JSON.parse(JSON.stringify(memory)) : {}
-      schedule()
+      store.schedule()
     },
     /** 全量更新 ad-hoc 任务列表（manager 变更后调用）。 */
     setTasks (tasks) {
       last.tasks = tasks.map(t => ({ ...t, options: { ...(t.options ?? {}) } }))
-      schedule()
+      store.schedule()
     },
     /** 更新单任务计数器（任务终态时调用）。 */
     setCounter (id, counters) {
       last.counters = { ...last.counters, [id]: { ...counters } }
-      schedule()
+      store.schedule()
     },
     /** 删除单任务计数器（任务移除时清理，防快照无限增长——C6/N）。 */
     deleteCounter (id) {
@@ -148,12 +120,11 @@ export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logg
       const next = { ...last.counters }
       delete next[id]
       last.counters = next
-      schedule()
+      store.schedule()
     },
     /** 立即落盘（优雅退出/测试）。 */
     flush () {
-      if (timer) { clearTimeout(timer); timer = null }
-      persist()
+      store.flush()
     }
   }
 }

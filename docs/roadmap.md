@@ -1,6 +1,32 @@
-# 项目路线图（第二轮..第九轮）
+# 项目路线图（第二轮..第十一轮）
 
-第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施；L2 进化（环境感知 + 自由探索）2026-08-07 实施；第五轮（L2 深度控制与易用性，10 项全部 CONFIRMED）2026-08-07 实施；第六轮（工程治理六领域，12 commit）2026-08-09 实施；**第七轮（v1.0.0 革命性重构，12 commit）2026-08-09 实施**；**第八轮（全面审查，约 24 项确认修复）2026-08-09 实施**；**第九轮（爬升卡住彻底根治 + 时间映射修复，cf3834c..511a170）2026-08-10 实施**。本文档记录已完成项、缓做项与明确不做项。
+第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施；L2 进化（环境感知 + 自由探索）2026-08-07 实施；第五轮（L2 深度控制与易用性，10 项全部 CONFIRMED）2026-08-07 实施；第六轮（工程治理六领域，12 commit）2026-08-09 实施；**第七轮（v1.0.0 革命性重构，12 commit）2026-08-09 实施**；**第八轮（全面审查，约 24 项确认修复）2026-08-09 实施**；**第九轮（爬升卡住彻底根治 + 时间映射修复，cf3834c..511a170）2026-08-10 实施**；**第十轮（地形记忆失效三管齐下，67857a5）2026-08-10 实施**；**第十一轮（全面评估 + 5 HIGH 修复 + 20 MEDIUM 完善 + 工程补强 + 重构 + 4 扩展主题）2026-08-11 实施**。本文档记录已完成项、缓做项与明确不做项。
+
+## 第十一轮已完成（2026-08-11，4 Explore 审查 + 全档实施）
+
+用户需求：探索/理解/评估/规划 + 详细修复/完善/改进/扩展方案。4 个并行审查 agent（core 17 条 / 任务 15 条 / L2+命令 25 条 / 测试部署 17 条）逐项交叉验证，关键 HIGH 全部实测复现。用户决策：全档实施 + mine 动作级互斥 + 四个扩展主题全选。
+
+**5 个确认缺陷（HIGH，全部实测/代码验证）**：
+- **combat 冻结 options**（实测 TypeError）：loadConfig deepFreeze 整棵 cfg → manager 直传冻结 options → combat init 写 `options.weaponName` 抛 `object is not extensible` → config 路径装载的 combat 任务永不运行。修复：BaseTask 构造浅复制（一处修复防未来脚本再犯；manager reload diff 基于 config 条目对象不受影响）
+- **combat maxTargets 默认 0 失效**（首杀即完成）：evalCond config 型条件不回退 defaultOptions——未配置时 `undefined === 0` 恒 false → `not` 取反进内圈 → `kills >= 0` 恒真。修复：config 型回退 `scriptDef.defaultOptions`（chop/farm 现有条件全部验证无副作用）
+- **config.example.json 过不了自身校验**（实测）：`l2._comment` 未知键 → README 复制即用流程启动即 exit(1)。修复：L2_KNOWN_KEYS 豁免 `_comment` + config.test 防漂移断言
+- **spawn 先于插件装载**：本机/快速握手时 onSpawn 读到的 ctx.plugins 为空/旧代 → !follow 于死 client 上操作 → uncaughtException → fatalExit 停服。修复：connect() 装载成功且已 spawn 时补发 onPluginsReady 回调（消费点全部运行时读 ctx.plugins，无需二次 rebuild）
+- **notifier 按值捕获**：reload 只换 ctx.notifier 不重建 feature layer → 死亡/重生/重连推送走旧 webhook（第五轮 P2-1 同类未愈）。修复：事件时实时取值 `() => ctx.notifier ?? ...`
+
+**完善 20 项（MEDIUM）**：fish caught 计数虚高（抛竿超时也 +1——count 改 {name,field} 形态）与 abort 监听器泄漏（wait 原语同款配对移除）；审计日志多写者竞争（每任务独立 pino-roll worker 共写 audit.log → 进程级共享单例）；plant_crops 忽略 cropTypes 乱种（按 cropTypes 匹配种子）；collect 失败批次实采复核；mine 动作级互斥（非 exclusive 任务不 bypass 守卫——build/movement 类动作在 exclusive 运行中被软拒绝，脚本 if 重试承接）；工具调用硬截 4 与提示词 ≤8 不符（统一 4 + 超限回填失败结果）；baseUrl `/v1` 双路径 404（补全规则三分支）；goto/explore_step 忽略 abort（signal 转 isInterrupted 谓词贯通）；provider 零重试（429/5xx/网络 ≤2 次指数退避 + Retry-After）；会话 calls 活引用污染（slice 拷贝）；query_map 大小写敏感（归一 + 维度过滤）；blockUpdate 全表扫描（byCoord 索引 O(1) 判空）；http-status EADDRINUSE 后永久不可恢复（error 置 null）；日志热重载双写同一 bot.log（仅 level 变化不重建 transport）；deathPaused 微任务竞态（promise 化）；respawn 语义注释错误（mineflayer 默认 respawn:true——显式 false 消除双发）；parser JSON 转义引号解析错乱。
+
+**工程**：mineflayer-pathfinder 补丁哨兵门禁（4/4 + EXPECTED 补版本）；第 10 轮 blockUpdate 监听与挖除即删的接线测试（此前零覆盖）；3 处空断言清理；cron 真实时钟测试 pollUntil 去 flaky；CI 加部署模式 job（npm ci --omit=dev 镜像）。
+
+**重构（缓做项落实）**：_isArea 5 份消重 → `src/tasks/util.js`；三处落盘样板（sessions/experience/state）提取 `createDebouncedFileStore`（exit 单次注册——修复测试多实例累积监听）。
+
+**扩展（四主题）**：
+- **维度感知（G1）**：DiscoveryMap 记录带 `dimension` 字段——下界/末地坐标独立（8:1 映射下混存会误导）；query/query_map 按当前维度过滤（旧数据无维度仅匹配主世界）；快照往返保留维度（importSnapshot 曾丢字段——测试抓出）；stats 加维度分布
+- **记忆被动积累（G2）**：observe_blocks 找到候选自动 recordResource（带维度）——LLM 观察即探索；chunk 去重 + 全局上限天然防膨胀
+- **任务链（G3a）**：任务条目 `next: {id, type, options?, schedule?}`——自然完成后自动注册启动（ad-hoc 形态可 !task remove）；失败/停止不接力；config 校验 next 形状
+- **自动存储（G3b）**：collect_blocks NoChests 时附近 32 格找 chest/barrel 存入（工具与食物豁免，至多开 3 箱防 UI 卡死）再继续——替代 5 分钟干等；失败回退 inventoryFull 语义
+- **R3 落地（G4）**：任务长 idle LLM 播报（waitingSince 字段 + 模块级 interval——waitingReason 持续 10 分钟经 summarize 一句话解释，按任务+原因去重 + 1 小时冷却，跨重建保留）；连续重连 ≥3 次 webhook 告警
+
+**验证**：全量测试 463 → **467 项全绿**；check:compat 补丁哨兵 4/4 通过。
 
 ## 第九轮已完成（2026-08-10，爬升卡住彻底根治，cf3834c..511a170）
 

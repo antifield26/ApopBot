@@ -20,6 +20,7 @@ export function parseCommand (line) {
   let escaped = false
   let braceDepth = 0 // 以 { 开头的 JSON token：括号内空格不分割（支持 !task new 带空格的 JSON）
   let inJsonStr = false // JSON token 内字符串值状态（引号成对切换）——字符串值里的 { } 不计 depth
+  let jsonEscaped = false // 第 11 轮：JSON 字符串值内的转义（\"）——被转义的引号不翻转 inJsonStr
 
   for (const ch of trimmed.slice(1)) {
     if (escaped) {
@@ -48,7 +49,16 @@ export function parseCommand (line) {
       // JSON token 的引号不走 inQuotes（shell 语义：仅 token 开头的 " 是引号分隔符）——
       // 以 { 开头的 token 内单独跟踪字符串状态（合法 JSON 的引号必然成对）
       if (!inQuotes) {
-        if (ch === '"' && current.startsWith('{')) inJsonStr = !inJsonStr
+        // 第 11 轮：JSON 字符串值内先处理转义——`\"` 使 inJsonStr 连续误翻转
+        // 两次 → 字符串结束引号后 } 不计 depth → braceDepth 残留 → 后续参数被
+        // 并入 JSON token（合法 JSON 参数解析失败，如 {"desc":"say \"hi\""}）
+        if (jsonEscaped) {
+          jsonEscaped = false
+        } else if (ch === '\\' && inJsonStr) {
+          jsonEscaped = true
+        } else if (ch === '"' && current.startsWith('{')) {
+          inJsonStr = !inJsonStr
+        }
         if (!inJsonStr) {
           if (ch === '{') braceDepth++
           else if (ch === '}') braceDepth = Math.max(0, braceDepth - 1)

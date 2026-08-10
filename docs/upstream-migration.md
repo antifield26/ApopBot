@@ -1,57 +1,61 @@
-# 上游迁移（PR pin → npm 正式版）
+# 上游迁移（patch-package 补丁 → 上游正式版）
 
 ## 背景
 
-本项目为 PaperMC 26.1.2（协议 775）pin 了 PrismarineJS 未合并的 PR 分支：
+本项目为 PaperMC 26.1.2（协议 775）的适配以 **4 个本地补丁**（`patches/`，patch-package
+承载）实现——v1.0.0（第七轮）起依赖全部为官方 npm 版本（供应链干净、零 git 依赖）：
 
-| 包 | pin 方式 | 上游状态（2026-08-05 核实） |
-|---|---|---|
-| minecraft-data 3.112.0 | overrides 固定版本 | ✅ 已正式支持 775 |
-| minecraft-protocol | overrides git SHA `3fb78a8d...` | ⏳ PR #1487 open |
-| prismarine-chunk 1.41.0 | overrides **官方 npm 版本** | ✅ **2026-07-31 正式发布 26.1**（PR #329 merged，含 #326 的 fluid-count + fromLocalPalette 修复） |
-| prismarine-physics 1.11.1 | overrides **官方 npm 版本** | ✅ **2026-07-28 发布版含 26.1 特性标记** |
-| mineflayer | 直接依赖 git SHA `b30c85cb...` | ⏳ PR #3902 open（被上面两项阻塞） |
-
-> chunk/physics 为何仍保留 overrides：mineflayer PR 分支的 package.json 把这两个依赖
-> 声明为 mneuhaus fork 的**可变分支名**（`#pc26_1_2-fluid-count` 等）。即使官方已发布，
-> npm 仍会按声明拉 fork 分支——overrides 以官方版本号覆盖，同时消除 fork 分支
-> force-push 的供应链风险（比早期 SHA pin 更进一步：内容也切换到维护者合并的实现）。
+| 包 | 版本 | 补丁 | 上游状态 |
+|---|---|---|---|
+| minecraft-data | 3.113.0（overrides 固定） | 无（官方已含 775 数据） | ✅ |
+| minecraft-protocol | 1.66.2（^） | ✅ PR #1487 适配（src/version.js 支持列表） | ⏳ 上游 PR open |
+| mineflayer | 4.37.1（^） | ✅ PR #3902 适配（lib/：bed 属性/entityVelocityIsLpVec3/use_entity 门控/attack 独立包/update_time clockUpdates） | ⏳ 上游 PR open |
+| mineflayer-pathfinder | 2.4.5（^） | ✅ 爬升根治（执行器起跳中保留 forward） | 项目本地修复 |
+| prismarine-chunk | 1.41.0（overrides 固定） | 无（官方已含 26.1） | ✅ |
+| prismarine-physics | 1.11.1（overrides 固定） | ✅ 爬升根治（半嵌挤回 + F32_EPS 贴墙余量） | 项目本地修复 |
 
 上游状态跟踪：https://github.com/PrismarineJS/mineflayer/issues/3893
 
-## 定期检查
+## 什么时候需要迁移
+
+- mineflayer PR #3902 / minecraft-protocol PR #1487 **上游合并并发布**后，删掉对应补丁
+  切回上游正式实现（适配随上游版本走，不再由项目维护）
+- 上游大版本升级导致补丁 context 冲突（patch-package 行为：显式报错不会静默）——
+  按冲突内容重新生成补丁或等上游合并
+- 升级 mineflayer-pathfinder / prismarine-physics 时同理：本地修复未上游化则需重生成补丁
+
+## 迁移流程（补丁 → 上游正式版）
 
 ```bash
-npm run migrate-upstream -- --check   # 建议 cron 每 2-4 周跑一次（npm script 已注册）
+# 0. 确认上游确实已合并（PR 状态 + npm 发布版本 > 当前 pin）
+# 1. 删除对应补丁 + postinstall 的 patch-package
+rm patches/mineflayer+4.37.1.patch        # 按实际删除
+rm patches/minecraft-protocol+1.66.2.patch
+#   若全部补丁清空：package.json 删 "postinstall": "patch-package"，.npmrc 可删
+#   若仍有其他补丁：只删对应文件（patch-package 自动跳过缺失补丁）
+# 2. 升级依赖到上游正式版
+npm install mineflayer@latest minecraft-protocol@latest
+# 3. 更新 check:compat 哨兵门禁（scripts/check-compat.mjs）：
+#    PATCH_SENTINELS 删除对应条目；EXPECTED 更新版本
+# 4. 全量验证
+npm test && npm run check:compat
+# 5. 部署机验收（需服务端在线）
+node scripts/smoke.mjs --steps connect,spawn,move
+# 6. 文档同步：architecture.md 依赖 pin 节 / CHANGELOG / 本文件
 ```
 
-上游合并后输出"上游已支持"，然后：
+> 注：`scripts/migrate-upstream.mjs` 与 `scripts/upstream-lib.mjs` 仍保留 v1.0.0 之前
+> git-pin 时代的迁移逻辑（PR 分支 → npm 正式版）。v1.0.0 起项目已无 git 依赖，该
+> 逻辑过时——正确迁移 = 上面的删补丁流程。保留脚本仅为历史参考，勿直接运行。
 
-## 执行迁移
+## 26.1.2 适配的补丁外残留（上游合并后一并清理）
 
-```bash
-npm run migrate-upstream -- --dry-run   # 演练：输出将做的修改
-npm run migrate-upstream                # 实际执行：
-#   1. 改 package.json（mineflayer → ^正式版，删除 overrides 中的 git 引用；
-#      chunk/physics 版本覆盖与 minecraft-data 精确 pin 保留）
-#   2. npm install
-#   3. npm run check:compat + npm test 自动验证
-# 最后在部署机上验证（需服务端在线）: node scripts/smoke.mjs --steps connect,spawn,move
-```
-
-迁移成功后建议清理 `.npmrc`（`legacy-peer-deps` / `allow-git` 如无其他 git 依赖可删）。
-
-## 备选 pin（官方 PR 分支失效时）
-
-若官方 PR 分支被关闭/重写，切到 mneuhaus fork 分支（PR 作者的 fork，内容相同）：
-
-```bash
-git ls-remote https://github.com/mneuhaus/node-minecraft-protocol.git refs/heads/pc26_1_2-clean
-git ls-remote https://github.com/mneuhaus/mineflayer.git refs/heads/pc26_1_2   # 分支名以 ls-remote 实际输出为准
-```
-
-将输出 SHA 写入 package.json 对应引用（chunk/physics 已不需要：官方版本即可）。
+- `use_entity` 旧格式（`useEntityUsesEntityId` feature=false）：项目层
+  `src/core/entity-actions.js` 的原始包按旧格式构造。上游合并新格式后 project 层
+  可切换回 `bot.attack/useEntity` 并删除 entity-actions.js（保守保留——部署机已验证）
 
 ## 降级开关（最坏情况）
 
-若上游长期不合并且 PR 依赖恶化：服务端降级到 1.21.11（协议 774），配置 `mcVersion: "1.21.11"`，依赖全部回 npm 正式版（mineflayer ^4.37.1 即可），`check:compat` 的目标版本映射表中 1.21.11=774 已内置。
+若上游长期不合并且补丁维护恶化：服务端降级到 1.21.11（协议 774），配置
+`mcVersion: "1.21.11"`，依赖全部回官方 npm 正式版（mineflayer ^4.37.1 即可），
+`check:compat` 的目标版本映射表中 1.21.11=774 已内置。

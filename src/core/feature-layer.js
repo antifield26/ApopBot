@@ -31,6 +31,43 @@ export function _resetGreetState () {
   lastGreetAt.clear()
 }
 
+// R3 落地（第 11 轮 G4）：任务长 idle LLM 播报——waitingReason 持续超过
+// IDLE_THRESHOLD_MS 时经 LLM 一句话解释（玩家/运维感知"卡在哪"）。模块级
+// interval（跨重建保留——doRebuild 每重建新建 interval 会累积泄漏），重建时
+// 只更新引用；已播报按 `任务id:原因` 去重 + 冷却。summarize 自带 60s 全局冷却。
+const IDLE_POLL_MS = 60000 // 每分钟检查一次
+const IDLE_THRESHOLD_MS = 10 * 60000 // waitingReason 持续 10 分钟才播报
+const IDLE_REANNOUNCE_MS = 60 * 60000 // 同一任务同原因至少 1 小时才再播报
+const idleWatcher = { bot: null, ctx: null, announced: new Map() }
+setInterval(() => {
+  const { bot, ctx } = idleWatcher
+  if (!bot || !ctx?.tasks || !ctx.agent?.summarize) return
+  const now = Date.now()
+  for (const t of ctx.tasks.getStatus()) {
+    if (t.state !== 'running' || !t.waitingReason || !t.waitingSince) continue
+    const key = `${t.id}:${t.waitingReason}`
+    const last = idleWatcher.announced.get(key) ?? 0
+    if (now - t.waitingSince > IDLE_THRESHOLD_MS && now - last > IDLE_REANNOUNCE_MS) {
+      idleWatcher.announced.set(key, now)
+      // 上限 64：防 announced 无限增长（长期运行的等待组合有限）
+      if (idleWatcher.announced.size > 64) {
+        idleWatcher.announced.delete(idleWatcher.announced.keys().next().value)
+      }
+      const mins = Math.round((now - t.waitingSince) / 60000)
+      ctx.agent.summarize(`任务 ${t.id}（${t.type}）已等待 ${mins} 分钟（原因：${t.waitingReason}）。用一句话向服务器玩家播报任务当前状态。`)
+        .then((s) => { if (s) sendChat(bot, `§e[任务 ${t.id}] ${s}`).catch(() => {}) })
+        .catch(() => {})
+    }
+  }
+}, IDLE_POLL_MS).unref?.()
+
+/** 测试钩子：清空 idle 播报去重表（跨用例共享）。 */
+export function _resetIdleWatcher () {
+  idleWatcher.bot = null
+  idleWatcher.ctx = null
+  idleWatcher.announced.clear()
+}
+
 export function createFeatureLayerManager (ctx, logger) {
   let pending = Promise.resolve()
   // 热重载会重建 logger——所有日志/组件构造一律运行时取 ctx.logger（P1-5：
@@ -70,9 +107,10 @@ export function createFeatureLayerManager (ctx, logger) {
     ctx.tasks = new TaskManager(ctx.cfg, log(), { bot }, ctx.stateStore, () => ctx.agent)
     await ctx.tasks.load(ctx.cfg) // load 内部按条目容错，不抛
     // U10：webhook 通知。P2-1（第五轮）：必须用 ctx.notifier 实时引用——reload 只
-    // 更新 ctx.notifier（index.js），不重建 feature layer；此处闭包若按值捕获 cfg，
-    // 死亡/重生/重连推送会一直走旧 webhook URL（注释与行为不符的缺陷）
-    const notifier = ctx.notifier ?? createNotifier(ctx.cfg, log())
+    // 更新 ctx.notifier（index.js），不重建 feature layer；第 11 轮根治：此前按值
+    // 捕获一次后闭包引用旧句柄——reload 改 webhook 后死亡/重生/重连推送仍走旧 URL。
+    // 改为事件发生时实时取值（reload 会替换 ctx.notifier，此处永不缓存）。
+    const notifier = () => ctx.notifier ?? createNotifier(ctx.cfg, log())
 
     // A5（第四轮）：config 任务计数器回灌——_snapshotCounters 全量写（含 config 任务），
     // 但 restoreCounters 此前只在下方 ad-hoc 恢复循环调用 → 重建后 config 任务计数归零，
@@ -121,23 +159,31 @@ export function createFeatureLayerManager (ctx, logger) {
     }
     bot.on('chat', ctx.chatHandler)
 
-    // 死亡处理（C2/D 修复 + U6 深化）：mineflayer 不自动 respawn（createBot 未传
-    // respawn:true），死亡后 bot 停在死亡界面——任务在死尸上空转、进行中的 goto
-    // 拖尸体直到超时，之后永久停摆到进程重启。
+    // 死亡处理（C2/D 修复 + U6 深化）：createBot 显式 respawn:false（第 11 轮——
+    // mineflayer 4.37.1 默认 respawn:true，此前注释前提错误）→ 死亡后 bot 停在
+    // 死亡界面，重生时序完全可控：任务在死尸上空转前先暂停。
     // C2：死亡 → 通知 + 暂停全部任务 + 停止跟随 + 请求重生。
     // U6：L2 可用时经 LLM 一句话播报死因；重生后自动恢复暂停的任务 + 播报重生位置。
-    let deathPaused = [] // 本次死亡暂停的任务 id（重生时恢复；不触碰手动暂停的）
+    // 第 11 轮（D4）：deathPaused 改 promise——此前在 pauseAll().then 微任务里
+    // 赋值、respawn handler 同步读取，快速重生服 respawn 先到 → deathPaused 仍
+    // [] → 本次死亡暂停的任务永久停摆（无日志）。respawn 侧 await 该 promise
+    // 保证"先暂停完、再恢复"。
+    let deathPaused = Promise.resolve([]) // 本次死亡暂停任务 id 的 promise（重生时恢复）
     bot.on('death', () => {
-      ctx.tasks?.pauseAll().then((ids) => {
-        deathPaused = ids
+      const p = ctx.tasks?.pauseAll() ?? Promise.resolve([])
+      deathPaused = p.then((ids) => {
         if (ids.length) log().info({ tasks: ids }, 'death: tasks paused')
-      }).catch((err) => log().warn({ err: err.message }, 'death: pause tasks failed'))
+        return ids
+      }).catch((err) => {
+        log().warn({ err: err.message }, 'death: pause tasks failed')
+        return []
+      })
       ctx.plugins?.follow?.stop?.()
       const pos = bot.entity?.position
       const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
       sendChat(bot, `§c[bot] 已死亡（${loc}）——任务已暂停，自动重生中`).catch(() => { /* 聊天通道未就绪 */ })
       // U10：死亡推送（webhook 独立于游戏聊天——无人值守时玩家可能不在线）
-      notifier.send('death', `Bot 死亡（${loc}）`, '任务已暂停，自动重生中')
+      notifier().send('death', `Bot 死亡（${loc}）`, '任务已暂停，自动重生中')
       // U6：LLM 一句话播报（附加层——任何失败回退模板，不得阻塞重生）
       if (ctx.agent?.summarize) {
         ctx.agent.summarize(`Bot 在 Minecraft 服务器死亡（坐标 ${loc}）。用一句话向服务器玩家播报（如可能的死因），简洁。`)
@@ -176,17 +222,18 @@ export function createFeatureLayerManager (ctx, logger) {
       if (p) discovery.removeResourceAt(p.x, p.y, p.z)
     })
 
-    bot.on('respawn', () => {
-      // U6：恢复本次死亡暂停的任务（手动暂停的保持暂停）
-      const ids = deathPaused
-      deathPaused = []
+    bot.on('respawn', async () => {
+      // U6：恢复本次死亡暂停的任务（手动暂停的保持暂停）。第 11 轮：await 暂停
+      // promise——确保 pauseAll 完成后再恢复（快速重生服 respawn 先到的竞态）
+      const ids = await deathPaused
+      deathPaused = Promise.resolve([])
       for (const id of ids) {
         ctx.tasks?.resumeTask(id).catch(() => { /* 任务可能已结束 */ })
       }
       const pos = bot.entity?.position
       const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
       sendChat(bot, `§a[bot] 已重生（${loc}），任务已恢复`).catch(() => { /* 聊天通道未就绪 */ })
-      notifier.send('respawn', `Bot 已重生（${loc}）`, '任务已恢复') // U10
+      notifier().send('respawn', `Bot 已重生（${loc}）`, '任务已恢复') // U10
     })
 
     log().info({ bot: ctx.cfg.username }, 'feature layer ready')
@@ -196,8 +243,16 @@ export function createFeatureLayerManager (ctx, logger) {
     const s = ctx.conn?.getStatus?.()
     if (s && s.reconnectCount > 0) {
       try { await sendChat(bot, `§a[bot] 已重新连接（累计重连 ${s.reconnectCount} 次）`, ctx.cfg.chat?.maxLength) } catch { /* 聊天通道可能未就绪 */ }
-      notifier.send('reconnect', `Bot 已重新连接（累计重连 ${s.reconnectCount} 次）`) // U10
+      notifier().send('reconnect', `Bot 已重新连接（累计重连 ${s.reconnectCount} 次）`) // U10
+      // 第 11 轮 G4：连续重连告警——无人值守时 webhook 是唯一感知通道
+      //（重连本身已推送，但高频重连=服务端/网络异常，需运维介入的更强信号）
+      if (s.reconnectCount >= 3) {
+        notifier().send('reconnect-alert', `Bot 已连续重连 ${s.reconnectCount} 次——请检查服务端状态`)
+      }
     }
+    // 第 11 轮 G4：idle 播报 watcher 引用随重建更新（模块级 interval 跨重建保留）
+    idleWatcher.bot = bot
+    idleWatcher.ctx = ctx
   }
 
   /**

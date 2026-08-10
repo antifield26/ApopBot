@@ -271,3 +271,31 @@ test('teardown 幂等（重复调用不抛）', async () => {
   assert.equal(ctx.tasks, null)
   assert.equal(ctx.commands, null)
 })
+
+// 第 11 轮（E2）：第 10 轮三管齐下的方案 B（blockUpdate 监听）此前零测试——
+// 监听器挂错事件名/坐标取错字段都不会被发现（接线测试兜底）
+test('第 10 轮方案 B：blockUpdate 方块变化 → 探索记忆删除（接线）', async () => {
+  const { _reset, recordResource, query } = await import('../src/core/discovery.js')
+  _reset()
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+
+  recordResource('iron_ore', { x: 10, y: 60, z: 8 })
+  recordResource('coal_ore', { x: 20, y: 61, z: 8 })
+  assert.equal(query('iron_ore', null, 5).length, 1)
+  assert.equal(query('coal_ore', null, 5).length, 1)
+
+  // blockUpdate 携带浮点 position（真实 mineflayer 事件语义）——floor 后删除
+  bot.emit('blockUpdate', { position: { x: 10.4, y: 60.9, z: 8.2 } })
+  assert.equal(query('iron_ore', null, 5).length, 0, 'blockUpdate 后 iron_ore 记忆应删除')
+  assert.equal(query('coal_ore', null, 5).length, 1, '无关坐标记忆保留')
+
+  // 事件无 position 不崩溃
+  bot.emit('blockUpdate', {})
+  assert.equal(query('coal_ore', null, 5).length, 1)
+
+  await layer.teardown()
+  _reset()
+})

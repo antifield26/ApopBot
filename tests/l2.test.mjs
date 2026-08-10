@@ -754,10 +754,17 @@ test('U13: dig 技能——可挖性校验/距离提示/exclusive 拒绝', async
   const ctx = makeCtx({ bot }, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
   try {
+    // 第 11 轮（E2）：挖除即删接线断言——dig 成功后该坐标探索记忆删除
+    //（第 10 轮方案 A 此前只在 runner/l2 用例中被真实执行但从未断言）
+    const discovery = await import('../src/core/discovery.js')
+    discovery._reset()
+    discovery.recordResource('stone', { x: 2, y: 63, z: 0 })
     const r = await agent.act('op1', 'dig', { x: 2, y: 63, z: 0 })
     assert.equal(r.ok, true)
     assert.ok(r.result.includes('已挖掘 stone'), r.result)
     assert.equal(dug.length, 1)
+    assert.equal(discovery.query('stone', null, 5).length, 0, 'dig 成功后该坐标记忆应删除（挖除即删接线）')
+    discovery._reset()
     // 距离过远 → 提示先 move_to
     const far = await agent.act('op1', 'dig', { x: 100, y: 63, z: 100 })
     assert.equal(far.ok, true)

@@ -1,3 +1,4 @@
+import { isArea } from '../util.js'
 // 农场任务脚本（v1.0.0 C8）：区域内 种植 → 等待成熟 → 收割 → 补种 的循环。
 // 语义与原 FarmTask 逐条对应：
 // - init 校验（area 六坐标/cropTypes 非空/未知作物与方块/插件）
@@ -17,7 +18,7 @@ export default {
   /** init 校验（原 FarmTask.init 等价迁移）。 */
   async init (task) {
     const o = task.options
-    const isArea = (a) => a && ['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].every(k => Number.isInteger(a[k]))
+
     if (!isArea(o.area)) throw new Error('farm 任务需要 options.area（完整 x1..z2 六坐标）')
     if (!Array.isArray(o.cropTypes) || o.cropTypes.length === 0) {
       throw new Error('farm 任务需要 options.cropTypes（如 ["wheat"]）')

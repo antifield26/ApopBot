@@ -15,8 +15,7 @@
 # 前置要求:
 #   - Node.js >= 22 LTS   winget install --id OpenJS.NodeJS.LTS
 #   - NSSM                winget install --id NSSM.NSSM --accept-package-agreements --accept-source-agreements
-#   - git（npm ci 的 git+ssh 依赖；若卡住执行:
-#     git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/")
+#   - git（仅部署仓库拉取用；依赖已零 git 引用——npm ci 不再需要 insteadOf 重写，第 11 轮清理）
 #   - 私密配置放 config/service.env（gitignore；KEY=VALUE 行，# 开头为注释）
 #     → 注入服务环境变量（nssm AppEnvironmentExtra），L2 密钥只走这里
 #
@@ -164,9 +163,7 @@ if ($needInstall) {
   Write-Host '依赖文件有变化，执行 npm ci --omit=dev ...'
   & npm ci --omit=dev
   if ($LASTEXITCODE -ne 0) {
-    Write-Error "npm ci 失败。若卡在 git 依赖（mineflayer/minecraft-protocol 走 git+ssh），请执行:`n" +
-      '  git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"' +
-      "`n然后重试本脚本"
+    Write-Error "npm ci 失败（v1.0.0 起依赖已零 git 引用——检查网络/registry 后重试）"
     exit 1
   }
   # 无尾换行写入（Set-Content 追加尾换行 → Get-Content -Raw 含尾换行 → 与哈希恒不等

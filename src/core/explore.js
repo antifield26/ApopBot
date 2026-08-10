@@ -42,6 +42,8 @@ export function notifyValuableFound (cfg, logger, found) {
 export function sampleResources (bot) {
   const found = []
   if (!bot?.findBlocks || !bot.registry?.blocksByName) return found
+  // 第 11 轮 G1：维度（剥 minecraft: 前缀；旧记录仅主世界查询匹配）
+  const dim = bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
   const byName = bot.registry.blocksByName
   for (const name of RESOURCE_WHITELIST) {
     const def = byName[name]
@@ -51,7 +53,7 @@ export function sampleResources (bot) {
       blocks = bot.findBlocks({ matching: (b) => b.type === def.id, maxDistance: SAMPLE_RADIUS, count: SAMPLE_COUNT })
     } catch { /* 区块未加载/API 异常——跳过该资源 */ }
     for (const p of blocks) {
-      if (discovery.recordResource(name, p)) found.push({ name, x: p.x, y: p.y, z: p.z })
+      if (discovery.recordResource(name, p, dim)) found.push({ name, x: p.x, y: p.y, z: p.z, dimension: dim })
     }
   }
   return found
@@ -112,7 +114,7 @@ export function spiralWaypoints (centerX, centerZ, maxDistance, step = SPIRAL_ST
  * 到达后采样记录 + 实体扫描。移动走 movement.js（end-race/墙钟超时免费获得）。
  * @returns {{ok: boolean, reason?: string, from: {x,y,z}, to: {x,y,z}|null, found: Array, entities: object}}
  */
-export async function exploreStep (bot, log, { maxDistance = EXPLORE_STEP, direction = 'random' } = {}) {
+export async function exploreStep (bot, log, { maxDistance = EXPLORE_STEP, direction = 'random', signal = null } = {}) {
   const me = bot?.entity
   if (!me?.position) return { ok: false, reason: 'no-position', from: null, to: null, found: [], entities: {} }
   const { Vec3 } = await import('vec3')
@@ -125,11 +127,17 @@ export async function exploreStep (bot, log, { maxDistance = EXPLORE_STEP, direc
     Math.floor(me.position.y),
     Math.floor(me.position.z + dir.dz * dist))
   const move = createMovement(bot, log)
-  const r = await move.gotoPoint(target, { range: 3, timeoutMs: 45000 })
+  // 第 11 轮：signal 贯通（goto 谓词中断）——stop()/断线中止时探索步立即退出
+  const r = await move.gotoPoint(target, {
+    range: 3,
+    timeoutMs: 45000,
+    isInterrupted: () => signal?.aborted === true
+  })
   const found = sampleResources(bot)
   const entities = scanEntities(bot)
   const end = bot.entity?.position
-  if (end) discovery.recordAnchor(end)
+  // 第 11 轮 G1：锚点带维度（下界探索不污染主世界覆盖统计）
+  if (end) discovery.recordAnchor(end, bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null)
   return {
     ok: r.ok,
     reason: r.ok ? undefined : (REASON_TEXT[r.reason] ?? r.err?.message ?? '移动失败'),

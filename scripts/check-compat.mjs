@@ -20,6 +20,7 @@ const EXPECTED = {
   'minecraft-data': { kind: 'npm', version: '3.113.0' },
   'minecraft-protocol': { kind: 'npm', version: '1.66.2' },
   'mineflayer': { kind: 'npm', version: '4.37.1' },
+  'mineflayer-pathfinder': { kind: 'npm', version: '2.4.5' },
   'prismarine-chunk': { kind: 'npm', version: '1.41.0' },
   'prismarine-physics': { kind: 'npm', version: '1.11.1' }
 }
@@ -32,7 +33,11 @@ const PATCH_SENTINELS = {
   // 半嵌挤回 + float32 余量（第 9 轮爬升根治）：computeOffsetX/Z 对"位置与方块
   // 重叠的水平前进"挤回块外脱嵌；贴墙停在"块面 ± F32_EPS"（float32 上报不重叠，
   // 消除 Paper 拉回循环与半嵌死锁）
-  'prismarine-physics+1.11.1.patch': ['node_modules/prismarine-physics/lib/aabb.js', 'F32_EPS']
+  'prismarine-physics+1.11.1.patch': ['node_modules/prismarine-physics/lib/aabb.js', 'F32_EPS'],
+  // 执行器起跳中停 forward 修复（第 9 轮）：补丁第 4 个（第 11 轮补哨兵——
+  // 此前 EXPECTED/PATCH_SENTINELS 只覆盖 3/4，pathfinder 版本漂移且补丁恰好
+  // 仍能 apply 时 check:compat 全绿但爬升根治语义可能已变）
+  'mineflayer-pathfinder+2.4.5.patch': ['node_modules/mineflayer-pathfinder/index.js', '爬升修复（第 9 轮）']
 }
 
 // 目标协议版本（与 mcVersion 对应；上游更新时在 docs/upstream-migration.md 说明）

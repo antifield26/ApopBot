@@ -46,7 +46,8 @@ test('registry 注册与分发', async () => {
   const bot = {
     chat: (msg) => calls.push(['chat', msg])
   }
-  const ctx = { bot, cfg: { ops: ['op1'], chat: { commandCooldownMs: 0 } }, onCmd: () => {} }
+  // 第 11 轮：onCmd 收集调用（此前 `assert.ok(ctx.cmdLog ?? true)` 恒真——空断言）
+  const ctx = { bot, cfg: { ops: ['op1'], chat: { commandCooldownMs: 0 } }, onCmd: (name, args) => calls.push(['cmd', name, args]) }
 
   registry.register({ name: 'ping', permission: 'all', handler: (c, args) => { c.onCmd('ping', args) } })
   registry.register({ name: 'secret', handler: (c, args) => { c.onCmd('secret', args) } })
@@ -61,7 +62,7 @@ test('registry 注册与分发', async () => {
 
   // op 可执行
   await registry.dispatch('!secret', { sender: 'op1', ctx })
-  assert.ok(ctx.cmdLog ?? true)
+  assert.ok(calls.some(([k, name]) => k === 'cmd' && name === 'secret'), 'op 玩家应可执行 secret 命令')
   assert.equal(calls.filter(([k]) => k === 'chat').length, 1) // 无新增拒绝消息
 })
 

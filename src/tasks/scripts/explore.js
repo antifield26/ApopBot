@@ -13,6 +13,7 @@
 // - 站点不可达跳过（unreachable 计数）不中断
 // - 低血靠 autoEat（死亡由 feature-layer 管道处理；waypoint 绝对坐标重生后有效）
 
+import { isArea } from '../util.js'
 import { Vec3 } from 'vec3'
 import { spiralWaypoints, sampleResources, scanEntities, SPIRAL_STEP, notifyValuableFound } from '../../core/explore.js'
 import { createMovement } from '../../core/movement.js'
@@ -62,7 +63,7 @@ export default {
   /** init 校验（原 ExploreTask.init 等价迁移）。 */
   async init (task) {
     const o = task.options
-    const isArea = (a) => a && ['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].every(k => Number.isInteger(a[k]))
+
     if (o.area !== undefined && !isArea(o.area)) {
       throw new Error('explore 任务 options.area 不完整（可省略或给全 x1..z2）')
     }

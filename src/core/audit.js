@@ -25,8 +25,19 @@ function trunc (v) {
  * @param {{ dir?: string, keepDays?: number, logger: object }} cfg
  *        dir 缺省不写文件（内存 noop——测试/无日志目录场景）
  * @returns {{ append(entry): void, path: string|null }}
+ *
+ * 第 11 轮：进程级共享——同一 dir 返回同一实例。此前每个 executor（LLM/脚本
+ * 任务/命令）各建一个独立 pino-roll worker 共写同一 audit.log：多写者轮转竞争
+ *（旧句柄写被改名文件 → 日志拆分/丢失）+ 任务反复重启累积 worker。共享后全
+ * 进程单 worker；热重载 log.dir 变化时按新键新建（旧 worker 随旧配置弃用）。
  */
+const _shared = new Map() // `${dir}|${keepDays}` → { append, path }
 export function createAuditLogger ({ dir, keepDays = 14, logger } = {}) {
+  if (dir) {
+    const key = `${dir}|${keepDays}`
+    const existing = _shared.get(key)
+    if (existing) return existing
+  }
   let auditLog = null
   let filePath = null
   if (dir) {
@@ -58,5 +69,7 @@ export function createAuditLogger ({ dir, keepDays = 14, logger } = {}) {
     })
   }
 
-  return { append, path: filePath }
+  const inst = { append, path: filePath }
+  if (dir) _shared.set(`${dir}|${keepDays}`, inst)
+  return inst
 }

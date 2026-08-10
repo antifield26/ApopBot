@@ -51,7 +51,7 @@ minecraft-bot (Node.js ≥22, ESM)
 |---|---|---|
 | 协议层 | **mineflayer**（PrismarineJS） | 唯一协议级 headless 实现、27 版本集成测试、MIT。官方 npm 4.37.1 + 本地补丁获得 775 支持（v1.0.0：PR #3902 适配经 patches/ 承载） |
 | 生产模式 | **mindcraft**（借鉴，不依赖） | LoginGuard 断线分类 → 本项目 `reconnect.js`；10s 崩溃保护 → `minGapMs` + 服务管理器重启语义（NSSM `AppExit 2 Exit` / systemd `StartLimitBurst`）；配置分层 → `config.js`。mindcraft 锁定 mineflayer 4.33.0 + patch-package，不适合生产依赖 |
-| 任务/技能 | **Voyager**（借鉴思想） | control_primitives 原子技能思想 → 本项目任务系统（7 种任务）作为 L2 agent 的技能层 |
+| 任务/技能 | **Voyager**（借鉴思想） | control_primitives 原子技能思想 → 本项目任务系统（8 种任务，v1.0.0 全部脚本化）作为 L2 agent 的技能层 |
 | 寻路 | **baritone**（仅参考） | 客户端 Mod 无法 headless 集成；本项目用 mineflayer-pathfinder + collectblock 达成类似能力 |
 | L2 LLM | mindcraft AgentProcess 模式（参考后弃用） | 本实现采用进程内单 Provider（Node ≥22 全局 fetch 零依赖）；mindcraft 的 AgentProcess/JSONL IPC 在此规模无收益，见 l2.md |
 
@@ -68,7 +68,9 @@ minecraft-bot (Node.js ≥22, ESM)
 - **统一执行层**：8 个任务 = 动作原语脚本（`src/tasks/scripts/*.js`），与 LLM 的 act 动作数组**共用同一执行器**（`core/executor.js`——权限/exclusive/校验/超时/审计一致）。脚本 DSL：动作步 {op,args,as?,count?} + 控制步（loop/if/break/continue/return/count）+ 条件六型（last/result/counter/config/deadline/not）+ 模板求值（$结果引用/${options}/{expr 白名单四则}）+ 任务局部 op（有状态算法如 explore 螺旋）
 - **BaseTask 状态机外壳保留**：run-completion（run 自然退出 → completed）、暂停（用户 pause 与 `_internalWait` 互不干扰）、取消（_cancel + abort signal 贯通）、代际守卫、stop 10s 上限、终态重启——全部原样继承
 - **软失败语义**：脚本动作失败（ok:false）记录 lastResult 由 if 条件处理（重试/等待/退出）——原任务循环容错等价；maxActions 死循环兜底；脚本 init 钩子承载原任务 init 校验
-- **调度**：cron 触发 `runScheduled`（防重叠；时长上限强制停止；完成/失败通知）；exclusive 互斥由 manager 仲裁（脚本内 bypassExclusive——owner 自己）
+- **调度**：cron 触发 `runScheduled`（防重叠；时长上限强制停止；完成/失败通知）；exclusive 互斥由 manager 仲裁（脚本内 bypassExclusive——**仅 exclusive 任务跳过守卫**；第 11 轮起非 exclusive 任务（mine）的 build/movement 类动作在 exclusive 运行中被守卫软拒绝——脚本 if 重试承接，与 LLM act 语义一致）
+- **任务链（第 11 轮 G3）**：任务条目可配 `next: {id, type, options?, schedule?}`——本任务**自然完成**后自动注册并启动下一个（ad-hoc 形态，可 !task remove）；失败/停止不接力；config 校验 next 形状
+- **自动存储（第 11 轮 G3）**：collect_blocks 遇 NoChests 时附近 32 格找 chest/barrel 存入（工具与食物豁免，至多开 3 箱）再继续——替代 mine/chop/farm 脚本的 5 分钟干等；全部失败回退 inventoryFull 语义
 - 完成语义表：mine(stopWhenDone) / fish(时长|背包满) / farm(stopWhenIdle) / chop / combat(maxTargets|stopWhenNoTargets) / breed(maxBreedings|stopWhenNoAnimals) / explore(stopWhenDone 环满|area 覆盖) 有自然完成；afk 无，scheduled 时必须配 `options.durationMinutes`
 
 ## 依赖 pin 策略（v1.0.0 C1：官方 npm + patch-package）
@@ -85,4 +87,7 @@ minecraft-bot (Node.js ≥22, ESM)
 
 - mineflayer PR #3902 / minecraft-protocol PR #1487 上游仍未合并。补丁是本地载体：升级这两个包版本时补丁 context 冲突会显式报错（patch-package 行为，不会静默），需按 docs/upstream-migration.md 重新生成；26.1.2 的 use_entity 仍走旧格式（`useEntityUsesEntityId` feature=false），项目层 entity-actions.js 的旧格式原始包与之一致（部署机已验证），上游合并新格式后可删（保守保留）
 - `npm audit` 的 axios 漏洞全部位于 Microsoft 认证链（prismarine-auth → @xboxreplay/xboxlive-auth），offline 模式不执行该路径。**已接受风险**（第六轮 C1 评估：overrides 覆盖 axios 版本有破坏 prismarine-auth 兼容性的风险，offline 部署不触达该链；CI 审计步骤信息性标记，不门禁）
-- pino v9 transport 无法主动拆除：反复改日志配置会累积文件句柄（接受，文档化）
+- pino v9 transport 无法主动拆除：反复改日志配置会累积文件句柄（接受，文档化）。第 11 轮起**仅 rotate/pretty/dir 变化才重建 logger**（只改 level 时复用 transport——旧实现双写同一 bot.log 会丢行/坏 JSONL）
+- 审计日志（audit.log）第 11 轮起**进程级共享单例**（dir+keepDays 键缓存）：热重载改 log.dir 时旧 worker 随旧配置弃用（句柄累积面收敛）
+- 任务长 idle LLM 播报（第 11 轮 G4）依赖 summarize（60s 全局冷却与死亡/任务播报共享）：高密度死亡场景下 idle 播报可能被冷却饿死（已按任务+原因去重 + 1 小时冷却限制频次，接受）
+- 自动存储（第 11 轮 G3）开箱依赖 collectblock 的 NoChests 错误码；找不到箱子/UI 卡死时回退 inventoryFull 语义（5 分钟等待）——不改变任务失败行为

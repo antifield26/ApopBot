@@ -6,9 +6,10 @@
 // 写入策略与 sessions.js 同款：tmp+rename 原子写 + 2s 防抖 + exit flush。
 // 容量上限（默认 100）：超限按最旧淘汰（FIFO——"最近经验"语义）。
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createDebouncedFileStore } from '../util/debounced-file-store.js' // 第 11 轮 F3
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const DEFAULT_FILE = path.join(ROOT, 'data', 'experience.json')
@@ -38,40 +39,18 @@ export function loadExperience (file = DEFAULT_FILE) {
  */
 export function createExperienceStore ({ file = DEFAULT_FILE, debounceMs = 2000, logger = null, capacity = 100 } = {}) {
   let last = loadExperience(file)
-  let dirty = false
-  let timer = null
-
-  function persist () {
-    if (!dirty) return
-    dirty = false
-    // 容量裁剪（FIFO 淘汰最旧）
-    if (last.items.length > capacity) {
-      last.items = last.items.slice(-capacity)
+  // 第 11 轮 F3：落盘样板（dirty/防抖/tmp+rename/exit flush）提取共享；
+  // 容量 FIFO 裁剪在 encode 内（persist 时执行，与既有语义一致）
+  const store = createDebouncedFileStore({
+    file,
+    debounceMs,
+    logger,
+    encode: () => {
+      if (last.items.length > capacity) {
+        last.items = last.items.slice(-capacity)
+      }
+      return JSON.stringify(last, null, 2)
     }
-    const tmp = file + '.tmp'
-    try {
-      mkdirSync(path.dirname(file), { recursive: true })
-      writeFileSync(tmp, JSON.stringify(last, null, 2))
-      renameSync(tmp, file)
-    } catch (err) {
-      rmSync(tmp, { force: true })
-      logger?.warn?.({ err: err.message }, 'experience save failed')
-    }
-  }
-
-  function schedule () {
-    dirty = true
-    if (timer) return
-    timer = setTimeout(() => {
-      timer = null
-      persist()
-    }, debounceMs)
-    timer.unref?.()
-  }
-
-  process.on('exit', () => {
-    if (timer) { clearTimeout(timer); timer = null }
-    persist()
   })
 
   return {
@@ -83,7 +62,7 @@ export function createExperienceStore ({ file = DEFAULT_FILE, debounceMs = 2000,
         lesson: String(entry?.lesson ?? '').slice(0, 200),
         ts: entry?.ts ?? Date.now()
       })
-      schedule()
+      store.schedule()
     },
     /** 最近 n 条（新→旧排序）。 */
     recent (n = 8) {
@@ -91,8 +70,7 @@ export function createExperienceStore ({ file = DEFAULT_FILE, debounceMs = 2000,
     },
     /** 立即落盘（测试/优雅退出）。 */
     flush () {
-      if (timer) { clearTimeout(timer); timer = null }
-      persist()
+      store.flush()
     },
     size () {
       return last.items.length

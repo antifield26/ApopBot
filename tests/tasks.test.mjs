@@ -205,9 +205,14 @@ test('B2 回归：scheduled 触发后任务真正运行（而非 start/stop 同�
     { id: 's1', type: 'afk', schedule: '*/1 * * * * *', options: { intervalMinutes: 1 }, notifyChat: false }
   ] })
   assert.ok(mgr.tasks.get('s1').cron, '应创建 cron 调度')
-  // 等两次触发窗口（~1.3s）：早期 bug 下任务会在同一微任务内 start+stop，从未进入 running
-  await new Promise(r => setTimeout(r, 1300))
-  const status = mgr.getStatus()[0]
+  // 第 11 轮：轮询等待首次触发（此前固定等 1.3s 赌两次 1s 触发窗——CI 慢机
+  // 错过窗口即 flaky；断言核心是"任务真正运行"（runCount >= 1），一次触发足够）
+  let status = mgr.getStatus()[0]
+  const deadline = Date.now() + 4000
+  while (Date.now() < deadline && status.runCount < 1) {
+    await new Promise(r => setTimeout(r, 100))
+    status = mgr.getStatus()[0]
+  }
   assert.equal(status.id, 's1')
   assert.ok(['running', 'init'].includes(status.state), `scheduled 任务应被真正启动（state=${status.state}）`)
   assert.ok(status.runCount >= 1, `runCount 应 >= 1（实际 ${status.runCount}）——任务从未运行则失败`)
@@ -470,8 +475,12 @@ test('A5 修复: cron onTrigger 抛错被承接（croner catch 默认 false—�
     { onTrigger: async () => { throw new Error('boom') } },
     logger, 'UTC')
   assert.ok(cron, '每秒触发一次')
-  // 2.2s = 两个触发窗口（全量测试并发负载下 1.1s 单窗口偶发错过——flaky 防护）
-  await new Promise(r => setTimeout(r, 2200))
+  // 第 11 轮：轮询等待首个触发窗口（此前固定等 2.2s 赌两个窗口——CI 并发负载
+  // 下仍可能错过；断言核心是"抛错被承接"，一个窗口足够）
+  const deadline = Date.now() + 4000
+  while (Date.now() < deadline && !errors.some(e => e.err === 'boom')) {
+    await new Promise(r => setTimeout(r, 100))
+  }
   assert.ok(errors.some(e => e.err === 'boom'), '抛错应被显式承接（不漂浮为 unhandledRejection）')
   cron.stop()
 })

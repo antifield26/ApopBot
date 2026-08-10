@@ -359,7 +359,9 @@ export function validateConfig (cfg) {
     const L2_KNOWN_KEYS = new Set([
       'enabled', 'model', 'cloudBaseUrl', 'cloudApiKeyEnv', 'maxSteps', 'cooldownMs',
       'cloudTimeoutMs', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'envInjection',
-      'thinking', 'effort'
+      'thinking', 'effort',
+      '_comment' // JSON 注释惯例（config.example.json 使用；与 mineflayerPlugins/顶层一致，第 11 轮豁免——
+      // 此前 example.json 复制即用流程启动即 exit(1)，见 config.test 的防漂移断言）
     ])
     for (const key of Object.keys(cfg.l2)) {
       if (!L2_KNOWN_KEYS.has(key)) {
@@ -407,6 +409,17 @@ export function validateConfig (cfg) {
         new Cron(t.schedule)
       } catch {
         errors.push(`${label} schedule 非法 cron 表达式: ${t.schedule}（任务将永不触发）`)
+      }
+    }
+    // 第 11 轮 G3：任务链 next 轻校验（含 type/id；options 交给 validateTaskOptions）
+    if (t.next !== undefined) {
+      if (typeof t.next !== 'object' || t.next === null || Array.isArray(t.next)) {
+        errors.push(`${label} next 必须是对象（任务链 {id, type, options?}）`)
+      } else {
+        if (typeof t.next.id !== 'string' || !t.next.id) errors.push(`${label} next.id 必须是非空字符串`)
+        if (typeof t.next.type !== 'string' || !KNOWN_TASK_TYPES.includes(t.next.type)) {
+          errors.push(`${label} next.type 未知: ${t.next.type}（已知: ${KNOWN_TASK_TYPES.join(', ')}）`)
+        }
       }
     }
     const opts = t.options ?? {}

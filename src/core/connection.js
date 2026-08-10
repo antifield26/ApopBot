@@ -93,6 +93,11 @@ export class ConnectionManager {
       // setControlState 于死 client 上抛错 → uncaughtException → fatalExit 停服
       if (seq !== this._connectSeq) return
       this.plugins = loaded
+      // 第 11 轮：本机/快速握手时 spawn 先于插件装载触发——onSpawn 读到的
+      // ctx.plugins 是空/旧代句柄（!follow 于死 client 上操作 → fatalExit 的
+      // 根因链）。装载完成后若 spawn 已先发生（state=CONNECTED），补发同步回调
+      //（消费点全部运行时读 ctx.plugins，无需二次 rebuild）。
+      if (this.state === STATE_CONNECTED) this.hooks.onPluginsReady?.(loaded)
     } catch (err) {
       if (seq !== this._connectSeq) return // 陈旧连接（已换代）的失败不再调度重连
       this.log.error({ err: err.message }, '插件装载失败，断开后重试')

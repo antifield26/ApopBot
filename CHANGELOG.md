@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+- **第 11 轮全面评估（5 HIGH + 20 MEDIUM + 重构 + 4 扩展主题，见 docs/roadmap.md）**：
+  - **5 个确认缺陷修复**：combat 冻结 options 写 weaponName 抛 TypeError（config 装载的 combat 永不运行——BaseTask 浅复制根治 + 防未来脚本再犯）；combat maxTargets 默认 0 失效首杀即完成（evalCond config 型回退 defaultOptions）；config.example.json 过不了自身校验（l2._comment 豁免 + config.test 防漂移断言）；spawn 先于插件装载时 ctx.plugins 陈旧（onPluginsReady 补发回调）；notifier 按值捕获 reload 后 webhook 变更失效（事件时实时取值）
+  - **完善 20 项**：fish caught 计数虚高（超时也 +1）/abort 监听器泄漏、审计日志多写者竞争（进程级共享单例）、plant_crops 按 cropTypes 匹配种子、collect 失败批次实采复核、mine 动作级互斥（非 exclusive 任务不 bypass 守卫）、工具调用上限 4 与提示词契约对齐（超限回填失败结果）、baseUrl `/v1` 双路径、goto/explore_step abort 贯通、云端抖动重试（429/5xx ≤2 次退避）、会话 calls 活引用拷贝、query_map 大小写归一、blockUpdate 坐标索引 O(1) 判空、http-status EADDRINUSE 可恢复、日志热重载仅 level 变化不重建 transport、deathPaused promise 化（快速重生服竞态）、respawn:false 显式（mineflayer 默认 respawn:true 此前双发）、parser JSON 转义引号
+  - **工程**：mineflayer-pathfinder 补丁哨兵门禁（4/4）、blockUpdate/挖除即删接线测试、3 处空断言清理、cron 测试 pollUntil 去 flaky、CI 加部署模式（--omit=dev）job
+  - **重构**：_isArea 5 份消重（tasks/util.js）、三处落盘样板提取 createDebouncedFileStore（sessions/experience/state，exit 单次注册）
+  - **扩展**：**维度感知**（DiscoveryMap 记录带维度——下界/末地坐标独立，query_map 按维度过滤，快照往返保留）；**记忆被动积累**（observe_blocks 观察即记录，LLM 探索不再依赖 explore 任务）；**任务链**（任务条目 `next: {id,type,options?}`——自然完成后自动接力）；**自动存储**（collect NoChests 时附近找箱子/木桶存入再继续，替代 5 分钟干等）；**R3 落地**（任务长 idle LLM 播报——waitingReason 持续 10 分钟经 summarize 一句话解释；连续重连 ≥3 次 webhook 告警）
 - **地形记忆失效三管齐下（第 10 轮，commit 67857a5）**：探索记忆（DiscoveryMap）此前只增不减（仅 explore 的 recordResource 写入、永不删除）——dig 挖掉/玩家改动的方块长期残留，query_map 返回过期坐标误导 LLM/玩家（用户实测误判 find 技能失效的根因）。三管齐下：**A 挖除即删**（dig/collect_blocks 成功后 `removeResourceAt`）；**B blockUpdate 监听**（方块变化→该坐标记忆删除，覆盖玩家/环境改动）；**C 查询验证**（query_map 返回前逐条 blockAt 核对——已加载且仍是该方块 → `verified:true`；已加载但不是 → **自动删除（记忆自愈）**；未加载 → `verified:false`，LLM 提示词说明需 observe_block 确认后行动）
 - **爬升卡住彻底根治（第 9 轮，三机制）**：真服务器 packet 级诊断（完整 C→S/S→C 时间线）确认三条独立根因链并全部修复——
   - **float32 上报精度 → 贴墙拉回循环**（commit 511a170，最主要）：本地物理贴墙停在 `minX = 块 maxX`（double 精确）→ 协议 float32 上报舍入（416.3 → 416.29998779）→ 服务器算的 AABB 与墙块重叠（1.2e-5）→ Paper 位置校验拒绝 → 每 tick 拉回 → bot 钉死。修复：patch prismarine-physics 1.11.1——贴墙截断停在"块面 ± 1e-4"（`F32_EPS`，float32 ulp 3e-5 的安全余量，0.1mm 不可见）且贴墙区完全挡（不渐进）；半嵌位前进/后退**挤回块外脱嵌**（位移 = 嵌入量 ≤0.3 服务器接受）
@@ -40,16 +46,14 @@ v1.0.0 革命性重构（第七轮）：依赖供应链根治 + LLM 直接操作
 - 冷却语义回归：移回原语 handler「只对实际执行生效」（业务性校验失败不占）
 - follow_player off 不受 exclusive 限制（C3 回归）
 
-## [Unreleased]
-
-### 已添加
+### 已添加（v1.0.0 前夕沉淀，随 1.0.0 发布）
 - 任务类型单一注册表 `src/tasks/types.js`（工厂 + 自然完成语义单点定义，替代三处手工同步）
 - 版本管理流程：`release.mjs`（package.json 单一来源 + lockfile 双处同步 + git 命令提示）、CHANGELOG
 - GitHub Actions CI（Node 24/26 × Ubuntu + Windows：npm ci → 测试 → check:compat）
 - 云端分层提示词（`l2.cloudMaxContextWindow` 默认 65536：cloud 发核心+扩展层，Ollama 只发核心层）
 - `scheduleTimezone` IANA 时区名校验（Windows 控制面板时区名启动即报错，不再静默不调度）
 
-### 已修复
+### 已修复（v1.0.0 前夕沉淀）
 - core→l2 上向引用（实体遍历/资源白名单归位 `core/{entities,resources}.js`）
 - 幽灵依赖声明：vec3 / minecraft-protocol 显式声明
 - Windows：SIGBREAK 优雅退出 + NSSM 停止窗口对齐（`AppStopMethodConsole 20s`）

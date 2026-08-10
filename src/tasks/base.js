@@ -30,7 +30,12 @@ export class BaseTask {
   constructor (id, type, options, ctx) {
     this.id = id
     this.type = type
-    this.options = options ?? {}
+    // 浅复制（第 11 轮）：loadConfig 对整棵 cfg deepFreeze——config 路径装载的任务
+    // options 是冻结对象，脚本 init 若写回（combat 的 weaponName）会在 ESM strict
+    // 模式下抛 TypeError（config 装载的 combat 任务永不运行的根因）。复制后写
+    // task.options 不影响 config 条目（manager reload 的 diff 基于 config 条目对象）。
+    // 嵌套对象（area 等）共享引用——当前脚本只读嵌套对象，可接受。
+    this.options = { ...(options ?? {}) }
     this.ctx = ctx
     this.bot = ctx.bot
     this.log = ctx.logger.child({ task: id })
@@ -39,6 +44,7 @@ export class BaseTask {
     this.lastError = null
     this.counters = {} // 任务遥测计数（mined/caught/wiggles/…）
     this.waitingReason = null // 内部等待原因（getStatus 展示，非错误）
+    this.waitingSince = null // 第 11 轮 G4：waitingReason 开始时间（idle 播报判定）
     this.runCount = 0
     this.exclusive = false // true = 运行期间拒绝启动其他 exclusive 任务（M2 的新任务类型）
     this._stopRequested = false
@@ -170,6 +176,7 @@ export class BaseTask {
   async _internalWait (ms, reason = 'wait') {
     if (this._stopRequested) return
     this.waitingReason = reason
+    this.waitingSince = this.waitingSince ?? Date.now() // 首次进入等待时记录（第 11 轮 G4）
     const gen = this._runGen
     try {
       await new Promise((resolve) => {
@@ -185,7 +192,7 @@ export class BaseTask {
       if (gen !== this._runGen) return // 代际守卫：旧代残留等待醒来后直接退出
     } finally {
       // 只清当前代代的 waitingReason——旧代 finally 不得清掉新代设置的 reason
-      if (gen === this._runGen) this.waitingReason = null
+      if (gen === this._runGen) { this.waitingReason = null; this.waitingSince = null }
     }
   }
 
@@ -206,6 +213,7 @@ export class BaseTask {
     this.lastError = null
     this.startedAt = null
     this.waitingReason = null
+    this.waitingSince = null
     this._runPromise = null
     this._pauseWaiters = []
     // C4：残留 token 一并清（防旧代等待占用槽位）；A5：必须 clearTimeout 各 token
@@ -266,6 +274,7 @@ export class BaseTask {
       lastError: this.lastError,
       counters: { ...this.counters },
       waitingReason: this.waitingReason,
+      waitingSince: this.waitingSince,
       runCount: this.runCount
     }
   }

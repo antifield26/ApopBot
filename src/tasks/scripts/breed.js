@@ -1,3 +1,4 @@
+import { isArea } from '../util.js'
 // 养殖任务脚本（v1.0.0 C9）：区域内对白名单动物喂食繁殖。
 // 语义与原 BreedTask 逐条对应：
 // - init 校验（area 完整/pathfinder 插件）；animalTypes 默认 4 种常见家畜
@@ -20,7 +21,7 @@ export default {
   /** init 校验（原 BreedTask.init 等价迁移）。 */
   async init (task) {
     const o = task.options
-    const isArea = (a) => a && ['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].every(k => Number.isInteger(a[k]))
+
     if (o.area !== undefined && !isArea(o.area)) {
       throw new Error('breed 任务 options.area 不完整（可省略或给全 x1..z2）')
     }

@@ -69,9 +69,16 @@ const layer = createFeatureLayerManager(ctx, logger)
 
 const conn = new ConnectionManager(cfg, logger, {
   onSpawn: (bot) => {
-    // 插件在 spawn 事件前已装载完成（connection.js 时序），同步到 ctx 供 !follow/技能使用
-    ctx.plugins = conn.plugins
+    // 插件在 spawn 事件前已装载完成（connection.js 时序），同步到 ctx 供 !follow/技能使用。
+    // 第 11 轮：本机/快速握手时 spawn 可先于装载（此时 conn.plugins 为空/旧代）——
+    // 装载完成后由 onPluginsReady 补发同步（消费点全部运行时读 ctx.plugins）
+    ctx.plugins = conn.plugins ?? null
     layer.rebuild(bot)
+  },
+  onPluginsReady: (plugins) => {
+    // 竞态修复（第 11 轮）：spawn 先于插件装载完成时，装载完成后补发最新句柄——
+    // 否则 !follow 在死 client 上 setControlState → uncaughtException → fatalExit 停服
+    ctx.plugins = plugins
   },
   onStateChange: (state) => {
     logger.info({ state }, 'connection state changed')
@@ -120,11 +127,21 @@ async function reload () {
   ctx.notifier = createNotifier(newCfg, logger) // U10：webhook 配置随 reload 更新（fatalExit 使用）
 
   if (logChanged) {
-    logger.info({ level: newCfg.log.level }, '日志配置变化，重建 logger')
-    // 注：pino v9 transport worker 无法主动拆除，反复改日志配置会累积文件句柄（接受，文档化）
-    logger = createLogger(newCfg)
-    ctx.logger = logger
-    ctx.conn.log = logger
+    const rotateChanged = JSON.stringify(newCfg.log.rotate) !== JSON.stringify(ctx.cfg.log.rotate)
+    if (rotateChanged || newCfg.log.pretty !== ctx.cfg.log.pretty || newCfg.log.dir !== ctx.cfg.log.dir) {
+      logger.info({ level: newCfg.log.level }, '日志配置变化，重建 logger')
+      // 注：pino v9 transport worker 无法主动拆除，反复改日志配置会累积文件句柄（接受，文档化）
+      logger = createLogger(newCfg)
+      ctx.logger = logger
+      ctx.conn.log = logger
+    } else {
+      // 第 11 轮：仅 level 变化 → 只调 level 不重建 transport——此前重建后新旧
+      // 两个 pino-roll 指向同一 bot.log，各自轮转 rename 时旧 fd 写被改名文件
+      // → 丢行/坏 JSONL（文档只承认句柄累积，未覆盖双写同一文件）
+      logger.level = newCfg.log.level
+      ctx.logger.level = newCfg.log.level
+      logger.info({ level: newCfg.log.level }, '日志级别变更（transport 复用）')
+    }
   }
 
   // L2 配置变化 → 重建 agent（createL2 构造时持有冻结的 cfg.l2 引用；

@@ -52,8 +52,11 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 | `explore` | — | 方形螺旋游荡覆盖（每站采样记录 23 种资源与实体到探索记忆，LLM 经 `query_map` 查询）；`maxDistance` 半径上限（16-256）、`area` 可限定 | `stopWhenDone: true` 时环满即完成 / 无则到边界后以当前位置重启（有界漫游）；scheduled 由 durationMinutes 到时停止 |
 
 - 调度：`schedule`（cron 表达式，时区 `scheduleTimezone`）触发后运行到完成，防重叠、`durationMinutes` 时长上限、完成/失败聊天通知（`notifyChat: false` 关闭）
-- 仅 farm/chop 强制 area（mine 可选、combat/breed 可省略=无区域约束；afk/fish 无区域）；farm/chop/combat/breed/explore 为 exclusive（互斥，避免争抢寻路/采集）
+- **任务链**（v1.1 第 11 轮）：任务条目可配 `next: {id, type, options?}`——自然完成后自动接力下一个任务，如 `{"id":"mine-then-chop","type":"mine","options":{...},"next":{"id":"chop-a","type":"chop","options":{"area":{...}}}}`
+- **自动存储**（v1.1 第 11 轮）：collect_blocks 背包满（NoChests）时自动找附近 32 格箱子/木桶存入（工具与食物豁免）再继续——不再干等 5 分钟
+- 仅 farm/chop 强制 area（mine 可选、combat/breed 可省略=无区域约束；afk/fish 无区域）；farm/chop/combat/breed/explore 为 exclusive（互斥，避免争抢寻路/采集）；mine 非 exclusive——exclusive 任务运行期间其采集动作软失败自动重试
 - 遥测：`counters`（mined/caught/planted/chopped/kills/breedings…）显示于 `!task list`
+- **维度感知**（v1.1 第 11 轮）：探索记忆按维度存储——下界/末地坐标独立，`query_map` 只返回当前维度的记录（旧主世界数据兼容）；`observe_blocks` 观察到的资源自动记入探索记忆（LLM 探索即积累）；任务长 idle（等待原因持续 10 分钟）经 LLM 一句话播报原因
 
 ## 快速开始（开发机）
 

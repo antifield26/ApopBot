@@ -60,12 +60,14 @@ test('mine init: 缺 collectBlock/pathfinder 插件报错', async () => {
 
 test('fish init: 缺 durationMinutes 不抛（task-schemas 入口拦截，脚本防御）', async () => {
   // task-schemas 在 manager 入口拦截 durationMinutes 必填；脚本层对缺省值防御
+  // 第 11 轮：断言状态而非 assert.ok(true) 恒真——start() 吞错设计使 init 抛错
+  // 转 failed 此前也不会被测试发现
   const task = new ScriptTask('t1', 'fish', {}, makeCtx(), fishScript)
   task.startedAt = Date.now()
   task.start()
   await new Promise(r => setImmediate(r))
   await task.stop()
-  assert.ok(true, '不抛错即防御生效')
+  assert.equal(task.state, 'stopped', 'fish init 不应失败（stop 后应为 stopped）')
 })
 
 test('afk init: intervalMinutes 缺失/非法不抛（task-schemas 入口拦截，wait 钳制防御）', async () => {
@@ -74,7 +76,7 @@ test('afk init: intervalMinutes 缺失/非法不抛（task-schemas 入口拦截�
   task.start()
   await new Promise(r => setImmediate(r))
   await task.stop()
-  assert.ok(true, '不抛错即防御生效（wait 钳制）')
+  assert.equal(task.state, 'stopped', 'afk init 不应失败（stop 后应为 stopped）')
 })
 
 test('farm init: 缺 area / 缺 cropTypes 报错', async () => {

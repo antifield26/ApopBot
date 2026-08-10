@@ -55,3 +55,22 @@ jobs:
       - name: Dependency audit (informational)
         run: npm audit --omit=dev --audit-level=high || true
         continue-on-error: true
+
+  # 第 11 轮：部署安装模式镜像——deploy.ps1 用 npm ci --omit=dev，CI 主 job 用
+  # npm ci 全量，两种安装模式不同构（minecraft-protocol 版本检查依赖 devDependency
+  # 被传递依赖 hoist 顶层的巧合）——此 job 复现部署路径，防 check:compat 行为分叉
+  deploy-mode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies (deploy mode, omit dev)
+        run: npm ci --omit=dev
+
+      - name: Compatibility gate (deploy mode)
+        run: npm run check:compat

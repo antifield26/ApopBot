@@ -157,7 +157,12 @@ export class ScriptRunner {
       user: 'system', // 脚本通道（任务只能由 op 启动/配置——见 executor 权限门）
       source: 'script',
       taskId: this.task.id,
-      bypassExclusive: true, // owner 是自己——任务互斥由 manager 仲裁
+      // 第 11 轮：exclusive 任务（owner 自己）跳过守卫；非 exclusive 任务
+      //（mine/fish/afk）不 bypass——其 build/movement 类动作在 exclusive 任务
+      // 运行中被守卫软拒绝（脚本 if 重试，mine 的 collect-retry 30s 语义天然承接），
+      // 与 LLM act 语义一致。此前 mine 可与 farm/chop 并发抢 pathfinder/
+      // collectBlock（互设 setGoal → GoalChanged 抖动/饥饿）
+      bypassExclusive: this.task.exclusive === true,
       signal: this.task._abort.signal,
       isPaused: () => this.task._pauseRequested,
       waitIfPaused: () => this.task._waitIfPaused()
@@ -300,8 +305,17 @@ function evalCond (cond, runner) {
     }
     case 'counter':
       return (runner.task.counters[cond.name] ?? 0) >= (cond.gte ?? 1)
-    case 'config':
-      return runner.task.options[cond.key] === cond.equals
+    case 'config': {
+      // 第 11 轮：回退 defaultOptions——combat 未显式配置 maxTargets 时
+      // options[key] 是 undefined，`undefined === 0` 恒 false → `not` 取反进入
+      // 内圈 → kills >= 0（defaultOptions 的 0）恒真 → 首杀即完成（默认 0=不限
+      // 语义失效的根因）。回退使未配置行为与 defaultOptions 声明一致；chop
+      // logTypes / farm replant（无默认）等现有条件不受影响。
+      const opt = runner.task.options[cond.key] !== undefined
+        ? runner.task.options[cond.key]
+        : runner.task.scriptDef.defaultOptions?.[cond.key]
+      return opt === cond.equals
+    }
     case 'deadline': {
       const dm = runner.task.options.durationMinutes
       if (typeof dm !== 'number' || !runner.task.startedAt) return false

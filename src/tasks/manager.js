@@ -226,8 +226,39 @@ export class TaskManager {
     if (rec.entry.notifyChat === false) return
     if (rec.task.state === 'completed') {
       this._notify(rec, 'completed')
+      this._maybeStartNext(rec) // 任务链（第 11 轮 G3）
     } else if (rec.task.state === 'failed') {
       this._notify(rec, `failed: ${rec.task.lastError ?? '未知原因'}`)
+    }
+  }
+
+  /**
+   * 任务链（第 11 轮 G3）：任务条目配 `next: { id, type, options?, schedule? }`——
+   * 本任务自然完成（completed）后自动注册并启动下一个任务（ad-hoc 形态，可被
+   * !task remove 移除；不写回配置文件）。失败/停止不接力（只对"完成"接力——
+   * 失败链会让错误静默蔓延）。目标任务已运行/排队中则不重复启动。
+   */
+  _maybeStartNext (rec) {
+    const next = rec.entry?.next
+    if (!next || typeof next !== 'object' || !next.type || !next.id) return
+    if (rec.task.state !== 'completed') return // 仅自然完成触发
+    const existing = this.tasks.get(next.id)
+    if (existing && ['init', 'running', 'paused'].includes(existing.task.state)) return
+    if (existing) {
+      this.stopTask(next.id).catch(() => {}) // 残留终态任务先停（F4 重启语义）
+    }
+    this.log.info({ from: rec.entry.id, next: next.id }, 'task chain: 自然完成，启动下一个任务')
+    try {
+      const entry = { id: next.id, type: next.type, options: next.options ?? {} }
+      const newRec = this._createEntry(entry)
+      this.tasks.set(next.id, newRec) // 先入表再启动（exclusive 互斥判定依赖登记）
+      if (next.schedule) {
+        this._createSchedule(newRec)
+      } else {
+        this.startTask(next.id, newRec).catch(err => this.log.error({ task: next.id, err: err.message }, '任务链启动失败'))
+      }
+    } catch (err) {
+      this.log.error({ from: rec.entry.id, next: next.id, err: err.message }, '任务链注册失败')
     }
   }
 
@@ -310,6 +341,8 @@ export class TaskManager {
       }
     }
     this._notify(rec, rec.task.state)
+    // 任务链（第 11 轮 G3）：scheduled 自然完成同样接力 next（rec.task 已终态）
+    this._maybeStartNext(rec)
   }
 
   /** 完成/失败通知（scheduled 运行；notifyChat:false 关闭聊天；webhook 独立于 notifyChat——运维通道）。 */

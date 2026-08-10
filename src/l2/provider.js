@@ -65,8 +65,16 @@ class CloudProvider {
     // baseUrl 兼容两种写法：完整端点（.../v1/messages）或 base URL（预设 DeepSeek
     // https://api.deepseek.com/anthropic——Anthropic 兼容路由；裸域名会补到 OpenAI 路由 404）
     this.baseUrl = (l2.cloudBaseUrl ?? 'https://api.deepseek.com/anthropic').replace(/\/+$/, '')
-    // 只对不含 /messages 结尾的端点自动补全（避免 https://host/v1 → /v1/v1/messages 双路径）
-    if (!/\/messages$/.test(this.baseUrl)) this.baseUrl += '/v1/messages'
+    // 第 11 轮修复：补全规则此前只判 /messages$——`https://host/v1` 结尾被追加
+    // /v1/messages 产生 /v1/v1/messages 双路径（Anthropic 惯例配置即 404）。
+    // 现在：/messages 结尾不变；/v1 结尾补 /messages；其余补 /v1/messages
+    if (/\/messages$/.test(this.baseUrl)) {
+      /* 完整端点，不变 */
+    } else if (/\/v1$/.test(this.baseUrl)) {
+      this.baseUrl += '/messages'
+    } else {
+      this.baseUrl += '/v1/messages'
+    }
     this.model = l2.model ?? 'deepseek-v4-flash'
     this.thinking = l2.thinking ?? 'disabled'
     this.effort = l2.effort ?? 'low'
@@ -138,21 +146,49 @@ class CloudProvider {
   }
 
   async _post (body, signal) {
-    const res = await fetch(this.baseUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': this.apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify(body),
-      signal: makeSignal(signal, this.timeoutMs)
-    })
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new HttpError(res.status, `cloud API ${res.status}: ${text.slice(0, 200)}`)
+    // 第 11 轮：云端抖动重试——429/5xx/网络错误指数退避重试（至多 2 次重试），
+    // 此前单次抖动会杀死整轮工具循环（已耗 token 与已执行副作用全部作废）。
+    // 4xx（除 429）不重试（参数/鉴权错误重试无意义）；用户中止不重试。
+    const isRetryable = (status) => status === 429 || status >= 500
+    const wait = async (ms) => {
+      if (!signal) { await new Promise(r => setTimeout(r, ms)); return }
+      await new Promise((resolve, reject) => {
+        const onAbort = () => { clearTimeout(t); reject(new Error('请求已中止')) }
+        const t = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve() }, ms)
+        signal.addEventListener('abort', onAbort, { once: true })
+      })
     }
-    return res.json()
+    let lastErr = null
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      if (signal?.aborted) throw new Error('请求已中止')
+      let res
+      try {
+        res = await fetch(this.baseUrl, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': this.apiKey,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify(body),
+          signal: makeSignal(signal, this.timeoutMs)
+        })
+      } catch (err) {
+        if (err?.name === 'AbortError') throw err
+        lastErr = err
+        if (attempt < 2) { await wait(500 * 2 ** attempt); continue }
+        break
+      }
+      if (res.ok) return res.json()
+      const text = await res.text().catch(() => '')
+      lastErr = new HttpError(res.status, `cloud API ${res.status}: ${text.slice(0, 200)}`)
+      if (!isRetryable(res.status) || attempt >= 2) break
+      // 429 尊重 Retry-After（若提供）；否则 500ms × 2^n 退避，上限 4s
+      const ra = Number(res.headers?.get?.('retry-after'))
+      const delay = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 500 * 2 ** attempt
+      await wait(Math.min(delay, 4000))
+    }
+    throw lastErr ?? new Error('cloud API 请求失败')
   }
 }
 

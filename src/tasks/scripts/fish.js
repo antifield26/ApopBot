@@ -21,8 +21,11 @@ export default {
             { ctrl: 'return', value: 'completed' }
           ] }
         ] },
-        // 抛竿（60s 超时 + 取消信号 race 由 fish 原语内部处理）
-        { op: 'fish', args: { timeoutMs: 60000 }, count: 'caught' },
+        // 抛竿（60s 超时 + 取消信号 race 由 fish 原语内部处理）。
+        // 第 11 轮：count 改 {name, field} 形态——字符串形态在 ok:true 时无条件
+        // +1，而 fish 原语对抛竿超时/上钩失败返回 {caught:false} 且 ok:true
+        //（业务性无事可做契约）→ 超时也被计入 caught，遥测虚高
+        { op: 'fish', args: { timeoutMs: 60000 }, count: { name: 'caught', field: 'caught' } },
         // 失败（抛竿超时/中断）→ 5s 后重试（原 catch 分支同款）
         { ctrl: 'if', cond: { type: 'last', ok: false }, then: [{ ctrl: 'wait', ms: 5000 }] }
       ] }

@@ -58,6 +58,14 @@ test('--config 文件合并覆盖 default.json', () => {
   assert.equal(cfg.mcVersion, '26.1.2') // 未被 smoke.json 覆盖 → 保持默认
 })
 
+// 第 11 轮：config.example.json 是 README 复制即用契约（cp example config.json && npm start），
+// 必须永远通过自身校验——此前 l2._comment 未知键让该流程启动即 exit(1)（防漂移断言）
+test('config.example.json 必须通过 validateConfig（复制即用契约）', () => {
+  const cfg = loadConfig({ argv: ['--config', 'config/config.example.json'], env: {} }, { skipProdConfig: true })
+  const { ok, errors } = validateConfig(cfg)
+  assert.equal(ok, true, `example.json 校验失败: ${errors.join('; ')}`)
+})
+
 test('validateConfig 校验非法值', () => {
   const bad = loadConfig({ argv: ['--port', '99999', '--auth', 'weird'], env: {} })
   const { ok, errors } = validateConfig(bad)

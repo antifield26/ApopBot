@@ -22,6 +22,7 @@ import { environmentSnapshot } from './environment.js'
 import { exploreStep, notifyValuableFound } from './explore.js'
 import * as discovery from './discovery.js'
 import { createMovement, REASON_TEXT, findSurfaceBlocks } from './movement.js'
+import { isArea } from '../tasks/util.js' // 第 11 轮 R2：区域校验 5 份消重（farm/combat/breed/explore 同源）
 import { attackEntity, useEntityOn } from './entity-actions.js'
 import { hasExclusiveActive, getExclusiveOwner } from './arbiter.js'
 import { validateTaskOptions } from './task-schemas.js'
@@ -42,9 +43,48 @@ function checkActionCooldown (name) {
   lastActionAt.set(name, now)
 }
 
-/** 区域对象校验（farm/collect 用）。 */
-function isArea (a) {
-  return a && ['x1', 'y1', 'z1', 'x2', 'y2', 'z2'].every(k => Number.isInteger(a[k]))
+/**
+ * 自动存储（第 11 轮 G3）：背包满（NoChests）时附近找箱子/木桶存入物品——
+ * 替代 mine/chop/farm 脚本的 5 分钟干等。规则：
+ * - 只搜 32 格内 chest/barrel（至多开 3 个，防 UI 卡死）
+ * - 工具（*_sword/_pickaxe/_axe/_shovel/_hoe）与可食用物品不存（保持装备与食物）
+ * - 单箱存 ≥1 项即返回（收集流程可继续）；全部失败返回 0（回退 inventoryFull 语义）
+ * 失败任何一步静默（autonomy 的附加层——绝不阻塞/抛错）。
+ * @returns {Promise<{ stored: number, found: Vec3[] }>}
+ */
+async function autoDeposit (bot, logger) {
+  if (!bot?.openContainer || !bot?.findBlocks) return { stored: 0, found: [] }
+  let found = []
+  try {
+    found = bot.findBlocks({ matching: (b) => b.name === 'chest' || b.name === 'barrel', maxDistance: 32, count: 8 })
+  } catch { return { stored: 0, found: [] } }
+  if (found.length === 0) return { stored: 0, found: [] }
+  const isTool = (n) => /_sword$|_pickaxe$|_axe$|_shovel$|_hoe$/.test(n ?? '')
+  let stored = 0
+  for (const pos of found.slice(0, 3)) {
+    let container = null
+    try {
+      const block = bot.blockAt(pos)
+      if (!block) continue
+      container = await withTimeout(bot.openContainer(block), 8000, 'open chest timeout')
+      const items = bot.inventory?.items?.() ?? []
+      for (const it of items) {
+        const name = it?.name ?? ''
+        if (isTool(name) || (bot.registry?.itemsByName?.[name]?.foodPoints ?? 0) > 0) continue
+        try {
+          const ok = await withTimeout(container.deposit(it.type, it.metadata ?? null, it.count), 8000, 'deposit timeout')
+          if (ok) stored++
+        } catch { /* 该物品存入失败跳过 */ }
+        if (stored >= 1) break // 存入即可继续收集（背包留空位）
+      }
+      if (stored > 0) break
+    } catch (err) {
+      logger?.warn?.({ err: err.message }, '自动存储失败（回退 inventoryFull 语义）')
+    } finally {
+      try { container?.close() } catch { /* 容器可能已关闭 */ }
+    }
+  }
+  return { stored, found }
 }
 
 /**
@@ -217,10 +257,15 @@ export function createPrimitiveRegistry (ctx) {
           const n = byName[p.type] ?? 'unknown'
           if (!matchedNames.includes(n)) matchedNames.push(n)
           candidates.push([p.x, p.y, p.z])
+          // 第 11 轮 G2：记忆被动积累——LLM 观察即探索（记录带维度；chunk 去重
+          // + 全局上限天然防膨胀；被挖除后 blockUpdate 删记忆，再次观察自动重记）
+          if (n !== 'unknown') discovery.recordResource(n, { x: p.x, y: p.y, z: p.z }, dim)
         }
         return finish()
       }
       if (!names || names.length === 0) throw new Error('observe_blocks 需要 blockNames/blockName/regex 之一')
+      // 第 11 轮 G2：观察即记录（记录带维度；chunk 去重 + 全局上限天然防膨胀）
+      const dim = c.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
       for (const name of names) {
         let found
         try {
@@ -228,7 +273,10 @@ export function createPrimitiveRegistry (ctx) {
         } catch {
           continue // 未知方块类型跳过该名（与 collect_blocks 一致——一个拼错不杀整批）
         }
-        for (const p of found.candidates) candidates.push([p.x, p.y, p.z])
+        for (const p of found.candidates) {
+          candidates.push([p.x, p.y, p.z])
+          discovery.recordResource(name, p, dim)
+        }
         matchedNames.push(name)
       }
       return finish()
@@ -320,23 +368,29 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '',
     timeoutMs: 5000,
     handler: async (c, { blockName, maxCount }) => {
+      // 第 11 轮：大小写归一——记忆 key 是 explore 记录的小写名（iron_ore），
+      // LLM 传 Iron_Ore 此前返回空且无提示（误导 LLM 去重新探索）
+      const name = String(blockName ?? '').toLowerCase()
       const me = c.bot?.entity?.position
+      // 第 11 轮 G1：维度过滤——只返回当前维度的记录（下界/末地坐标 8:1 映射
+      // 混存会误导；返回带 dimension 供 LLM 判断）
+      const dim = c.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
       const out = []
-      for (const h of discovery.query(blockName, me, maxCount ?? 5)) {
+      for (const h of discovery.query(name, me, maxCount ?? 5, dim)) {
         // 地形记忆验证（第 10 轮）：已加载区块逐条核对是否仍是该方块——不是则
         // 自动删除（记忆自愈，杜绝过期坐标误导）；未加载区块无法验证标
         // verified:false（LLM 需 observe_block 确认后再行动）
         let verified = false
         const cur = c.bot?.blockAt?.(new Vec3(h.x, h.y, h.z))
         if (cur) {
-          if (cur.name === blockName) {
+          if (cur.name === name) {
             verified = true
           } else {
             discovery.removeResourceAt(h.x, h.y, h.z)
             continue // 失效记录：剔除
           }
         }
-        out.push({ x: h.x, y: h.y, z: h.z, ts: h.ts, verified })
+        out.push({ x: h.x, y: h.y, z: h.z, ts: h.ts, verified, dimension: h.dimension ?? 'overworld' })
       }
       return out
     }
@@ -371,8 +425,14 @@ export function createPrimitiveRegistry (ctx) {
     exclusiveClass: 'movement',
     guardText: '移动',
     timeoutMs: 120000,
-    handler: async (c, { x, y, z, range, timeoutMs }) => {
-      const r = await createMovement(c.bot, c.logger).gotoPoint(new Vec3(x, y, z), { range, timeoutMs: timeoutMs ?? 60000 })
+    handler: async (c, { x, y, z, range, timeoutMs }, runtime) => {
+      // 第 11 轮：signal 贯通——此前 goto 忽略 abort（注释声称"立即中断"但原语
+      // 没传 signal），stop()/断线时 goto 仍跑满 120s，busy 全程占用
+      const r = await createMovement(c.bot, c.logger).gotoPoint(new Vec3(x, y, z), {
+        range,
+        timeoutMs: timeoutMs ?? 60000,
+        isInterrupted: () => runtime?.signal?.aborted === true
+      })
       if (r.ok) return { reached: [Math.floor(x), Math.floor(y), Math.floor(z)] }
       throw new Error(`移动失败: ${REASON_TEXT[r.reason] ?? r.err?.message}`)
     }
@@ -390,8 +450,9 @@ export function createPrimitiveRegistry (ctx) {
     exclusiveClass: 'movement',
     guardText: '探索',
     timeoutMs: 45000,
-    handler: async (c, { maxDistance, direction }) => {
-      const r = await exploreStep(c.bot, c.logger, { maxDistance, direction })
+    handler: async (c, { maxDistance, direction }, runtime) => {
+      // 第 11 轮：signal 贯通（同 goto——stop()/断线中止时探索步立即退出）
+      const r = await exploreStep(c.bot, c.logger, { maxDistance, direction, signal: runtime?.signal ?? null })
       if (!r.ok) throw new Error(`探索失败: ${r.reason}`)
       notifyValuableFound(c.cfg, c.logger, r.found) // D：重要资源 webhook 推送（节流，失败静默）
       return { from: [r.from.x, r.from.y, r.from.z], to: [r.to.x, r.to.y, r.to.z], found: r.found.map(f => ({ name: f.name, x: f.x, y: f.y, z: f.z })), hostile: r.entities.hostile ?? [] }
@@ -532,7 +593,31 @@ export function createPrimitiveRegistry (ctx) {
             if (b?.position) discovery.removeResourceAt(b.position.x, b.position.y, b.position.z)
           }
         } catch (err) {
-          if (err.code === 'NoChests') return { collected, inventoryFull: true } // F2：背包满（无箱子可存）
+          if (err.code === 'NoChests') {
+            // 第 11 轮 G3：自动存储——背包满时附近找箱子存物品再继续（替代
+            // mine/chop/farm 脚本 5 分钟干等；存成功重试同一批，失败回退
+            // inventoryFull 语义由脚本处理）
+            if (runtime?.signal?.aborted) return { collected, stopped: true }
+            const { stored, found } = await autoDeposit(c.bot, c.logger)
+            if (stored > 0) {
+              // 新箱子并入 chestLocations（后续批次优先使用）
+              for (const p of found) {
+                if (!chests) chests = []
+                if (!chests.some(x => x.distanceTo(p) < 0.5)) chests.push(p)
+              }
+              i -= 4 // 重试同一批（已挖除的 collectblock 自动跳过）
+              continue
+            }
+            return { collected, inventoryFull: true } // F2：背包满（无箱子可存）
+          }
+          // 第 11 轮：collect 中途失败（NoPath/目标变化）时批次整体不计——已挖除
+          // 的方块丢失计数且地形记忆残留。blockAt 复核已挖除块补记（未加载按
+          // 未挖保守 0），记忆统一清（已不准确的坐标）——失败块仍在下一轮扫描
+          for (const b of batch) {
+            const now = c.bot.blockAt(b.position)
+            if (now && now.type === 0) collected++
+            if (b?.position) discovery.removeResourceAt(b.position.x, b.position.y, b.position.z)
+          }
           throw err
         }
       }
@@ -557,11 +642,17 @@ export function createPrimitiveRegistry (ctx) {
     timeoutMs: 60000,
     cooldownMs: ACTION_COOLDOWN_MS,
     handler: async (c, { area, cropTypes, seedOverrides, max }, runtime) => {
-      void cropTypes // 预留：按作物匹配种子（v1.0.0 先自动匹配全部种子）
       if (!isArea(area)) throw new Error('plant_crops 需要完整 area（x1..z2 六坐标）')
       if (!c.bot?.placeBlock || !c.bot?.equip) throw new Error('plant 能力不可用（插件缺失）')
       // farm._seedByCrop 同款：SEED_BY_CROP + seedOverrides 合并（值 = 种子物品名）
       const seedByCrop = { ...SEED_BY_CROP, ...(seedOverrides ?? {}) }
+      // 第 11 轮修复：cropTypes 此前被 void 忽略——按背包第一颗种子乱种
+      //（farm 指定 cropTypes:['carrots'] 时若先有 wheat_seeds 会种小麦进胡萝卜田）。
+      // 现在按 cropTypes 优先匹配（未指定 = 全部作物任意种子，兼容旧行为）
+      const wantedCrops = Array.isArray(cropTypes) && cropTypes.length > 0
+        ? cropTypes
+        : Object.keys(seedByCrop)
+      const wantedSeeds = new Set(wantedCrops.map(c => seedByCrop[c]).filter(Boolean))
       // farm._scanArea 同款扫描（找区域内耕地）
       const anchor = new Vec3((area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2, (area.z1 + area.z2) / 2)
       const diag = Math.hypot(area.x2 - area.x1, area.y2 - area.y1, area.z2 - area.z1)
@@ -579,12 +670,13 @@ export function createPrimitiveRegistry (ctx) {
       let planted = 0
       const cap = Math.min(max ?? 8, farmland.length)
       for (let i = 0; i < cap; i++) {
-        void cropTypes
         if (runtime?.signal?.aborted) break
         const soil = c.bot.blockAt(farmland[i])
         const above = soil ? c.bot.blockAt(soil.position.offset(0, 1, 0)) : null
         if (above && above.boundingBox !== 'empty') continue // 已占用
-        const seeds = c.bot.inventory?.items()?.find(it => Object.values(seedByCrop).includes(it.name))
+        // 第 11 轮：只在 wantedSeeds（cropTypes 对应种子）内选取——此前取背包
+        // 第一颗任意种子
+        const seeds = c.bot.inventory?.items()?.find(it => wantedSeeds.has(it.name))
         if (!seeds) return { planted, noSeeds: true }
         try {
           await withTimeout(c.bot.equip(seeds, 'hand'), 10000, 'equip timeout')
@@ -897,13 +989,17 @@ export function createPrimitiveRegistry (ctx) {
       if (!c.bot?.fish) return { caught: false, reason: 'fish 能力不可用（插件缺失）' }
       // FishTask 同款：bot.fish() 无超时——withTimeout + 取消信号 race
       //（任务 stop/断线不再"继续抛竿到上钩或 60s"——注释契约在此实现）
+      // 第 11 轮：abort 监听器必须配对移除（wait 原语同款纪律）——fish 任务挂机
+      // 数小时（60s/次抛竿）会在同一 AbortSignal 上累积上百个监听器
+      let onAbort = null
       let caught = false
       try {
         await Promise.race([
           withTimeout(c.bot.fish(), timeoutMs ?? 60000, 'fish timeout'),
           new Promise((_, reject) => {
             if (runtime?.signal?.aborted) return reject(new Error('等待被中断'))
-            runtime?.signal?.addEventListener('abort', () => reject(new Error('等待被中断')), { once: true })
+            onAbort = () => reject(new Error('等待被中断'))
+            runtime?.signal?.addEventListener('abort', onAbort, { once: true })
           })
         ])
         caught = true
@@ -911,6 +1007,8 @@ export function createPrimitiveRegistry (ctx) {
         if (err?.name === 'AbortError' || err?.message?.includes('中断')) throw err
         // 上钩失败/超时不算错误——返回 false 供脚本重试
         caught = false
+      } finally {
+        if (onAbort) runtime?.signal?.removeEventListener('abort', onAbort)
       }
       return { caught }
     }

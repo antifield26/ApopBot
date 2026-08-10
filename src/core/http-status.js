@@ -33,7 +33,14 @@ export function createStatusServer (getCfg, logger, getState) {
       res.writeHead(status)
       res.end(JSON.stringify(body))
     })
-    server.on('error', (err) => logger.warn({ err: err.message }, 'http status server error'))
+    server.on('error', (err) => {
+      logger.warn({ err: err.message }, 'http status server error')
+      // 第 11 轮：EADDRINUSE 等监听失败后必须置 null——server 非 null 使后续
+      // start() 短路，/health /metrics 在本进程生命周期内永久死亡（热重载重试
+      // 也无用；error 事件在 node http server 上主要来自 listen 失败——请求
+      // 处理错误已由 handler try/catch 承接）
+      server = null
+    })
     server.listen(cfg.http.port, '127.0.0.1')
     logger.info({ port: cfg.http.port }, 'http status server listening on 127.0.0.1')
   }
