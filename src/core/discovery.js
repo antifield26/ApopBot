@@ -108,6 +108,27 @@ export function recordResource (name, pos) {
 }
 
 /**
+ * 删除指定坐标的全部资源记录（地形记忆失效——第 10 轮）。
+ * 调用点：dig/collect_blocks 挖除后、blockUpdate 方块变化时、query_map 验证失败自愈。
+ * 按坐标精确删除（一个坐标只可能是一种方块——无需 name 参数；同坐标下多个
+ * name 的记录一并清除，防御未来同坐标多记录场景）。
+ * @returns {number} 删除条数
+ */
+export function removeResourceAt (x, y, z) {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return 0
+  const fx = Math.floor(x); const fy = Math.floor(y); const fz = Math.floor(z)
+  let removed = 0
+  for (const [name, list] of Object.entries(state.resources)) {
+    const kept = list.filter(r => !(Math.floor(r.x) === fx && Math.floor(r.y) === fy && Math.floor(r.z) === fz))
+    removed += list.length - kept.length
+    if (kept.length) state.resources[name] = kept
+    else delete state.resources[name]
+  }
+  if (removed > 0) persist()
+  return removed
+}
+
+/**
  * 查询已知资源（按与 pos 的欧氏距离升序；不重新扫描）。
  * @returns {Array<{x,y,z,ts}>}
  */

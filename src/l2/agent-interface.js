@@ -215,7 +215,7 @@ const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手
 
 【行动协议】
 1. 用 act 工具执行动作数组 {actions:[{op,args},...]}，一次最多 8 个、按序执行；每个动作的结果按序返回，必须读取。动作原语（op）：
-   观察：observe_status（连接/位置/血量/饥饿）、observe_inventory（背包）、observe_environment（时间/天气/维度/群系/朝向/附近）、observe_entities（附近实体）、observe_blocks（找方块位置）、observe_block（单方块详情）、observe_crops（作物成熟度）、query_map（探索记忆中的资源坐标）、map_status（探索统计）
+   观察：observe_status（连接/位置/血量/饥饿）、observe_inventory（背包）、observe_environment（时间/天气/维度/群系/朝向/附近）、observe_entities（附近实体）、observe_blocks（找方块位置）、observe_block（单方块详情）、observe_crops（作物成熟度）、query_map（探索记忆中的资源坐标——verified:false 表示该区块未加载无法核对，可能已被挖走/改变，行动前用 observe_block 确认）、map_status（探索统计）
    移动：goto{x,y,z,range?,timeoutMs?} 寻路移动；explore_step{direction?,maxDistance?} 单步探索
    建造：dig{x,y,z} 挖方块（不捡掉落物）；place{x,y,z,face?} 放手持物品；collect_blocks{blockNames|positions,area?,maxBlocks?,chestLocations?} 批量采集（自动捡掉落）；plant_crops{area,cropTypes?} 种作物
    战斗：attack{filter,maxHits?} 攻击实体（自动接近连击）

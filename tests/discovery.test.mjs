@@ -76,3 +76,35 @@ test('B1: query 按当前位置距离升序', () => {
   assert.equal(r[0].x, 10, '近的在前')
   assert.equal(r[1].x, 100)
 })
+
+// ===== 第 10 轮：地形记忆失效 =====
+
+test('B1: removeResourceAt 删除精确坐标（含跨 name）', () => {
+  discovery.recordResource('coal_ore', { x: 10, y: 60, z: 8 })
+  discovery.recordResource('iron_ore', { x: 10, y: 60, z: 8 }) // 同坐标（防御场景）
+  discovery.recordResource('coal_ore', { x: 30, y: 60, z: 8 })
+  const removed = discovery.removeResourceAt(10, 60, 8)
+  assert.equal(removed, 2, '同坐标两条记录都删')
+  assert.equal(discovery.query('coal_ore').length, 1, '其他坐标保留')
+  assert.equal(discovery.query('iron_ore').length, 0, '同坐标其他 name 也删')
+  // 不存在的坐标：0 删除且不报错
+  assert.equal(discovery.removeResourceAt(999, 999, 999), 0)
+})
+
+test('B1: removeResourceAt 浮点坐标按 floor 匹配（blockAt 返回浮点）', () => {
+  discovery.recordResource('coal_ore', { x: 10, y: 60, z: 8 })
+  // blockUpdate/dig 传的浮点位置（实体坐标）应匹配整数记录
+  assert.equal(discovery.removeResourceAt(10.42, 60.1, 8.9), 1, '浮点按 floor 匹配')
+  assert.equal(discovery.query('coal_ore').length, 0)
+})
+
+test('B1: removeResourceAt 触发持久化', () => {
+  const saved = []
+  discovery.attachStore({ setMemory: (m) => { saved.push(m) } })
+  discovery.recordResource('coal_ore', { x: 10, y: 60, z: 8 })
+  saved.length = 0
+  discovery.removeResourceAt(10, 60, 8)
+  assert.ok(saved.length >= 1, '删除应触发持久化')
+  assert.equal(saved.at(-1).resources.coal_ore, undefined, '快照中该记录已删')
+  discovery.attachStore(null)
+})

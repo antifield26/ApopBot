@@ -166,6 +166,16 @@ export function createFeatureLayerManager (ctx, logger) {
       knownPlayers.delete(name)
     })
 
+    // 地形记忆失效（第 10 轮，方案 B）：方块变化（被挖/被放/火烧/水冲等）→ 该
+    // 坐标的探索记忆删除——记忆只增不减会让 query_map 长期返回过期坐标（用户
+    // 实测误判 find 失效的根因之一）。只覆盖已加载区块（mineflayer blockUpdate
+    // 的感知范围）——远处记忆变化由 query_map 查询验证（方案 C）兜底。事件挂在
+    // bot 实例上随重建/断线自然释放，无需 teardown 清理。
+    bot.on('blockUpdate', (oldBlock) => {
+      const p = oldBlock?.position
+      if (p) discovery.removeResourceAt(p.x, p.y, p.z)
+    })
+
     bot.on('respawn', () => {
       // U6：恢复本次死亡暂停的任务（手动暂停的保持暂停）
       const ids = deathPaused

@@ -306,7 +306,7 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   register('query_map', {
-    description: '查询探索记忆中已知的资源坐标（不重新扫描）',
+    description: '查询探索记忆中已知的资源坐标（不重新扫描；已加载区块逐条验证，失效记录自动清除）',
     schema: {
       type: 'object',
       required: ['blockName'],
@@ -321,7 +321,24 @@ export function createPrimitiveRegistry (ctx) {
     timeoutMs: 5000,
     handler: async (c, { blockName, maxCount }) => {
       const me = c.bot?.entity?.position
-      return discovery.query(blockName, me, maxCount ?? 5).map(h => ({ x: h.x, y: h.y, z: h.z, ts: h.ts }))
+      const out = []
+      for (const h of discovery.query(blockName, me, maxCount ?? 5)) {
+        // 地形记忆验证（第 10 轮）：已加载区块逐条核对是否仍是该方块——不是则
+        // 自动删除（记忆自愈，杜绝过期坐标误导）；未加载区块无法验证标
+        // verified:false（LLM 需 observe_block 确认后再行动）
+        let verified = false
+        const cur = c.bot?.blockAt?.(new Vec3(h.x, h.y, h.z))
+        if (cur) {
+          if (cur.name === blockName) {
+            verified = true
+          } else {
+            discovery.removeResourceAt(h.x, h.y, h.z)
+            continue // 失效记录：剔除
+          }
+        }
+        out.push({ x: h.x, y: h.y, z: h.z, ts: h.ts, verified })
+      }
+      return out
     }
   })
 
@@ -405,6 +422,9 @@ export function createPrimitiveRegistry (ctx) {
       }
       checkActionCooldown('dig')
       await withTimeout(c.bot.dig(block), 30000, 'dig timeout') // 断线保护（A4 同款）
+      // 地形记忆失效（第 10 轮）：挖除的方块从探索记忆删除——记忆只增不减会让
+      // query_map 长期返回过期坐标（用户实测误判 find 失效的根因）
+      discovery.removeResourceAt(x, y, z)
       return `已挖掘 ${block.name} @ ${x},${y},${z}`
     }
   })
@@ -507,6 +527,10 @@ export function createPrimitiveRegistry (ctx) {
         try {
           await withTimeout(c.bot.collectBlock.collect(batch, { chestLocations: chests }), 120000, 'collect timeout')
           collected += batch.length
+          // 地形记忆失效（第 10 轮）：收集成功的坐标从探索记忆删除（同 dig）
+          for (const b of batch) {
+            if (b?.position) discovery.removeResourceAt(b.position.x, b.position.y, b.position.z)
+          }
         } catch (err) {
           if (err.code === 'NoChests') return { collected, inventoryFull: true } // F2：背包满（无箱子可存）
           throw err
