@@ -80,7 +80,11 @@ test('U8 修复：!task list 显示排队位置/时长剩余/下次 cron 触发'
       getStatus: () => [{
         id: 's1', type: 'combat', state: 'running', counters: {},
         waitingReason: null, lastError: null,
-        queuePosition: 2, remainingMinutes: 5, nextRunAt: new Date('2026-08-07T12:34:00')
+        queuePosition: 2, remainingMinutes: 5,
+        // 显式 +08:00 偏移：nextRunAt 是绝对时刻，按 scheduleTimezone（默认
+        // Asia/Shanghai）渲染——CI runner 时区是 UTC，无偏移的本地字符串会在
+        // 不同时区解释成不同绝对时刻 → 渲染结果漂移（第八轮时区修复后暴露）
+        nextRunAt: new Date('2026-08-07T12:34:00+08:00')
       }]
     }
   })
