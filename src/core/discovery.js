@@ -245,6 +245,38 @@ export function query (name, pos, maxCount = 5, dimension = null) {
 }
 
 /**
+ * 查询已知资源并附最近危险区（语义聚合：资源点 → 最近 dangerZone 的距离与实体名）。
+ * 复用 query() 的排序/截断/维度过滤；逐条对资源点求最近危险区——
+ * dangerZones ≤64 × 单名资源 ≤16 点，线性小常数，无需缓存。
+ * @param {string} name 资源名
+ * @param {{x:number,y:number,z:number}|null} pos 查询中心（null = 按记忆插入序）
+ * @param {{maxCount?: number, radius?: number, dimension?: string|null}} [opts]
+ *        radius=危险区搜索半径（默认 128，与 dangerLine 同口径）
+ * @returns {Array<{x:number,y:number,z:number,ts:number,dimension?:string|null,nearestDanger:{dist:number,names:string[]}|null}>}
+ */
+export function queryResourcesWithRisk (name, pos, { maxCount = 5, radius = 128, dimension = null } = {}) {
+  return query(name, pos, maxCount, dimension).map(r => {
+    const dz = queryDangerZones(r, { radius, maxCount: 1, dimension })
+    return {
+      ...r,
+      nearestDanger: dz.length ? { dist: dz[0].dist, names: dz[0].hostileNames } : null
+    }
+  })
+}
+
+/**
+ * 位置安全评估（语义聚合：给定坐标 → radius 内危险区 + safe 标记）。
+ * safe = 半径内无 fresh 危险区——实体是瞬态的，过期记录不算威胁。
+ * @param {{x:number,y:number,z:number}} pos 评估中心
+ * @param {{radius?: number, dimension?: string|null}} [opts] radius 默认 64
+ * @returns {{pos:{x:number,y:number,z:number}, dangerZones: Array<DangerZone & {dist:number,fresh:boolean,ageMinutes:number}>, safe: boolean}}
+ */
+export function assessLocation (pos, { radius = 64, dimension = null } = {}) {
+  const dangerZones = queryDangerZones(pos, { radius, maxCount: MAX_DANGER_ZONES, dimension })
+  return { pos, dangerZones, safe: dangerZones.every(z => !z.fresh) }
+}
+
+/**
  * 登记命名地点（!home set / set_place）。同名覆盖（带维度——下界/主世界基地不混淆）；
  * 超上限淘汰最旧。名字规范化：trim + 小写（query_map 匹配同口径）。
  * @returns {boolean} 是否新登记（覆盖旧名 = true）

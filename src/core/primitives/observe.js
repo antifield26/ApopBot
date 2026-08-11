@@ -297,13 +297,15 @@ export function registerObserve (register, _ctx) {
     }
   })
   register('query_map', {
-    description: '查询探索记忆中已知的资源坐标/命名地点/附近危险区域（不重新扫描；已加载区块逐条验证，失效记录自动清除）',
+    description: '查询探索记忆中已知的资源坐标/命名地点/附近危险区域/位置安全评估（不重新扫描；已加载区块逐条验证，失效记录自动清除）',
     schema: {
       type: 'object',
       properties: {
-        blockName: { type: 'string', description: '方块名（如 iron_ore/diamond_ore/bamboo；与 place/danger 三选一）' },
-        place: { type: 'string', description: '命名地点名（如 home/矿场——!home set 登记的语义坐标；与 blockName/danger 三选一）' },
-        danger: { type: 'boolean', description: '查询附近危险区域记忆（hostile 出没坐标；fresh/stale 由返回标记判断；与 blockName/place 三选一）' },
+        blockName: { type: 'string', description: '方块名（如 iron_ore/diamond_ore/bamboo；返回每条附 nearestDanger 最近危险区距离与实体名；与 place/danger/assess 四选一）' },
+        place: { type: 'string', description: '命名地点名（如 home/矿场——!home set 登记的语义坐标；与 blockName/danger/assess 四选一）' },
+        danger: { type: 'boolean', description: '查询附近危险区域记忆（hostile 出没坐标；fresh/stale 由返回标记判断；与 blockName/place/assess 四选一）' },
+        assess: { type: 'string', description: '位置安全评估：命名地点名 或 x,y,z 整数坐标；空串/缺省=当前位置。返回对象 {assess,x,y,z,dangerZones,safe}（其余分支返回数组）；与 blockName/place/danger 四选一' },
+        minSafeDist: { type: 'number', min: 0, max: 256, description: '过滤距最近危险区小于该距离的资源点（只与 blockName 同用；幸存项附 nearestDanger 供确认）' },
         maxCount: { type: 'integer', min: 1, max: 20, description: '最多返回条数，默认 5' }
       }
     },
@@ -311,14 +313,45 @@ export function registerObserve (register, _ctx) {
     exclusiveClass: 'readonly',
     guardText: '',
     timeoutMs: 5000,
-    handler: async (c, { blockName, place, danger, maxCount }) => {
-      // 三选一互斥（同 observe_blocks 语义——双传难归因，显式报错）
-      if (danger && (blockName || place)) {
-        throw new Error('query_map 的 danger 与 blockName/place 互斥，只能给一种')
+    handler: async (c, { blockName, place, danger, assess, minSafeDist, maxCount }) => {
+      // 四选一互斥（assess 空串视为缺省=当前位置，不参与互斥）
+      const given = [blockName, place, danger, assess].filter(v => v !== undefined && v !== '')
+      if (given.length > 1) {
+        throw new Error('query_map 的 blockName/place/danger/assess 互斥，只能给一种')
+      }
+      if (minSafeDist !== undefined && !blockName) {
+        throw new Error('minSafeDist 只与 blockName 同用')
       }
       // 危险区域分支（hostile 出没记忆——实体瞬态，fresh/ageMinutes 供判断）
       if (danger) {
         return { danger: discovery.queryDangerZones(c.bot?.entity?.position, { maxCount: maxCount ?? 5 }) }
+      }
+      // 安全评估分支（语义聚合：地点/坐标 → 半径内危险区 + safe 标记）
+      if (assess !== undefined) {
+        let x; let y; let z; let label; let dim
+        const text = String(assess).trim()
+        if (text === '') {
+          const me = c.bot?.entity?.position
+          if (!me) throw new Error('query_map assess 缺省位置需要 bot 在线')
+          x = Math.floor(me.x); y = Math.floor(me.y); z = Math.floor(me.z)
+          label = '当前位置'
+          dim = c.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
+        } else {
+          const p = discovery.getPlace(text)
+          if (p) {
+            x = p.x; y = p.y; z = p.z
+            label = `place:${p.name}`
+            dim = p.dimension ?? 'overworld' // 目标维度跟随地点记录
+          } else {
+            const m = /^(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)$/.exec(text)
+            if (!m) throw new Error(`query_map assess 需要命名地点名或 x,y,z 整数坐标，收到: ${text}`)
+            x = Number(m[1]); y = Number(m[2]); z = Number(m[3])
+            label = `pos:${x},${y},${z}`
+            dim = c.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
+          }
+        }
+        const a = discovery.assessLocation({ x, y, z }, { dimension: dim })
+        return { assess: label, x, y, z, dangerZones: a.dangerZones, safe: a.safe }
       }
       // 命名地点分支（!home set / set_place 登记的语义坐标——家/矿场/基地）
       if (place) {
@@ -326,7 +359,7 @@ export function registerObserve (register, _ctx) {
         if (!p) return { place: String(place), found: false, hint: '地点不存在（!home set <name> 或 set_place 登记）' }
         return { place: p.name, found: true, x: p.x, y: p.y, z: p.z, dimension: p.dimension ?? 'overworld' }
       }
-      if (!blockName) throw new Error('query_map 需要 blockName、place 或 danger')
+      if (!blockName) throw new Error('query_map 需要 blockName、place、danger 或 assess')
       // 大小写归一——记忆 key 是 explore 记录的小写名（iron_ore），LLM 传 Iron_Ore
       // 会查空且无提示（误导 LLM 去重新探索）
       const name = String(blockName).toLowerCase()
@@ -335,7 +368,13 @@ export function registerObserve (register, _ctx) {
       // 混存会误导；返回带 dimension 供 LLM 判断）
       const dim = c.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
       const out = []
-      for (const h of discovery.query(name, me, maxCount ?? 5, dim)) {
+      let skipped = 0
+      for (const h of discovery.queryResourcesWithRisk(name, me, { maxCount: maxCount ?? 5, dimension: dim })) {
+        // minSafeDist 过滤：距最近危险区过近的点不返回（语义聚合决策辅助）
+        if (minSafeDist !== undefined && h.nearestDanger && h.nearestDanger.dist < minSafeDist) {
+          skipped++
+          continue
+        }
         // 地形记忆验证：已加载区块逐条核对是否仍是该方块——不是则
         // 自动删除（记忆自愈，杜绝过期坐标误导）；未加载区块无法验证标
         // verified:false（LLM 需 observe_block 确认后再行动）
@@ -349,9 +388,11 @@ export function registerObserve (register, _ctx) {
             continue // 失效记录：剔除
           }
         }
-        out.push({ x: h.x, y: h.y, z: h.z, ts: h.ts, verified, dimension: h.dimension ?? 'overworld' })
+        out.push({ x: h.x, y: h.y, z: h.z, ts: h.ts, verified, dimension: h.dimension ?? 'overworld', nearestDanger: h.nearestDanger })
       }
-      return out
+      // 全部被 minSafeDist 过滤时不返回（避免误导"该资源已挖空"）；
+      // 被过滤数量经 nearestDanger 传达（幸存项可见最近危险区距离）
+      return skipped > 0 ? [...out, { filteredByDanger: skipped }] : out
     }
   })
   register('map_status', {

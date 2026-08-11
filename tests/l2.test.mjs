@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Vec3 } from 'vec3'
+import * as discovery from '../src/core/discovery.js'
 import { AgentInterface, _resetSummarizeCooldown, estimateTokens, applyTokenBudget } from '../src/l2/agent-interface.js'
 import { createL2 } from '../src/l2/index.js'
 import { createActionExecutor } from '../src/core/executor.js'
@@ -46,7 +47,8 @@ function makeAgent (ctx, script) {
   const provider = makeFakeProvider(script)
   // v1.0.0 C4：executor（真实原语层 + 假 provider）——工具循环与 act 都走执行器
   const executor = createActionExecutor(ctx, { audit: null })
-  const agent = new AgentInterface(ctx, { provider, executor, config: l2cfg })
+  // cfg 用副本——测试内 agent.cfg.planEnabled = false 等修改不得污染共享 l2cfg
+  const agent = new AgentInterface(ctx, { provider, executor, config: { ...l2cfg } })
   return { agent, provider, executor }
 }
 
@@ -1137,4 +1139,41 @@ test('set_goal 原语带 plan——写入会话 goal.plan', async () => {
   const g = agent.getGoal('steve')
   assert.equal(g.text, '建基地')
   assert.deepEqual(g.plan, ['砍树', '盖房'])
+})
+
+// ---- 语义聚合（P2）：planOnce 危险注入 + 记忆章节 ----
+
+test('P2: planOnce 的 system 含 危险: 行（记录 fresh 危险区后）', async () => {
+  _resetPlanCooldown()
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [{ text: '观察后决定', toolCalls: [] }])
+  discovery._reset()
+  discovery.recordDangerZone({ x: 20, y: 64, z: 0 }, { hostileNames: ['zombie'] }) // bot 在 (1,2,3) 附近
+  agent.setGoal('steve', '挖矿', ['找矿点'])
+  await agent.onTaskCompleted({ id: 'm1' })
+  const sys = provider.calls[0].system
+  assert.ok(sys.includes('危险: zombie'), sys.slice(0, 300))
+  assert.ok(sys.includes('无人值守规划器'), '仍是规划器人设')
+})
+
+test('P2: planOnce dangerInjection=false 不注入危险行', async () => {
+  _resetPlanCooldown()
+  const ctx = makeCtx()
+  const provider = makeFakeProvider([{ text: '观察后决定', toolCalls: [] }])
+  const executor = createActionExecutor(ctx, { audit: null })
+  const agent = new AgentInterface(ctx, { provider, executor, config: { ...l2cfg, dangerInjection: false } })
+  discovery._reset()
+  discovery.recordDangerZone({ x: 20, y: 64, z: 0 }, { hostileNames: ['zombie'] })
+  agent.setGoal('steve', '挖矿', ['找矿点'])
+  await agent.onTaskCompleted({ id: 'm1' })
+  assert.ok(!provider.calls[0].system.includes('危险:'), 'dangerInjection=false 不注入')
+})
+
+test('P2: chat 的 system 含【探索记忆】章节（记忆层整体描述）', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [{ text: '明白', toolCalls: [] }])
+  await agent.chat('steve', '你好')
+  const sys = provider.calls.at(-1).system
+  assert.ok(sys.includes('【探索记忆】'), '应含记忆章节')
+  assert.ok(sys.includes('query_map 四分支'), '应含四分支说明')
 })

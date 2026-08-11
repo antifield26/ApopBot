@@ -2,6 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import * as discovery from '../src/core/discovery.js'
+import { DANGER_FRESH_MS } from '../src/core/discovery.js'
 
 test.beforeEach(() => discovery._reset())
 
@@ -234,4 +235,86 @@ test('P1: stats 含 dangerZones 计数；_reset 清空', () => {
   assert.equal(discovery.stats().dangerZones, 1)
   discovery._reset()
   assert.equal(discovery.stats().dangerZones, 0)
+})
+
+// ---- 语义聚合（P2）：资源×危险区关联 ----
+
+test('P2: queryResourcesWithRisk——无危险区时 nearestDanger=null', () => {
+  discovery._reset()
+  discovery.recordResource('iron_ore', { x: 100, y: 64, z: 0 })
+  const hits = discovery.queryResourcesWithRisk('iron_ore', { x: 0, y: 64, z: 0 })
+  assert.equal(hits.length, 1)
+  assert.equal(hits[0].nearestDanger, null)
+})
+
+test('P2: queryResourcesWithRisk——危险区 dist/names 正确', () => {
+  discovery._reset()
+  discovery.recordResource('iron_ore', { x: 100, y: 64, z: 0 })
+  discovery.recordDangerZone({ x: 110, y: 64, z: 0 }, { hostileNames: ['zombie', 'creeper'] })
+  const hits = discovery.queryResourcesWithRisk('iron_ore', { x: 0, y: 64, z: 0 })
+  assert.equal(hits.length, 1)
+  assert.equal(hits[0].nearestDanger.dist, 10)
+  assert.deepEqual(hits[0].nearestDanger.names, ['zombie', 'creeper'])
+})
+
+test('P2: queryResourcesWithRisk——radius 过滤（危险区在搜索半径外→null）', () => {
+  discovery._reset()
+  discovery.recordResource('iron_ore', { x: 100, y: 64, z: 0 })
+  discovery.recordDangerZone({ x: 200, y: 64, z: 0 }, { hostileNames: ['zombie'] })
+  assert.equal(discovery.queryResourcesWithRisk('iron_ore', { x: 0, y: 64, z: 0 }, { radius: 50 })[0].nearestDanger, null)
+  assert.notEqual(discovery.queryResourcesWithRisk('iron_ore', { x: 0, y: 64, z: 0 }, { radius: 128 })[0].nearestDanger, null)
+})
+
+test('P2: queryResourcesWithRisk——维度过滤（下界危险区不附主世界资源）', () => {
+  discovery._reset()
+  discovery.recordResource('iron_ore', { x: 100, y: 64, z: 0 }, 'overworld')
+  discovery.recordDangerZone({ x: 110, y: 64, z: 0 }, { hostileNames: ['zombie'] }, 'the_nether')
+  const hits = discovery.queryResourcesWithRisk('iron_ore', { x: 0, y: 64, z: 0 }, { dimension: 'overworld' })
+  assert.equal(hits[0].nearestDanger, null, '下界危险区不应附到主世界资源')
+})
+
+test('P2: queryResourcesWithRisk——maxCount 截断复用 query 语义', () => {
+  discovery._reset()
+  discovery.recordResource('coal_ore', { x: 100, y: 64, z: 0 })
+  discovery.recordResource('coal_ore', { x: 100, y: 64, z: 80 }) // 不同 chunk
+  discovery.recordDangerZone({ x: 100, y: 64, z: 0 }, { hostileNames: ['zombie'] })
+  const hits = discovery.queryResourcesWithRisk('coal_ore', { x: 0, y: 64, z: 0 }, { maxCount: 1 })
+  assert.equal(hits.length, 1, 'maxCount=1 只返回最近 1 条')
+  assert.equal(hits[0].nearestDanger.dist, 0)
+})
+
+test('P2: assessLocation——无记录 → safe:true 空数组', () => {
+  discovery._reset()
+  const a = discovery.assessLocation({ x: 0, y: 64, z: 0 })
+  assert.equal(a.safe, true)
+  assert.deepEqual(a.dangerZones, [])
+})
+
+test('P2: assessLocation——fresh 记录 → safe:false 且含 dist/fresh/ageMinutes', () => {
+  discovery._reset()
+  discovery.recordDangerZone({ x: 10, y: 64, z: 0 }, { hostileNames: ['zombie'] })
+  const a = discovery.assessLocation({ x: 0, y: 64, z: 0 })
+  assert.equal(a.safe, false)
+  assert.equal(a.dangerZones.length, 1)
+  assert.equal(a.dangerZones[0].dist, 10)
+  assert.equal(a.dangerZones[0].fresh, true)
+  assert.equal(a.dangerZones[0].ageMinutes, 0)
+})
+
+test('P2: assessLocation——stale 记录（1h 外）→ safe:true（过期不算威胁）', () => {
+  discovery._reset()
+  discovery.recordDangerZone({ x: 10, y: 64, z: 0 }, { hostileNames: ['zombie'] })
+  const stale = discovery.listDangerZones().map(z => ({ ...z, ts: Date.now() - DANGER_FRESH_MS - 60000 }))
+  discovery._reset()
+  discovery.importSnapshot({ version: 3, anchors: [], resources: {}, places: [], dangerZones: stale })
+  const a = discovery.assessLocation({ x: 0, y: 64, z: 0 })
+  assert.equal(a.safe, true, '过期记录不算威胁')
+  assert.equal(a.dangerZones.length, 1, '过期记录仍返回（fresh=false 供判断）')
+})
+
+test('P2: assessLocation——radius 外不报（radius 缩小→safe）', () => {
+  discovery._reset()
+  discovery.recordDangerZone({ x: 100, y: 64, z: 0 }, { hostileNames: ['zombie'] })
+  assert.equal(discovery.assessLocation({ x: 0, y: 64, z: 0 }, { radius: 50 }).safe, true)
+  assert.equal(discovery.assessLocation({ x: 0, y: 64, z: 0 }, { radius: 128 }).safe, false)
 })
