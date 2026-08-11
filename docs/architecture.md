@@ -94,8 +94,15 @@ minecraft-bot (Node.js ≥22, ESM)
 
 ## 自主推进与危险记忆（Planner + World Model）
 
-- **自主推进**：任务自然完成且无配置链 → `agent.onTaskCompleted` → 规划器（受限工具循环）读 goal 生成下一个任务。start_task 支持 `next`（任务链）/`schedule`（cron 定时）——config 与 start_task 共用 validateNextOptions/validateCron 校验口径。9 层保护见 docs/l2.md「自主推进」节；`l2.planEnabled`/`l2.planCooldownMs` 配置
+- **自主推进**：任务自然完成且无配置链 → `agent.onTaskCompleted` → 规划器（受限工具循环）读 goal 生成下一个任务。start_task 支持 `next`（任务链）/`schedule`（cron 定时）——config 与 start_task 共用 validateNextOptions/validateCron 校验口径。9 层保护见 docs/l2.md「自主推进」节；`l2.planEnabled`/`l2.planCooldownMs` 配置。v1.4.0 起 planner 是独立角色（见下）
 - **危险区域记忆**：discovery dangerZones（snapshot v3）——hostile 出没坐标 chunk 去重 + 1h 新鲜窗口；写入 = exploreStep/ExploreTask 站点 + entityHurt 被动点；查询 = query_map danger 分支（实体瞬态无法 blockAt 验证，用 fresh/ageMinutes 标记）；被动注入 = system"危险:"行（`l2.dangerInjection`）
+- **语义聚合（v1.4.0）**：discovery `queryResourcesWithRisk`（资源点附最近危险区距离/实体名）与 `assessLocation`（坐标安全评估，过期不算威胁）；query_map 四分支互斥（blockName/place/danger/assess），blockName 附 nearestDanger + `minSafeDist` 过滤；规划器 system 补"危险:"行——决策层与查询层都拿到聚合语义
+
+## 多角色 Agent（单 bot 多角色，v1.4.0）
+
+- **角色注册表**：createL2 返回 `{primary, planner, roles, get, all, roleStats, ...委托}`——恒有 primary（对话）+ planner（规划）两角色，`l2.roles` 配置自定义角色（systemPrompt/tools 白名单/planEnabled/enabled 角色级覆盖）；共享 provider/executor/tasks（仲裁器保证动作串行）。planner 恒创建（planEnabled 只门控自主推进）
+- **L2 实例化改造**：SESSIONS key 带角色前缀（磁盘零改动 + 旧裸 key 首读迁移）；plan 冷却入实例、summarize 冷却留模块级共享（防并发推理）；pickGoalSession 剥离前缀（权限身份）——架构上为多 bot 扩展留了口（发现/仲裁/连接仍单实例，扩展点在 l2 层已验证）
+- **零改动面**：feature-layer/manager/fl-*/commands 的 `ctx.agent` 消费面全部经注册表显式委托（onTaskCompleted 路由 planner）——单角色升级多角色无源码改动，纯配置驱动
 
 ## 注释与文档约定
 

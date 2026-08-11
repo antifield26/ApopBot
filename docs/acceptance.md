@@ -38,6 +38,24 @@
 | 危险注入 | 待验收 | 危险区 1 小时内 | 靠近记录过怪物的区域问 LLM「附近安全吗」——回复应含危险信息（system 注入行） | | dangerLine 被动感知 |
 | 被动记录 | 待验收 | 怪物攻击 bot | bot 被僵尸攻击后 `query_map danger` 出现该位置 | | entityHurt 写入路径 |
 
+## 语义聚合（资源×危险区关联）
+
+| 条目 | 状态 | 依赖环境 | 验证步骤 | 验证日期 | 备注 |
+|---|---|---|---|---|---|
+| assess 安全评估 | 待验收 | 有命名地点 + 危险区 | `!agent act query_map {"assess":"home"}`——返回半径 64 内危险区与 safe 标记；`{"assess":""}` 评估当前位置 | | 地点/坐标/当前位置三态 |
+| minSafeDist 过滤 | 待验收 | 危险区附近有资源记录 | `!agent act query_map {"blockName":"iron_ore","minSafeDist":20}`——危险区 20m 内矿点被滤，幸存项附 nearestDanger | | 语义聚合决策辅助 |
+| 互斥补全 | 待验收 | l2 启用 | `!agent act query_map {"blockName":"iron_ore","place":"home"}`——应报互斥错误（不再静默忽略 blockName） | | 四分支互斥 |
+| 规划器危险感知 | 待验收 | 危险区 1 小时内 + goal | 设 goal 后任务完成触发规划——规划器 system 含「危险:」行（此前完全不可见） | | planOnce dangerLine 注入 |
+
+## 多角色 Agent（单 bot 多角色）
+
+| 条目 | 状态 | 依赖环境 | 验证步骤 | 验证日期 | 备注 |
+|---|---|---|---|---|---|
+| 角色路由 | 待验收 | `l2.enabled=true` | `!agent role list` 列出 primary/planner；`!agent role planner chat 你好` 回复带 `[planner]` 前缀；`!agent planner chat 你好` 便捷形式 | | 缺省两角色，`!agent chat X` 恒为 primary |
+| 会话隔离 | 待验收 | 同上 | 与 primary 对话几轮 → `!agent role planner chat 你好`——planner 无 primary 历史（独立会话） | | 角色前缀会话 key |
+| 角色工具白名单 | 待验收 | 配置自定义角色 | `l2.roles` 配 `{name:"farmer", tools:["observe_crops"]}`——`!agent role farmer chat` 工具集只含白名单 | | 无 act 则无动作通道 |
+| 旧会话继承 | 待验收 | 升级自 v1.3.0 | 升级后首条 `!agent chat` 仍记得升级前的多轮上下文 | | 旧裸 key 迁移 |
+
 ## 运维闭环（工程治理）
 
 | 条目 | 状态 | 依赖环境 | 验证步骤 | 验证日期 | 备注 |

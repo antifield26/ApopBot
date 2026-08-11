@@ -3,6 +3,22 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 **版本单一来源 = package.json**（`node scripts/release.mjs [patch|minor|major]` bump，check:compat 交叉校验 package.json ↔ lockfile）。
 
+## [1.4.0] - 2026-08-11
+
+ChatGPT 评估剩余两项（语义聚合 P2 + 多Agent P3，独立提交——语义聚合完整闭环 / 单 bot 多角色）：
+
+- **语义聚合档（资源×危险区关联，闭环 4 点）**：
+  - **discovery 聚合函数**：`queryResourcesWithRisk`（资源点附最近危险区距离与实体名——语义聚合核心；危险区 ≤64 × 单名资源 ≤16 线性小常数）；`assessLocation`（坐标安全评估——radius 内危险区 + safe 标记，过期记录不算威胁）
+  - **query_map 扩展**：四分支严格互斥（**修复 blockName+place 同传静默忽略漏洞**）；`assess` 分支（地点名 / x,y,z 坐标 / 空=当前位置，返回 dangerZones 与 safe）；blockName 每条附 `nearestDanger` + `minSafeDist` 过滤危险区附近的点（全滤时 `filteredByDanger` 尾项明示——防 LLM 误判"资源已挖空"）
+  - **规划器危险感知**：planOnce system 组装补"危险:"行（此前规划器完全看不到危险记忆——选目标可能选进雷区）
+  - **CORE_SYSTEM_PROMPT【探索记忆】章节**：记忆全貌（资源/地点/危险区/锚点 + 自愈语义）+ query_map 四分支说明（LLM 知道有地图记忆可用聚合查询）
+- **多角色档（单 bot 多角色，L2 实例化改造）**：
+  - **角色注册表**：createL2 返回 `{primary, planner, roles, get, all, roleStats, ...}`——恒有 primary（对话）+ planner（规划）两角色；`l2.roles` 配置自定义角色 `{name, enabled?, planEnabled?, systemPrompt?, tools?}`（tools=原语名白名单，无 act 则无动作通道）；planner 恒创建（planEnabled 只门控自主推进，保留手动对话通道）；feature-layer/manager/commands 的 ctx.agent 消费面**源码零改动**（显式委托 + onTaskCompleted 路由 planner）
+  - **L2 实例化**：SESSIONS key 带角色前缀（各角色会话/目标隔离；磁盘零改动，v1.3.0 旧裸 key 首读自动迁移——内存+磁盘双路径）；plan 冷却移入实例（各角色独立推进节奏）；summarize 冷却保留模块级共享（死亡/任务终态/反思/滚动摘要四方调用——移入实例会放行并发推理）；pickGoalSession 剥离角色前缀（否则 planner 以 `primary:steve` 身份执行 start_task → isOp 误拒，自主推进静默失效——最高危细节）
+  - **命令路由**：`!agent role list` / `!agent role <name> <action> [args]` 显式 + `!agent <role> <action>` 便捷形式（非 primary 角色名 + 已知动作）——`!agent chat X` 恒为 primary（无歧义），非主角色回复带 `[role]` 前缀
+  - **配置契约**：l2.roles 校验（数组/name 唯一/字段集/显式提供必须含 primary）+ config.example.json 示例；/metrics 加 `l2.roles`（各角色 busy/会话数/planEnabled）
+  - 测试 +40（551 全绿）：l2-roles.test 9 项（路由/隔离/前缀剥离/磁盘迁移/白名单/冷却/统计）+ config/commands-builtin/http-status 用例；修复 l2.test 共享 l2cfg 污染 + 模块级 SESSIONS 跨测试污染（_resetSessions 钩子）
+
 ## [1.3.0] - 2026-08-11
 
 LLM 自主性深化（ChatGPT 评估驱动的两档功能增量——Planner + World Model，独立提交）：
