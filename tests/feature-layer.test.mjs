@@ -126,8 +126,7 @@ test('U6 修复：死亡 → LLM 播报；重生 → 恢复死亡时暂停的任
   const layer = createFeatureLayerManager(ctx, ctx.logger)
   const bot = new FakeBot()
   await layer.rebuild(bot)
-  let pauseIds = []
-  ctx.tasks.pauseAll = async () => { pauseIds = ['a', 'b']; return ['a', 'b'] }
+  ctx.tasks.pauseAll = async () => ['a', 'b']
   ctx.plugins = { follow: { stop: () => {} } }
   ctx.agent = { summarize: async () => '被僵尸击杀' }
   bot.entity = { position: { x: 1, y: 2, z: 3 } }

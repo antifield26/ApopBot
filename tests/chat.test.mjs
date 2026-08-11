@@ -79,7 +79,7 @@ test('registry 速率限制：op 命令冷却期内静默丢弃', async () => {
   const calls = []
   registry.register({
     name: 'secret',
-    handler: async (c) => { calls.push(1) }
+    handler: async () => { calls.push(1) }
   })
   const ctx = { bot: { chat: () => {} }, cfg: { ops: ['op1'], chat: { commandCooldownMs: 10000 } } }
   await registry.dispatch('!secret', { sender: 'op1', ctx })

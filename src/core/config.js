@@ -207,7 +207,7 @@ function readJson (file) {
     return JSON.parse(readFileSync(file, 'utf8'))
   } catch (err) {
     if (err.code === 'ENOENT') return null
-    throw new Error(`无法读取配置文件 ${file}: ${err.message}`)
+    throw new Error(`无法读取配置文件 ${file}: ${err.message}`, { cause: err })
   }
 }
 
@@ -275,7 +275,7 @@ export function assertLogDirWritable (cfg) {
   } catch (err) {
     throw new Error(`日志目录不可写: ${cfg.log.dir}（${err.message}）。` +
       '请将 log.dir 配置到可写路径（如项目内 ./logs），' +
-      '并确认运行账户对该路径有写权限')
+      '并确认运行账户对该路径有写权限', { cause: err })
   }
 }
 

@@ -61,7 +61,7 @@ export function followPlugin (bot) {
   function shouldJump (p, dx, dz) {
     // blockAt 包 try——tick 是 setInterval 回调，抛错 = uncaughtException →
     // fatalExit 停服；位置异常时按"无障碍"处理（防跳崖即可）
-    let ahead = null
+    let ahead
     try { ahead = bot.blockAt(p.offset(Math.sign(dx), 0, Math.sign(dz))) } catch { ahead = null }
     if (!ahead || ahead.boundingBox === 'empty') return false
     return ahead.name !== 'water' && ahead.name !== 'lava'
@@ -128,7 +128,7 @@ export function followPlugin (bot) {
       const dz = (tp.z - p.z) / dist
       // 前方 1 格是岩浆 → 停 forward 切寻路（直接控制不避障且不跳岩浆——
       // pathfinder 的 blocksToAvoid 含 lava 会绕行；否则直接步入岩浆烧死）
-      let ahead1 = null
+      let ahead1
       try { ahead1 = bot.blockAt(p.offset(Math.sign(dx), 0, Math.sign(dz))) } catch { ahead1 = null }
       if (ahead1?.name === 'lava') {
         stopMoving()
@@ -141,7 +141,7 @@ export function followPlugin (bot) {
       updateJump(p, dx, dz)
       // 前方 2 格是虚空/未加载（直走会掉落）→ 切寻路（无条件，跳跃中也防跳崖）；
       // 同 sign 偏移：余弦偏移 floor 会落在脚下格
-      let ahead = null
+      let ahead
       try { ahead = bot.blockAt(p.offset(Math.sign(dx) * 2, -1, Math.sign(dz) * 2)) } catch { ahead = null }
       // 卡住检测：爬升中看 y 位移（贴墙跳时水平位移小会被误判卡住）；否则看水平位移
       const movedY = jumpHeld && lastPos ? Math.abs(p.y - lastPos.y) > 0.15 : false

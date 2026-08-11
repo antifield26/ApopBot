@@ -131,7 +131,7 @@ test('follow: entityGone 自动停止跟随', (t) => {
   assert.equal(bot.controls.forward, false)
 })
 
-test('C1 修复：目标消失提示走 sendChat（不含 §——Paper 踢出防护）', (t) => {
+test('C1 修复：目标消失提示走 sendChat（不含 §——Paper 踢出防护）', () => {
   const bot = makeBot()
   const player = { id: 42, username: 'steve', position: new Vec3(5, 64, 0) }
   bot.follow.setTarget(player)

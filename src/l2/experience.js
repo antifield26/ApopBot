@@ -29,8 +29,8 @@ export function loadExperience (file = DEFAULT_FILE) {
   }
   const items = Array.isArray(data?.items)
     ? data.items
-        .filter(i => i && typeof i === 'object' && typeof i.lesson === 'string')
-        .map(i => ({ ...i, count: Number.isInteger(i.count) && i.count > 0 ? i.count : 1 }))
+      .filter(i => i && typeof i === 'object' && typeof i.lesson === 'string')
+      .map(i => ({ ...i, count: Number.isInteger(i.count) && i.count > 0 ? i.count : 1 }))
     : []
   return { schemaVersion: EXPERIENCE_SCHEMA_VERSION, items }
 }

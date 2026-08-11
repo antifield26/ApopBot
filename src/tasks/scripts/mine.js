@@ -7,8 +7,6 @@
 // - NoChests → 5min inventory-full；其他 collect 错误 → 30s collect-retry
 // - 默认 radius 32 / maxBlocks 64
 
-import { Vec3 } from 'vec3'
-
 export default {
   id: 'mine',
   exclusive: false,

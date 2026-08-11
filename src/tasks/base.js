@@ -229,7 +229,7 @@ export class BaseTask {
     this._reset()
     this._runGen++ // 新代际：stop() 超时强制结束后旧 run 协程在下次循环检查时自弃
     const gen = this._runGen
-    let runPromise = null
+    let runPromise
     try {
       await this.init()
       if (this._stopRequested) { this._setState('stopped'); return null }

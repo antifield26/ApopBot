@@ -50,7 +50,7 @@ test('updateCheckCompat: git pin → npm 版本替换', () => {
 test('updateCheckCompat: 未匹配到 git pin 条目时抛错（防静默失败）', () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'upstream-'))
   const compatPath = path.join(dir, 'check-compat.mjs')
-  writeFileSync(compatPath, `const EXPECTED = { 'mineflayer': { kind: 'npm', version: '4.40.0' } }`)
+  writeFileSync(compatPath, 'const EXPECTED = { \'mineflayer\': { kind: \'npm\', version: \'4.40.0\' } }')
   assert.throws(() => updateCheckCompat(compatPath, '4.41.0', '1.41.0'), /未匹配/)
   rmSync(dir, { recursive: true, force: true })
 })

@@ -30,7 +30,7 @@ function makeCtx (overrides = {}) {
   const conn = { getStatus: () => ({ state: 'connected', reconnectCount: 2 }) }
   const agent = {
     chat: async (user, text) => ({ reply: `echo:${text}` }),
-    act: async (user, name, params) => ({ ok: true, result: `done:${name}` })
+    act: async (user, name) => ({ ok: true, result: `done:${name}` })
   }
   const cfg = { ops: ['op1'], chat: { maxLength: 250, commandCooldownMs: 0 } }
   const ctx = {

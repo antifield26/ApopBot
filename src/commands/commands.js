@@ -20,7 +20,7 @@ function auditCommand (c, op, args, ok, result, durationMs = 0) {
  * 注册内置命令。
  * ctx: { bot, cfg, logger, tasks, conn, agent, plugins, onReload }
  */
-export function registerBuiltinCommands (registry, ctx) {
+export function registerBuiltinCommands (registry, _ctx) {
   registry.register({
     name: 'ping',
     description: '心跳检查',
@@ -427,7 +427,7 @@ export function registerBuiltinCommands (registry, ctx) {
         }
         const name = rest[0]
         if (!name) { await sendChat(c.bot, '§c用法: !agent act <name> [json]', c.cfg.chat?.maxLength); return }
-        let params = {}
+        let params
         try { params = rest[1] ? JSON.parse(rest[1]) : {} } catch { await sendChat(c.bot, '§c参数必须是 JSON', c.cfg.chat?.maxLength); return }
         const { ok, result } = await c.agent.act(sender, name, params)
         const out = typeof result === 'string' ? result : JSON.stringify(result)

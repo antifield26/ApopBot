@@ -108,7 +108,7 @@ async function ensureMiningTool (bot, blockName, logger) {
  */
 async function autoDeposit (bot, logger, cfg = null) {
   if (!bot?.openContainer || !bot?.findBlocks) return { stored: 0, found: [] }
-  let found = []
+  let found
   try {
     // 配置仓库优先（storage.chests 固定坐标）；未配置才附近搜索 32 格内箱子
     const configured = (cfg?.storage?.chests ?? []).map(c => new Vec3(c.x, c.y, c.z))
@@ -149,7 +149,7 @@ async function autoDeposit (bot, logger, cfg = null) {
  * 创建原语注册表。ctx = { bot, cfg, logger, tasks, conn, plugins }（与 skills 同源）。
  * @returns {Map<string, object>} op → 原语定义
  */
-export function createPrimitiveRegistry (ctx) {
+export function createPrimitiveRegistry (_ctx) {
   const reg = new Map()
   const register = (op, def) => {
     if (reg.has(op)) throw new Error(`原语重复注册: ${op}`)
@@ -227,7 +227,7 @@ export function createPrimitiveRegistry (ctx) {
     timeoutMs: 5000,
     handler: async (c, { filter, maxDistance, area }) => {
       // filter 支持字符串（nearbyEntities 语义：name 子串 OR kind）与数组（任一匹配）
-      let ents = []
+      let ents
       if (Array.isArray(filter)) {
         ents = nearbyEntities(c.bot, { maxDistance: maxDistance ?? 32, limit: 32 })
         // 大小写不敏感（与字符串路径 nearbyEntities 的 toLowerCase 语义一致）
@@ -389,7 +389,7 @@ export function createPrimitiveRegistry (ctx) {
         const d = Math.hypot(botPos.x - anchor.x, botPos.z - anchor.z)
         if (d > maxDistance) c.logger.warn({ dist: Math.round(d), maxDistance }, 'bot 距区域中心超出扫描半径——请靠近区域或调整 area')
       }
-      let found = []
+      let found
       try {
         found = c.bot.findBlocks({ matching: (b) => b.type !== 0, maxDistance, count: 10000 })
       } catch { return { mature: [], immature: [], farmland: [] } }
@@ -663,7 +663,7 @@ export function createPrimitiveRegistry (ctx) {
           return c.bot.blockAt?.(new Vec3(p[0], p[1], p[2])) ?? null
         })
         .filter(Boolean)
-      let targets = []
+      let targets
       if (Array.isArray(positions) && positions.length) {
         targets = toBlocks(positions)
       } else {
@@ -684,12 +684,12 @@ export function createPrimitiveRegistry (ctx) {
       if (targets.length === 0) return { collected: 0, inventoryFull: false }
       // chestLocations 转 Vec3（collectblock 的 getClosestChest 调 c.distanceTo——配置
       // 普通对象必须转）；坐标非法/缺维度（NaN）过滤——NaN chest 距离恒不可达
-      const chests = Array.isArray(chestLocations)
+      let chests = Array.isArray(chestLocations)
         ? chestLocations
-            .map(c => Array.isArray(c)
-              ? (c.length >= 3 && c.slice(0, 3).every(Number.isFinite) ? new Vec3(c[0], c[1], c[2]) : null)
-              : (c && Number.isFinite(c.x) && Number.isFinite(c.y) && Number.isFinite(c.z) ? new Vec3(c.x, c.y, c.z) : null))
-            .filter(Boolean)
+          .map(c => Array.isArray(c)
+            ? (c.length >= 3 && c.slice(0, 3).every(Number.isFinite) ? new Vec3(c[0], c[1], c[2]) : null)
+            : (c && Number.isFinite(c.x) && Number.isFinite(c.y) && Number.isFinite(c.z) ? new Vec3(c.x, c.y, c.z) : null))
+          .filter(Boolean)
         : undefined
       // 分批 ≤4（批间 pause/stop 响应延迟有界——与 mine/chop 任务同款语义）
       let collected = 0
@@ -768,12 +768,10 @@ export function createPrimitiveRegistry (ctx) {
       const wantedCrops = Array.isArray(cropTypes) && cropTypes.length > 0
         ? cropTypes
         : Object.keys(seedByCrop)
-      const wantedSeeds = new Set(wantedCrops.map(c => seedByCrop[c]).filter(Boolean))
       // farm._scanArea 同款扫描（找区域内耕地）
-      const anchor = new Vec3((area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2, (area.z1 + area.z2) / 2)
       const diag = Math.hypot(area.x2 - area.x1, area.y2 - area.y1, area.z2 - area.z1)
       const maxDistance = Math.min(Math.ceil(diag) + 16, 256)
-      let found = []
+      let found
       try {
         found = c.bot.findBlocks({ matching: (b) => b.type !== 0, maxDistance, count: 10000 })
       } catch { return { planted: 0 } }
@@ -990,7 +988,7 @@ export function createPrimitiveRegistry (ctx) {
     handler: async (c, { chestLocations, keepTools }) => {
       if (!c.bot?.openContainer) throw new Error('卸货能力不可用（插件缺失）')
       // 目标箱子：显式 chestLocations → storage.chests 配置仓库 → 附近 32 格搜索
-      let targets = []
+      let targets
       if (Array.isArray(chestLocations) && chestLocations.length) {
         targets = chestLocations.filter(p => Number.isFinite(p?.x) && Number.isFinite(p?.y) && Number.isFinite(p?.z))
       } else {
@@ -1048,7 +1046,7 @@ export function createPrimitiveRegistry (ctx) {
     timeoutMs: 60000,
     handler: async (c, { itemName, count, chestLocations }) => {
       if (!c.bot?.openContainer) throw new Error('取货能力不可用（插件缺失）')
-      let targets = []
+      let targets
       if (Array.isArray(chestLocations) && chestLocations.length) {
         targets = chestLocations.filter(p => Number.isFinite(p?.x) && Number.isFinite(p?.y) && Number.isFinite(p?.z))
       } else {
@@ -1092,7 +1090,7 @@ export function createPrimitiveRegistry (ctx) {
     timeoutMs: 10000,
     handler: async (c, { itemName, count }) => {
       if (!c.bot?.tossStack) throw new Error('drop 能力不可用（插件缺失）')
-      let item = null
+      let item
       if (itemName) {
         item = c.bot.inventory?.items()?.find(it => it.name === itemName)
         if (!item) return `背包里没有 ${itemName}`
@@ -1240,7 +1238,7 @@ export function createPrimitiveRegistry (ctx) {
       // abort 监听器必须配对移除（wait 原语同款纪律）——fish 任务挂机数小时
       //（60s/次抛竿）会在同一 AbortSignal 上累积上百个监听器
       let onAbort = null
-      let caught = false
+      let caught
       try {
         await Promise.race([
           withTimeout(c.bot.fish(), timeoutMs ?? 60000, 'fish timeout'),
@@ -1337,7 +1335,7 @@ export function createPrimitiveRegistry (ctx) {
       // 白天不睡（sleepAtNight 语义——脚本只管调，昼夜判定在此）
       if (c.bot.time?.isDay) return { slept: false, reason: '白天不需要睡觉' }
       // 找附近床（32 格内；_bed 后缀覆盖全部颜色变体）
-      let beds = []
+      let beds
       try {
         beds = c.bot.findBlocks({ matching: (b) => /_bed$/.test(b.name), maxDistance: 32, count: 4 })
       } catch { beds = [] }
@@ -1511,7 +1509,7 @@ export function createPrimitiveRegistry (ctx) {
       if (!player) return `找不到玩家 ${targetName}`
       // 目标防御：bot.players 含 Bot 自己——跟随自己 = 原地打转
       if (targetName.toLowerCase() === String(c.bot.username ?? '').toLowerCase()) {
-        return `不能跟随 Bot 自己——请指定其他玩家（如"跟随我"）`
+        return '不能跟随 Bot 自己——请指定其他玩家（如"跟随我"）'
       }
       if (!player?.entity || player.entity === c.bot.entity) {
         return `玩家 ${targetName} 不可跟随（实体未加载或指向 Bot 自己）`

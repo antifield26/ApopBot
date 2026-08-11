@@ -179,7 +179,7 @@ test('U5: agent 计量累计——chat 工具循环多轮 usage 累加（AgentIn
   const ctx = { cfg: { ops: [], l2: { maxActionsPerCall: 8 } }, logger: makeLogger(), bot: {}, tasks: { getStatus: () => [] }, conn: { getStatus: () => ({ state: 'connected' }) }, plugins: {} }
   const calls = []
   const provider = {
-    async chat (messages, opts = {}) {
+    async chat (messages, _opts = {}) {
       calls.push(messages)
       if (calls.length === 1) return { text: null, toolCalls: [{ id: 't1', name: 'act', arguments: { actions: [{ op: 'observe_status', args: {} }] } }], usage: { inputTokens: 10, outputTokens: 4 }, latencyMs: 100 }
       return { text: 'done', toolCalls: [], usage: { inputTokens: 8, outputTokens: 2 }, latencyMs: 200 }

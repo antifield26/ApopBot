@@ -10,7 +10,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { KNOWN_PINS, VERSION_FILE, applyChanges, updateCheckCompat } from './upstream-lib.mjs'
+import { VERSION_FILE, applyChanges, updateCheckCompat } from './upstream-lib.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PKG_PATH = path.join(ROOT, 'package.json')
@@ -42,7 +42,7 @@ async function latestVersion (pkg) {
 }
 
 async function main () {
-  console.log(`=== 检查上游 26.1.2 (协议 775) 支持 ===`)
+  console.log('=== 检查上游 26.1.2 (协议 775) 支持 ===')
   let results
   try {
     results = await checkAllUpstream()

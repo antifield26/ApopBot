@@ -31,7 +31,7 @@ function trunc (v) {
  * worker；热重载 log.dir 变化时按新键新建（旧 worker 随旧配置弃用）。
  */
 const _shared = new Map() // `${dir}|${keepDays}` → { append, path }
-export function createAuditLogger ({ dir, keepDays = 14, logger } = {}) {
+export function createAuditLogger ({ dir, keepDays = 14 } = {}) {
   if (dir) {
     const key = `${dir}|${keepDays}`
     const existing = _shared.get(key)

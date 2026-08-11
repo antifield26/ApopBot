@@ -495,8 +495,8 @@ export class AgentInterface {
           const summary = failed
             ? `失败:${tc.name === 'act' ? r.rejected : r.result}`
             : (tc.name === 'act'
-                ? r.results.map(x => `${x.op}${x.ok ? '' : '✗'}`).join(' ')
-                : (typeof r.result === 'string' ? r.result : JSON.stringify(r.result)))
+              ? r.results.map(x => `${x.op}${x.ok ? '' : '✗'}`).join(' ')
+              : (typeof r.result === 'string' ? r.result : JSON.stringify(r.result)))
           toolCalls.push({ name: tc.name, result: summary.slice(0, 120) })
           if (toolCalls.length > 20) toolCalls.shift()
         }

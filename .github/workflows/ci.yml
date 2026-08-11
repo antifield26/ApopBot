@@ -46,6 +46,9 @@ jobs:
       - name: Run tests (node --test, 全离线)
         run: npm test
 
+      - name: Lint (eslint flat config)
+        run: npm run lint
+
       - name: Compatibility gate (check:compat, 离线模式)
         run: npm run check:compat
 

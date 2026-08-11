@@ -3,7 +3,7 @@
 // 自然完成）+ afk/fish 脚本行为。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ScriptTask, ScriptRunner } from '../src/tasks/runner.js'
+import { ScriptTask } from '../src/tasks/runner.js'
 import { Vec3 } from 'vec3'
 
 function makeLogger () {
@@ -129,7 +129,6 @@ test('BaseTask 语义映射: stop 中断脚本（abort signal 贯通）', async 
       ] }
     ] }
   }
-  const ctx = makeCtx()
   const task = makeTask(script, {})
   task.start()
   await new Promise(r => setImmediate(r))
@@ -539,7 +538,6 @@ test('breed 脚本: 喂食成功 → 等待幼崽 → breedings 计数', async (
 // ---- explore 脚本（v1.0.0 C10：任务局部 op spiral_step）----
 
 test('explore 脚本: 螺旋一站推进（goto + 锚点登记 + waypoints 计数）', async () => {
-  const anchors = []
   const { default: exploreScript } = await import('../src/tasks/scripts/explore.js')
   const discovery = await import('../src/core/discovery.js')
   discovery._reset()

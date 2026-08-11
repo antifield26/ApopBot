@@ -149,7 +149,7 @@ export class ScriptRunner {
     this.actionCount++
     const max = this.task.scriptDef.maxActions ?? Infinity
     if (this.actionCount > max) {
-      this.task.log.warn({ max, count: this.actionCount }, `脚本动作数超上限（疑似死循环）——任务停止`)
+      this.task.log.warn({ max, count: this.actionCount }, '脚本动作数超上限（疑似死循环）——任务停止')
       throw new Error(`脚本动作数超上限 ${max}（疑似死循环，已停止）`)
     }
     const args = this.resolveValue(step.args ?? {})

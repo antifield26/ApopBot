@@ -157,7 +157,7 @@ test('chat: abort 返回友好回复', async () => {
 
 test('chat: provider 抛错 → 友好回复不崩溃', async () => {
   const ctx = makeCtx()
-  const { agent } = makeAgent(ctx, [])
+  makeAgent(ctx, [])
   const p = { chat: async () => { throw new Error('API 500') } }
   const executor = createActionExecutor(ctx, { audit: null })
   const agent2 = new AgentInterface(ctx, { provider: p, executor, config: l2cfg })

@@ -77,7 +77,6 @@ export function importSnapshot (memory) {
   }
   if (memory.resources && typeof memory.resources === 'object' && !Array.isArray(memory.resources)) {
     const res = {}
-    let count = 0
     for (const [name, list] of Object.entries(memory.resources)) {
       if (!Array.isArray(list)) continue
       const clean = list
@@ -85,7 +84,6 @@ export function importSnapshot (memory) {
         .slice(-MAX_RESOURCES_PER_NAME)
       if (clean.length) {
         res[name] = clean
-        count += clean.length
       }
     }
     // 全局上限：超限从最旧记录开始淘汰

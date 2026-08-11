@@ -27,7 +27,7 @@ function makeCtx (overrides = {}) {
       return []
     },
     // 上方 2 格空 → 全部候选视为地表
-    blockAt: (p) => ({ boundingBox: 'empty', name: 'air' }),
+    blockAt: () => ({ boundingBox: 'empty', name: 'air' }),
     // C2 end-race 需要事件 API（本组测试不模拟断线，no-op 即可）
     once: () => {},
     removeListener: () => {},
@@ -92,7 +92,7 @@ test('C8/W 修复：!find 找到并到达 → 报告实际到达坐标（可达�
 
 test('!find 无法到达（NoPath）→ 如实反馈 + 最近候选', async () => {
   const d = deferredGoto()
-  const { ctx, bot } = makeCtx({
+  const { ctx } = makeCtx({
     bot: {
       chat: async (msg) => { bot2.messages.push(msg) },
       messages: [],
@@ -116,7 +116,7 @@ test('!find 无法到达（NoPath）→ 如实反馈 + 最近候选', async () =
 
 test('!find 行走期间防重入（busy）', async () => {
   const d = deferredGoto()
-  const { ctx, bot } = makeCtx({
+  const { ctx } = makeCtx({
     bot: {
       chat: async (msg) => { bot2.messages.push(msg) },
       messages: [],

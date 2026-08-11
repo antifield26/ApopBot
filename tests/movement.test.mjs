@@ -118,7 +118,7 @@ test('goto: 谓词中断 → interrupted', async () => {
 
 test('goto: A* Timeout 自动重试一次（第二次成功）', async () => {
   let calls = 0
-  const bot = makePathBot((goal) => {
+  const bot = makePathBot(() => {
     calls++
     if (calls === 1) return Promise.reject(Object.assign(new Error('Timeout'), { name: 'Timeout' }))
     return Promise.resolve()
@@ -288,7 +288,7 @@ test('findSurfaceBlocks: 上方有实体方块 → 排除（埋地下/洞顶）'
   const bot = makeFindBot({
     blocksByName: { iron_ore: { id: 44 } },
     findBlocks: () => [new Vec3(5, 64, 5)],
-    blockAt: (p, extra) => (p.y === 65 ? { boundingBox: 'block', name: 'stone' } : { boundingBox: 'empty', name: 'air' })
+    blockAt: (p) => (p.y === 65 ? { boundingBox: 'block', name: 'stone' } : { boundingBox: 'empty', name: 'air' })
   })
   const { candidates } = findSurfaceBlocks(bot, 'iron_ore')
   assert.equal(candidates.length, 0)

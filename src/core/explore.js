@@ -94,7 +94,6 @@ export function spiralWaypoints (centerX, centerZ, maxDistance, step = SPIRAL_ST
   const points = []
   const maxRing = Math.max(1, Math.floor(maxDistance / step))
   for (let r = 1; r <= maxRing; r++) {
-    const radius = r * step
     const n = Math.max(4, Math.round(8 * r))
     for (let i = 0; i < n; i++) {
       const per = ((i + 0.5) / n) * 8 * r // 方形周长参数 0..8r（单位 step）
