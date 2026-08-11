@@ -2,7 +2,6 @@
 import { readFileSync, mkdirSync, accessSync, constants as FS_CONST } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { Cron } from 'croner'
 import { validateTaskOptions, validateNextOptions, validateCron } from './task-schemas.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')

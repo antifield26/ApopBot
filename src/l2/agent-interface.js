@@ -718,10 +718,10 @@ export class AgentInterface {
    * 任务自然完成 → 规划器评估目标推进（自主行为）。
    * 门控：planEnabled / 独立冷却 / busy（不抢占对话）/ 无 goal 会话。全程静默——
    * 任何失败只留日志，绝不抛错/广播（任务完成通知流程不受影响）。
-   * @param {object} rec 完成的任务条目
+   * @param {object} _rec 完成的任务条目（当前仅作触发信号——门控读自身状态）
    * @returns {Promise<boolean>} 是否发起了规划调用
    */
-  async onTaskCompleted (rec) {
+  async onTaskCompleted (_rec) {
     try {
       if (this.cfg.planEnabled === false) return false
       const now = Date.now()
@@ -770,9 +770,8 @@ export class AgentInterface {
     lastPlanAt = Date.now() // 置位防重入
     const tools = buildPlanningTools(this.executor)
     let messages = []
-    let done = false
     let toolCalls = 0
-    for (let step = 0; step < 2 && !done; step++) {
+    for (let step = 0; step < 2; step++) {
       const statusLine = (this.ctx.tasks?.getStatus?.() ?? []).slice(0, 10)
         .map(t => `${t.id}:${t.state}${t.waitingReason ? `(${t.waitingReason})` : ''}`)
         .join(' ') || '无任务'
@@ -797,7 +796,7 @@ export class AgentInterface {
       this.usage.latencyMs = res.latencyMs ?? null
       const allCalls = res.toolCalls ?? []
       const calls = allCalls.slice(0, 3)
-      if (calls.length === 0) { done = true; break }
+      if (calls.length === 0) break
       const results = []
       for (const tc of allCalls.slice(3)) {
         results.push({ id: tc.id, name: tc.name, output: '未执行（单轮工具调用上限 3，请减少本轮动作）' })
