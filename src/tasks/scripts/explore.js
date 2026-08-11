@@ -1,14 +1,14 @@
-// 探索任务脚本（v1.0.0 C10）：后台持续探索——方形螺旋向外游荡，每站采样记录
+// 探索任务脚本：后台持续探索——方形螺旋向外游荡，每站采样记录
 // 资源与实体（发现写入 DiscoveryMap，LLM 经 query_map 查询）。exclusive 互斥。
 //
 // 螺旋是**有状态算法**（环推进/中心重启/连续裁剪计数）——用"任务局部 op"
 //（spiral_step，runner 的 scriptDef.ops）承载：closure 状态存 WeakMap（按任务
 // 实例隔离——同 id 重启/多实例不串扰），经同一 executor 执行（权限/审计一致）。
 //
-// 语义与原 ExploreTask 逐条对应：
+// 语义说明：
 // - maxDistance 环半径上限（默认 256；超限后 stopWhenDone 完成/换中心重启）
 // - area 站点裁剪到盒内，连续 16 站被裁 + stopWhenDone → 覆盖完成
-// - 一站：groundY 采样（P2-4）→ gotoPoint（45s/range 3）→ 采样资源（webhook 推送）
+// - 一站：groundY 采样 → gotoPoint（45s/range 3）→ 采样资源（webhook 推送）
 //   → 实体扫描（只记录不接触）→ 锚点登记 → ≤500ms 节奏等待
 // - 站点不可达跳过（unreachable 计数）不中断
 // - 低血靠 autoEat（死亡由 feature-layer 管道处理；waypoint 绝对坐标重生后有效）
@@ -42,7 +42,7 @@ function inArea (wp, a) {
   return wp.x >= a.x1 && wp.x <= a.x2 && wp.z >= a.z1 && wp.z <= a.z2
 }
 
-/** 站点地面 y 采样（P2-4：悬崖/峡谷壁高差 >3 大量 NoPath 的修复）。 */
+/** 站点地面 y 采样（悬崖/峡谷壁高差 >3 时避免大量 NoPath）。 */
 function groundY (bot, x, z) {
   try {
     const start = Math.floor(bot.entity?.position?.y ?? 64)
@@ -60,7 +60,7 @@ export default {
   naturalCompletion: false, // 螺旋持续；stopWhenDone 环满/覆盖完成才自然结束
   maxActions: 100000,
   defaultOptions: { maxDistance: 256, checkIntervalSeconds: 3 },
-  /** init 校验（原 ExploreTask.init 等价迁移）。 */
+  /** init 校验。 */
   async init (task) {
     const o = task.options
 
@@ -110,7 +110,7 @@ export default {
         }
         st.consecutiveTrimmed = 0
 
-        // 一站：寻路到达 → 采样 → 实体扫描 → 锚点（原 _visitStation）
+        // 一站：寻路到达 → 采样 → 实体扫描 → 锚点
         const move = createMovement(task.bot, task.log)
         const r = await move.gotoPoint({ x: wp.x, y: groundY(task.bot, wp.x, wp.z), z: wp.z }, {
           range: 3,
@@ -126,7 +126,7 @@ export default {
           if (found.length) {
             task.incr('discovered', found.length)
             for (const f of found) task.incr(`res:${f.name}`)
-            // D：重要资源 webhook 推送（节流；P2-2 实时配置）
+            // 重要资源 webhook 推送（节流；配置经实时 getter 读取）
             notifyValuableFound(task.ctx.getConfig?.() ?? task.ctx.config, task.log, found)
           }
           const ents = scanEntities(task.bot)

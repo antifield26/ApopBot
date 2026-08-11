@@ -1,9 +1,9 @@
-// 实体交互动作（协议层修复，2026-08-07 部署机实测根因）：
-// mineflayer PR 分支在 26.1（协议 775 / minecraft-data 3.112.0）下存在特性门控 bug——
+// 实体交互动作（协议层直连）：
+// mineflayer PR 分支在 26.1（协议 775 / minecraft-data 3.112.0）下存在特性门控 bug：
 // useEntityUsesEntityId=false 使 bot.attack()/bot.useOn() 回退到旧式 use_entity 包
 // （{target, mouse, sneaking}），而 26.1 的 use_entity schema 是
 // {target, hand, location(lpVec3 必填), sneaking} → 序列化报
-// "Sizeof error: Cannot read properties of undefined (reading 'x')" → 每次攻击/喂食断线。
+// "Sizeof error: Cannot read properties of undefined (reading 'x')"。
 // 同时 26.1 数据 attackUsesOwnPacket=true（独立 attack 包是正式攻击通道），
 // 被 mineflayer 门控锁在 useEntityUsesEntityId 分支内永远走不到。
 //
@@ -26,7 +26,7 @@ export function attackEntity (bot, target) {
  * @param {{ id: number, position: { x, y, z }, height?: number }} target
  */
 export function useEntityOn (bot, target) {
-  // A4（第四轮）：pos 缺失明确报错（调用方 catch 重扫）而非 TypeError 吞成
+  // pos 缺失明确报错（调用方 catch 重扫）而非 TypeError 吞成
   // 无效包——目标引用残留但位置不可用时直接放弃本次喂食
   if (!target?.position) throw new Error('useEntityOn: 目标位置不可用')
   const pos = target.position

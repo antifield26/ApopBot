@@ -6,7 +6,7 @@ import { createMovements } from '../core/movement.js'
 // 重要：mineflayer 4.x 的 bot.loadPlugin 只把插件加入队列，实际注入发生在
 // `inject_allowed` 事件（连接握手、registry 就绪之后）。因此：
 //   - 插件句柄（bot.pathfinder 等）在 loadMineflayerPlugins 返回时可能还未存在，
-//     必须通过包装函数在注入时记录到 loaded（旧实现直接读 bot.X 会得到 undefined）
+//     必须通过包装函数在注入时记录到 loaded（直接读 bot.X 会得到 undefined）
 //   - pathfinder 2.x 必需 setMovements（不设置时寻路不可靠），注入时立即设置
 //   - Movements 统一由 src/core/movement.js 的 createMovements 创建，并同时喂给
 //     collectBlock（其 collect() 自建 Movements 覆盖全局配置——同一实例后仅 resetPath）
@@ -34,7 +34,7 @@ export async function loadMineflayerPlugins (bot, cfg, logger, deps = {}) {
   }
 
   // 依赖校验：collectBlock 强依赖 pathfinder（运行期寻路静默失效会误导任务）——
-  // 配置层错误在装载期显式抛出（B6）
+  // 配置层错误在装载期显式抛出
   if (enabled.collectBlock !== false && enabled.pathfinder === false) {
     throw new Error('mineflayerPlugins.collectBlock 依赖 pathfinder——不能关闭 pathfinder 而保留 collectBlock')
   }

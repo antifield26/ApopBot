@@ -1,4 +1,4 @@
-// 动作审计日志（v1.0.0 C3）：所有 LLM/脚本/命令发起的动作全量记录到
+// 动作审计日志：所有 LLM/脚本/命令发起的动作全量记录到
 // logs/audit.log（JSONL，按天轮转，保留天数与主日志一致）——自主行为可追溯、
 // 可复盘（谁在什么时间对世界做了什么、结果如何）。
 //
@@ -26,10 +26,9 @@ function trunc (v) {
  *        dir 缺省不写文件（内存 noop——测试/无日志目录场景）
  * @returns {{ append(entry): void, path: string|null }}
  *
- * 第 11 轮：进程级共享——同一 dir 返回同一实例。此前每个 executor（LLM/脚本
- * 任务/命令）各建一个独立 pino-roll worker 共写同一 audit.log：多写者轮转竞争
- *（旧句柄写被改名文件 → 日志拆分/丢失）+ 任务反复重启累积 worker。共享后全
- * 进程单 worker；热重载 log.dir 变化时按新键新建（旧 worker 随旧配置弃用）。
+ * 进程级共享：同一 dir 返回同一实例——全进程单 pino-roll worker。多写者共写同一
+ * audit.log 会轮转竞争（旧句柄写被改名文件 → 日志拆分/丢失）且任务反复重启累积
+ * worker；热重载 log.dir 变化时按新键新建（旧 worker 随旧配置弃用）。
  */
 const _shared = new Map() // `${dir}|${keepDays}` → { append, path }
 export function createAuditLogger ({ dir, keepDays = 14, logger } = {}) {

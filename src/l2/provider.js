@@ -1,4 +1,4 @@
-// LLM Provider（v1.0.0 C2：单 Provider——仅云端 Anthropic 兼容 API，non-reasoning 模式）。
+// LLM Provider：单 Provider——仅云端 Anthropic 兼容 API（non-reasoning 模式）。
 // 接口：chat(messages, { tools, system, signal }) →
 //   Promise<{ text: string|null, toolCalls: Array<{id, name, arguments}>, usage, latencyMs }>
 //   kind(): 'cloud'（agent-interface 兼容保留；恒 'cloud'）
@@ -19,8 +19,8 @@
 
 const DEFAULT_TIMEOUT_MS = 60000
 const DEFAULT_MAX_TOKENS = 1024
-// 第六轮 C10：云端上下文窗口默认 64k（无 cloudMaxContextWindow 配置时——预算守卫与
-// 提示词扩容的容量基础；32k 上下文端点请在配置调低）
+// 云端上下文窗口默认 64k（无 cloudMaxContextWindow 配置时——预算守卫与提示词
+// 扩容的容量基础；32k 上下文端点请在配置调低）
 const DEFAULT_CLOUD_CONTEXT_WINDOW = 65536
 
 /** HTTP 状态错误（携带 status 供诊断）。 */
@@ -31,7 +31,7 @@ class HttpError extends Error {
   }
 }
 
-/** 组装 provider 实例（v1.0.0 C2：唯一路径——云端；无本地/auto 分支）。 */
+/** 组装 provider 实例（唯一路径——云端；无本地/auto 分支）。 */
 export function createProvider (cfg, logger) {
   const l2 = cfg.l2 ?? {}
   const log = logger.child({ module: 'l2-provider' })
@@ -65,9 +65,9 @@ class CloudProvider {
     // baseUrl 兼容两种写法：完整端点（.../v1/messages）或 base URL（预设 DeepSeek
     // https://api.deepseek.com/anthropic——Anthropic 兼容路由；裸域名会补到 OpenAI 路由 404）
     this.baseUrl = (l2.cloudBaseUrl ?? 'https://api.deepseek.com/anthropic').replace(/\/+$/, '')
-    // 第 11 轮修复：补全规则此前只判 /messages$——`https://host/v1` 结尾被追加
-    // /v1/messages 产生 /v1/v1/messages 双路径（Anthropic 惯例配置即 404）。
-    // 现在：/messages 结尾不变；/v1 结尾补 /messages；其余补 /v1/messages
+    // 补全规则：/messages 结尾不变；/v1 结尾补 /messages；其余补 /v1/messages。
+    // 只判 /messages$ 会把 `https://host/v1` 结尾追加成 /v1/v1/messages 双路径
+    //（Anthropic 惯例配置即 404）
     if (/\/messages$/.test(this.baseUrl)) {
       /* 完整端点，不变 */
     } else if (/\/v1$/.test(this.baseUrl)) {
@@ -80,9 +80,9 @@ class CloudProvider {
     this.effort = l2.effort ?? 'low'
     this.timeoutMs = l2.cloudTimeoutMs ?? DEFAULT_TIMEOUT_MS
     this.maxTokens = l2.maxTokens ?? DEFAULT_MAX_TOKENS
-    // 第六轮 C10：云端上下文窗口（预算守卫用）——l2.cloudMaxContextWindow 可配
+    // 云端上下文窗口（预算守卫用）——l2.cloudMaxContextWindow 可配
     this.kind = 'cloud'
-    this.mode = 'cloud' // !agent doctor 展示（v1.0.0：唯一 provider）
+    this.mode = 'cloud' // !agent doctor 展示（唯一 provider）
     this.contextWindowValue = l2.cloudMaxContextWindow ?? DEFAULT_CLOUD_CONTEXT_WINDOW
   }
 
@@ -146,8 +146,8 @@ class CloudProvider {
   }
 
   async _post (body, signal) {
-    // 第 11 轮：云端抖动重试——429/5xx/网络错误指数退避重试（至多 2 次重试），
-    // 此前单次抖动会杀死整轮工具循环（已耗 token 与已执行副作用全部作废）。
+    // 云端抖动重试：429/5xx/网络错误指数退避重试（至多 2 次重试）——单次抖动会
+    // 杀死整轮工具循环（已耗 token 与已执行副作用全部作废）。
     // 4xx（除 429）不重试（参数/鉴权错误重试无意义）；用户中止不重试。
     const isRetryable = (status) => status === 429 || status >= 500
     const wait = async (ms) => {

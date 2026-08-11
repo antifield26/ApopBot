@@ -1,6 +1,5 @@
 // 资源白名单（探索采样/重要资源推送共用；26.1.2 已核实存在，注意 sugar_cane 非 sugarcane）。
-// 领域概念归 core（L2 进化第六轮 C2 从 l2/environment.js 归位——core/explore.js 的采样
-// 与推送依赖它们，放 l2 造成 core→l2 上向引用）。
+// 领域概念归 core——core/explore.js 的采样与推送依赖它们，放 l2 会造成 core→l2 上向引用。
 
 /** 资源白名单（explore 技能/任务采样用；26.1.2 已核实存在，注意 sugar_cane 非 sugarcane）。 */
 export const RESOURCE_WHITELIST = [

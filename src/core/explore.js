@@ -1,4 +1,4 @@
-// 探索核心（L2 进化 C1/C2）：explore 技能（单步）与 ExploreTask（螺旋）共享——
+// 探索核心：explore 技能（单步）与 ExploreTask（螺旋）共享——
 // 资源采样、实体扫描、螺旋 waypoint 生成。
 //
 // 同步枚举防线：所有 findBlocks 一律 maxDistance ≤ 64、count ≤ 2（采样是周期性
@@ -6,7 +6,7 @@
 // movement.js:228 的 16-256 通道，那是给用户输入限幅的；此处是内部常量）。
 
 import * as discovery from './discovery.js'
-// 第六轮 C2：资源白名单/实体遍历归位 core（此前从 l2/environment.js 导入 = core→l2 上向引用）
+// 资源白名单/实体遍历在 core——从 l2/environment.js 导入会造成 core→l2 上向引用
 import { RESOURCE_WHITELIST, VALUABLE_RESOURCES } from './resources.js'
 import { nearbyEntities } from './entities.js'
 import { createNotifier } from './notify.js'
@@ -15,12 +15,12 @@ export const SAMPLE_RADIUS = 64 // 采样半径（主控旋钮）
 export const SAMPLE_COUNT = 2 // 每资源最多记录条数
 export const EXPLORE_STEP = 48 // 单步探索默认距离（技能）
 export const SPIRAL_STEP = 32 // 螺旋站点间距（2 个区块）
-// D（L2 进化）：重要资源 webhook 推送节流——1 条/10 分钟/类型（防刷屏）
+// 重要资源 webhook 推送节流——1 条/10 分钟/类型（防刷屏）
 const VALUABLE_COOLDOWN_MS = 10 * 60 * 1000
 const lastValuableNotify = new Map()
 
 /**
- * 重要资源发现推送（D）：钻石/绿宝石/远古残骸 → webhook（notify.webhook 配置时）。
+ * 重要资源发现推送：钻石/绿宝石/远古残骸 → webhook（notify.webhook 配置时）。
  * 失败静默（notify.js 内部兜底）；节流按资源类型。调用方：explore 技能与 ExploreTask。
  */
 export function notifyValuableFound (cfg, logger, found) {
@@ -42,7 +42,7 @@ export function notifyValuableFound (cfg, logger, found) {
 export function sampleResources (bot) {
   const found = []
   if (!bot?.findBlocks || !bot.registry?.blocksByName) return found
-  // 第 11 轮 G1：维度（剥 minecraft: 前缀；旧记录仅主世界查询匹配）
+  // 维度（剥 minecraft: 前缀；旧记录仅主世界查询匹配）
   const dim = bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
   const byName = bot.registry.blocksByName
   for (const name of RESOURCE_WHITELIST) {
@@ -60,7 +60,7 @@ export function sampleResources (bot) {
 }
 
 /** 实体扫描（半径 64；返回分类计数与敌对名单——26.1 entity.type 是唯一可靠分类，
- * e.kind 是数据表大写 category（'Hostile mobs'），第五轮 P1 修复前敌对检测是死代码）。 */
+ * e.kind 是数据表大写 category（'Hostile mobs'），不可用于分类）。 */
 export function scanEntities (bot) {
   const hostile = []
   const counts = { hostile: 0, passive: 0, neutral: 0, player: 0, other: 0 }
@@ -127,7 +127,7 @@ export async function exploreStep (bot, log, { maxDistance = EXPLORE_STEP, direc
     Math.floor(me.position.y),
     Math.floor(me.position.z + dir.dz * dist))
   const move = createMovement(bot, log)
-  // 第 11 轮：signal 贯通（goto 谓词中断）——stop()/断线中止时探索步立即退出
+  // signal 贯通（goto 谓词中断）——stop()/断线中止时探索步立即退出
   const r = await move.gotoPoint(target, {
     range: 3,
     timeoutMs: 45000,
@@ -136,7 +136,7 @@ export async function exploreStep (bot, log, { maxDistance = EXPLORE_STEP, direc
   const found = sampleResources(bot)
   const entities = scanEntities(bot)
   const end = bot.entity?.position
-  // 第 11 轮 G1：锚点带维度（下界探索不污染主世界覆盖统计）
+  // 锚点带维度（下界探索不污染主世界覆盖统计）
   if (end) discovery.recordAnchor(end, bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null)
   return {
     ok: r.ok,

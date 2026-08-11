@@ -1,4 +1,4 @@
-// 环境快照构建器（L2 进化 A3）：environment 技能与自动注入共用。
+// 环境快照构建器：environment 技能与自动注入共用。
 // 数据源 26.1 已核实：
 //   - bot.time（timeOfDay/isDay/age/moonPhase，服务端 time 包驱动）
 //   - bot.isRaining + bot.thunderState（**无 bot.weather 字段**，game_state_change 包）
@@ -7,8 +7,8 @@
 //     null → unknown；biome id 未知 → biome_id 兜底，不虚构）
 //   - yaw → 8 向罗盘（原版约定 yaw=0 南，顺时针增大）
 // 安全：全字段 null 安全——缺失/异常逐项跳过，任何调用不抛（测试 makeCtx 缺字段不崩）。
-// 第六轮 C2：nearbyEntities/资源白名单已归位 src/core/{entities,resources}.js
-//（core/explore.js 的 scanEntities 依赖它们——放本模块造成 core→l2 上向引用）。
+// nearbyEntities/资源白名单在 src/core/{entities,resources}.js
+//（core/explore.js 的 scanEntities 依赖它们——放本模块会造成 core→l2 上向引用）。
 
 import { distance, fmtPos, nearbyEntities } from './entities.js'
 
@@ -23,7 +23,7 @@ export function directionFromYaw (yaw) {
 /**
  * 时间 hh:mm（timeOfDay 0-24000 ticks）。
  * Minecraft 语义：timeOfDay 0 = 日出（游戏钟 6:00）——必须加 6000 ticks（6 小时）
- * 偏移。此前直接映射把 0 → 00:00，Bot 输出恒比游戏钟早 6 小时（第 9 轮实测确认）。
+ * 偏移，否则 0 → 00:00，输出恒比游戏钟早 6 小时。
  */
 export function formatTime (timeOfDay) {
   if (!Number.isFinite(timeOfDay)) return '?'

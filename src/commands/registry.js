@@ -70,7 +70,7 @@ export class CommandRegistry {
         return true
       }
       this._lastDispatch.set(sender, now)
-      // 上限 64：以 sender 为键的 Map 长期运行无限增长是微内存泄漏（B5）
+      // 上限 64：以 sender 为键的 Map 长期运行无限增长是微内存泄漏
       if (this._lastDispatch.size > 64) {
         this._lastDispatch.delete(this._lastDispatch.keys().next().value) // Map 插入序：删最旧
       }

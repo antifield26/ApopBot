@@ -1,4 +1,4 @@
-// 动作执行器（v1.0.0 C3）：LLM act 动作数组与任务脚本共用的统一执行管线。
+// 动作执行器：LLM act 动作数组与任务脚本共用的统一执行管线。
 // executeBatch(actions, opts)：
 //   - 逐动作执行单动作管线（解析→权限门→exclusive 守卫→参数校验→冷却→执行→审计）
 //   - 默认 fail-fast（首个失败即停，返回 failedAt）；continueOnError 可续
@@ -23,7 +23,7 @@ export function createActionExecutor (ctx, deps = {}) {
   const primitives = deps.primitives ?? createPrimitiveRegistry(ctx)
   const audit = deps.audit === undefined ? createAuditLogger({ dir: ctx.cfg?.log?.dir, logger: ctx.logger }) : deps.audit
   const maxActionsPerCall = ctx.cfg?.l2?.maxActionsPerCall ?? 8
-  // follow_player 的"跟随我"指代消解（executor 注入 user——原 skills 经 ctx._caller）
+  // follow_player 的"跟随我"指代消解（executor 注入 user——经 ctx._caller 交给 handler）
   let execUser = null
 
   /**
@@ -52,7 +52,7 @@ export function createActionExecutor (ctx, deps = {}) {
         entry.result = `权限不足：${user} 不在 ops 白名单`
         return finish()
       }
-      // exclusive 守卫（任务互斥——readonly/item/flow 不拦；文案与历史技能层逐字一致）
+      // exclusive 守卫（任务互斥——readonly/item/flow 不拦）
       if (!bypassExclusive && p.exclusiveClass !== 'readonly' && p.exclusiveClass !== 'item' && p.exclusiveClass !== 'flow' && hasExclusiveActive()) {
         entry.result = `exclusive 任务 ${getExclusiveOwner()} 运行中，无法${p.guardText || op}（任务结束后可试）`
         return finish()
@@ -94,8 +94,7 @@ export function createActionExecutor (ctx, deps = {}) {
    *          rejected = 解析期拒绝原因（超预算/非法数组），results 为空
    */
   async function executeBatch (actions, opts = {}) {
-    // 解析期拒绝也写审计（第 8 轮）——自主行为追溯不得有静默空洞
-    // （LLM 发 9 个动作被拒/缺 op 整批拒：此前审计无任何痕迹）
+    // 解析期拒绝也写审计——自主行为追溯不得有静默空洞（整批拒/缺 op 也留痕）
     const logRejected = (result) => {
       if (!audit) return
       try {
@@ -109,9 +108,9 @@ export function createActionExecutor (ctx, deps = {}) {
       logRejected(`rejected: 动作数超限 ${actions.length}/${maxActionsPerCall}`)
       return { ok: false, results: [], failedAt: null, rejected: `动作数 ${actions.length} 超过单次上限 ${maxActionsPerCall}` }
     }
-    // 解析期 shape 预校验（第 8 轮）：全部元素先过 op/args 形状检查——此前边执行
-    // 边校验，第 k 个元素非法时前 k-1 个已真实执行（dig/place 已生效）而结果整体
-    // 丢弃（rejected）→ LLM 不知情重复副作用。预校验保证"全执行或全拒绝"
+    // 解析期 shape 预校验：全部元素先过 op/args 形状检查，保证"全执行或全拒绝"——
+    // 边执行边校验时，第 k 个元素非法会导致前 k-1 个已真实执行（dig/place 已生效）
+    // 而结果整体丢弃（rejected）→ LLM 不知情重复副作用
     for (let i = 0; i < actions.length; i++) {
       const step = actions[i]
       if (!step || typeof step.op !== 'string') {
@@ -157,12 +156,12 @@ export function createActionExecutor (ctx, deps = {}) {
   return { executeBatch, executeOne, primitives, setExecUser: (u) => { execUser = u }, audit }
 }
 
-/** 极简 JSONSchema 校验（type + required + min/max；原 skills.validateParams 原样搬入）。 */
+/** 极简 JSONSchema 校验（type + required + min/max）。 */
 export function validateParams (schema, params) {
   if (!schema) return { ok: true }
   params = params ?? {}
-  // 第 8 轮：顶层类型检查——字符串/数字/数组参数此前遍历属性全过（String 有索引
-  // 访问不抛），垃圾参数（args:123）漏进 handler → NaN 坐标/神秘错误不可归因
+  // 顶层类型检查——非对象参数（如 args:123）会漏进 handler（String 有索引访问
+  // 不抛，字符串/数字/数组能遍历"属性"）→ NaN 坐标/神秘错误不可归因
   if (typeof params !== 'object' || params === null || Array.isArray(params)) {
     return { ok: false, error: '参数必须是对象' }
   }
@@ -184,7 +183,7 @@ export function validateParams (schema, params) {
     }[t]))
     if (!ok) return { ok: false, error: `${k} 必须是 ${types.join('/')}` }
     if ((def.type === 'number' || def.type === 'integer') && typeof v === 'number') {
-      // A3：NaN/Infinity 兜底（JSON 无法携带但防御直传/未来入口）
+      // NaN/Infinity 兜底（JSON 无法携带但防御直传/未来入口）
       if (!Number.isFinite(v)) return { ok: false, error: `${k} 必须是有限数值` }
       if (def.min !== undefined && v < def.min) return { ok: false, error: `${k} 不能小于 ${def.min}` }
       if (def.max !== undefined && v > def.max) return { ok: false, error: `${k} 不能大于 ${def.max}` }

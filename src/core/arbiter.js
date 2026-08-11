@@ -1,7 +1,6 @@
-// 移动权仲裁器（重构档 R2 根治版）：!find/!follow/任务统一登记"谁在移动"。
-// 此前 exclusive 互斥只覆盖任务之间（manager._pendingExclusive），!follow 与
-// exclusive 任务无任何防线（S：双控制器冲突——follow 的 setControlState 与任务
-// pathfinder 打架，!find 只有口头警告而 !follow 连警告都没有）。
+// 移动权仲裁器：!find/!follow/任务统一登记"谁在移动"。exclusive 互斥若只覆盖
+// 任务之间（manager._pendingExclusive），!follow 与 exclusive 任务会双控制器
+// 冲突（follow 的 setControlState 与任务 pathfinder 打架）。
 //
 // 只做登记/查询，不改变既有命令行为：!find 仍是警告非拒绝；!follow 在
 // exclusive 任务运行中拒绝并提示。登记只在任务运行期间存在——重连重建功能层

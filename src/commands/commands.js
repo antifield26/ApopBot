@@ -9,7 +9,7 @@ import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
 // 重连重建功能层时若残留 true，由 120s 墙钟超时自愈（goto 必然结束）
 let findBusy = false
 
-/** 命令层动作审计（v1.0.0 C5：!find/!follow 走 executor 的审计通道——L2 关闭时静默）。 */
+/** 命令层动作审计（!find/!follow 走 executor 的审计通道——L2 关闭时静默）。 */
 function auditCommand (c, op, args, ok, result) {
   try {
     c.agent?.executor?.audit?.append({ op, args, ok, result, durationMs: 0, source: 'command' })
@@ -40,7 +40,7 @@ export function registerBuiltinCommands (registry, ctx) {
       const pos = e ? `${Math.floor(e.position.x)},${Math.floor(e.position.y)},${Math.floor(e.position.z)}` : 'n/a'
       const mem = `${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`
       const taskSummary = c.tasks.getStatus().map(t => `${t.id}:${t.state}${t.waitingReason ? `(${t.waitingReason})` : ''}`).join(' ') || 'none'
-      // health/food 走 update_health 包（bot.health/bot.food）：26.1 下实体元数据不解析 health（实测 undefined）
+      // health/food 走 update_health 包（bot.health/bot.food）：26.1 下实体元数据不含 health
       await sendChat(c.bot, `§a[status] pos=${pos} hp=${c.bot.health?.toFixed(0) ?? 'n/a'} food=${c.bot.food ?? 'n/a'} state=${s.state} reconnects=${s.reconnectCount} mem=${mem} tasks=[${taskSummary}]`, c.cfg.chat?.maxLength)
     }
   })
@@ -51,15 +51,15 @@ export function registerBuiltinCommands (registry, ctx) {
     description: '任务控制',
     handler: async (c, args) => {
       const [action, id] = args
-      if (!action) { // 无参数：渲染完整用法（不再出现 "用法: !task undefined <id>"）
+      if (!action) { // 无参数：渲染完整用法（否则输出 "用法: !task undefined <id>"）
         await sendChat(c.bot, '§a用法: !task list | !task new <type> <id> [jsonOptions] | !task remove <id> | !task start|stop|pause|resume <id>', c.cfg.chat?.maxLength)
         return
       }
       if (action === 'list') {
         const status = c.tasks.getStatus()
-        // U8：排队位置/时长剩余/下次 cron 触发（调度可见性——此前排队与时长只有日志）
-        // 第 8 轮：nextRunAt 按 scheduleTimezone 渲染——机器本地时区与调度时区
-        // 不一致时此前显示的"下次触发"与实际触发时间不符
+        // 排队位置/时长剩余/下次 cron 触发（调度可见性）
+        // nextRunAt 按 scheduleTimezone 渲染——机器本地时区与调度时区不一致时，
+        // 本地时区渲染的"下次触发"与实际触发时间不符
         const tz = c.cfg?.scheduleTimezone ?? 'Asia/Shanghai'
         const fmt = new Intl.DateTimeFormat('zh-CN', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false })
         await sendChat(c.bot, status.length
@@ -87,8 +87,8 @@ export function registerBuiltinCommands (registry, ctx) {
         if (optionsJson) {
           try { options = JSON.parse(optionsJson) } catch { await sendChat(c.bot, '§c参数必须是 JSON 对象', c.cfg.chat?.maxLength); return }
         }
-        // C5（R3 根治版）：ad-hoc options 过 schema——此前零校验（负 durationMinutes/
-        // intervalMinutes 0 → 忙循环等全部放行）；未知键放行向前兼容
+        // ad-hoc options 过 schema 校验：零校验会放行负 durationMinutes /
+        // intervalMinutes 0（忙循环）等非法值；未知键放行向前兼容
         const v = validateTaskOptions(type, options)
         if (!v.ok) {
           await sendChat(c.bot, `§c参数校验失败: ${v.error}`, c.cfg.chat?.maxLength)
@@ -100,8 +100,8 @@ export function registerBuiltinCommands (registry, ctx) {
           // 等一个事件循环轮：init 抛错在 fire-and-forget 微任务内置 failed——立即查会误判
           //（skills.js run_task 同款模式）
           await new Promise(r => setImmediate(r))
-          // A4：failed 状态如实反馈（此前只查排队——init 抛错（非法 options/缺插件）
-          // 时玩家收到"已创建"但任务已失败，误导排障）
+          // failed 状态如实反馈：init 抛错（非法 options/缺插件）时任务已失败但
+          // 玩家收到"已创建"会误导排障
           const st = c.tasks.getStatus().find(t => t.id === newId)
           if (st?.state === 'failed') {
             await sendChat(c.bot, `§c任务 ${newId} (${type}) 启动失败: ${st.lastError ?? '未知原因'}`, c.cfg.chat?.maxLength)
@@ -126,8 +126,8 @@ export function registerBuiltinCommands (registry, ctx) {
       if (!id) { await sendChat(c.bot, `§c用法: !task ${action} <id>`, c.cfg.chat?.maxLength); return }
       switch (action) {
         case 'start': {
-          // B 修复：startTask 返回 run 完成 promise——await 会让常驻任务的回复挂到
-          // 任务结束（数小时无响应）。fire-and-forget + setImmediate 后查状态反馈
+          // startTask 返回 run 完成 promise——await 会让常驻任务的回复挂到任务结束
+          //（数小时无响应）。fire-and-forget + setImmediate 后查状态反馈
           //（skills.js run_task 同款模式：failed/已排队/已启动如实告知）
           c.tasks.startTask(id).catch(err => c.logger?.warn?.({ err: err.message }, 'task start failed'))
           await new Promise(r => setImmediate(r))
@@ -183,8 +183,8 @@ export function registerBuiltinCommands (registry, ctx) {
     description: '热重载配置与任务（与改配置文件等效）',
     handler: async (c) => {
       // 与 SIGHUP/配置监视走同一条队列（校验 → updateCfg → tasks diff 重载）。
-      // 读取/校验失败 → reload 返回 false；运行时异常 → queue 上抛（L 修复）——
-      // 两者都如实反馈，配置写坏/代码异常时不再假成功"配置已重载"
+      // 读取/校验失败 → reload 返回 false；运行时异常 → queue 上抛——
+      // 两者都如实反馈，配置写坏/代码异常时不会假成功"配置已重载"
       let result
       try {
         result = await c.onReload?.()
@@ -233,8 +233,8 @@ export function registerBuiltinCommands (registry, ctx) {
         await sendChat(c.bot, '§a已停止跟随', c.cfg.chat?.maxLength)
         return
       }
-      // C8/S 根治：exclusive 任务运行中拒绝跟随——follow 直接控制层与任务
-      // pathfinder 双控制器冲突（此前只有 !find 有警告，follow 无任何防线）
+      // exclusive 任务运行中拒绝跟随——follow 直接控制层与任务 pathfinder 双
+      // 控制器冲突（!find 仅警告，follow 直接拒绝）
       if (hasExclusiveActive()) {
         const owner = getExclusiveOwner()
         await sendChat(c.bot, `§c无法跟随：exclusive 任务 ${owner} 运行中（移动互斥，先 !task stop ${owner}）`, c.cfg.chat?.maxLength)
@@ -304,8 +304,8 @@ export function registerBuiltinCommands (registry, ctx) {
         const dist = Math.round(Math.hypot(nearest.x - c.bot.entity.position.x, nearest.z - c.bot.entity.position.z))
         if (r.ok) {
           const el = Math.round((Date.now() - t0) / 1000)
-          // C8/W 修复：汇报实际到达点——GoalCompositeAny 在最近候选不可达时会
-          // 到达更远候选，报"最近候选"坐标与实际位置不符（误导玩家）
+          // 汇报实际到达点：GoalCompositeAny 在最近候选不可达时会到达更远候选，
+          // 报"最近候选"坐标与实际位置不符（误导玩家）
           const p = c.bot.entity.position
           auditCommand(c, 'find_block', { blockName, maxDistance }, true, `已到达 ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`)
           await sendChat(c.bot, `§a找到 ${blockName}，已到达 ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}（水平距离 ${dist}m，耗时 ${el}s）`, c.cfg.chat?.maxLength)
@@ -323,14 +323,14 @@ export function registerBuiltinCommands (registry, ctx) {
     name: 'agent',
     usage: '!agent chat <text> | !agent act <name> [json] | !agent doctor | !agent reset',
     description: 'L2 LLM 层（需配置 l2.enabled=true；chat 全员可用，act 需 op）',
-    // C7/Y 修复：permission all——此前默认 op 使 buildSystem 的"普通玩家"分支
-    // 是死代码（!agent chat 在权限门就被拒）；技能层 isOp 仍是危险操作最终防线
+    // permission all：默认 op 会使 buildSystem 的"普通玩家"分支成为死代码
+    //（!agent chat 在权限门就被拒）；技能层 isOp 仍是危险操作最终防线
     permission: 'all',
     handler: async (c, args, sender) => {
       if (!c.agent) { await sendChat(c.bot, '§cL2 未启用（配置 l2.enabled=true 后重启）', c.cfg.chat?.maxLength); return }
       const [action, ...rest] = args
       if (action === 'chat') {
-        // A5（第四轮）：空文本进 LLM 消耗一轮生成与调用者冷却——入口拦截
+        // 空文本进 LLM 消耗一轮生成与调用者冷却——入口拦截
         if (!rest.join(' ').trim()) {
           await sendChat(c.bot, '§c用法: !agent chat <text>（消息不能为空）', c.cfg.chat?.maxLength)
           return
@@ -338,11 +338,11 @@ export function registerBuiltinCommands (registry, ctx) {
         const { reply } = await c.agent.chat(sender, rest.join(' '))
         await sendChat(c.bot, reply, c.cfg.chat?.maxLength)
       } else if (action === 'reset') {
-        // 清空调用者会话记忆（U2：多轮上下文误入歧途时重置）
+        // 清空调用者会话记忆（多轮上下文误入歧途时重置）
         c.agent.reset(sender)
         await sendChat(c.bot, '§a已清空会话记忆', c.cfg.chat?.maxLength)
       } else if (action === 'doctor') {
-        // U9：provider 连通性诊断（只读，全员可用）
+        // provider 连通性诊断（只读，全员可用）
         try {
           const results = await c.agent.diagnose()
           const mode = c.agent.provider?.mode ?? '?'

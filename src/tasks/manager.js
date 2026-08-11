@@ -4,7 +4,7 @@ import { sendChat } from '../core/chat.js'
 import { setExclusiveOwner, getExclusiveOwner } from '../core/arbiter.js'
 import { createNotifier } from '../core/notify.js'
 
-// U7：任务终态 LLM 总结的全局冷却（防多任务同时完成时刷屏）
+// 任务终态 LLM 总结的全局冷却（防多任务同时完成时刷屏）
 const SUMMARY_COOLDOWN_MS = 60000
 
 /** 递归按键名排序（热重载 diff 不因用户重排键序而误判变更）。 */
@@ -16,7 +16,7 @@ function sortKeys (v) {
   return v
 }
 
-// 任务类型注册表（第六轮 C3 单一来源）：src/tasks/types.js——工厂 + 自然完成语义
+// 任务类型注册表（单一来源）：src/tasks/types.js——工厂 + 自然完成语义
 import { TASK_TYPES } from './types.js'
 
 const RUNNING_STATES = ['init', 'running', 'paused']
@@ -24,7 +24,7 @@ const RUNNING_STATES = ['init', 'running', 'paused']
 /**
  * 任务管理器：装载/启动/停止/热重载/cron 调度/临时任务。
  *
- * 调度语义（B2）：startTask 返回 run 完成 Promise；runScheduled 处理 cron 触发
+ * 调度语义：startTask 返回 run 完成 Promise；runScheduled 处理 cron 触发
  * （防重叠 + 时长上限 + 完成通知）。!task stop 只停当前运行，cron 调度保持。
  */
 export class TaskManager {
@@ -32,7 +32,7 @@ export class TaskManager {
    * @param {object} cfg
    * @param {import('pino').Logger} logger
    * @param {{ bot: import('mineflayer').Bot }} ctx 运行上下文
-   * @param {object} [stateStore] 运行状态快照（U1）：ad-hoc 条目 + 计数器持久化
+   * @param {object} [stateStore] 运行状态快照：ad-hoc 条目 + 计数器持久化
    */
   constructor (cfg, logger, ctx, stateStore = null, getAgent = null) {
     this.cfg = cfg
@@ -41,11 +41,11 @@ export class TaskManager {
     this.tasks = new Map() // id → { entry, task, cron }
     this._pendingExclusive = [] // 被 exclusive 互斥拒绝的任务（冲突任务终态后按序补启动）
     this._stateStore = stateStore
-    // U7：LLM 主动播报的 agent 获取器（feature-layer 传 () => ctx.agent——
+    // LLM 主动播报的 agent 获取器（feature-layer 传 () => ctx.agent——
     // agent 随重建变化，不能构造时固化）
     this._getAgent = getAgent ?? null
     this._lastSummaryAt = 0
-    this._notifier = createNotifier(cfg, this.log) // U10：webhook 通知（cfg 变化时重建）
+    this._notifier = createNotifier(cfg, this.log) // webhook 通知（cfg 变化时重建）
   }
 
   _makeTaskCtx () {
@@ -53,9 +53,9 @@ export class TaskManager {
       bot: this.ctx.bot,
       logger: this.log,
       config: this.cfg,
-      // P2-2（第五轮）：实时配置 getter——任务构造时冻结的 config 引用在 reload 后
-      // 是旧 cfg（explore 任务的重要资源 webhook 推送走旧 URL）；任务内取配置
-      // 一律经 getConfig?.() ?? config
+      // 实时配置 getter——任务构造时冻结的 config 引用在 reload 后是旧 cfg
+      //（explore 任务的重要资源 webhook 推送走旧 URL）；任务内取配置一律经
+      // getConfig?.() ?? config
       getConfig: () => this.cfg
     }
   }
@@ -79,7 +79,7 @@ export class TaskManager {
    */
   async load (cfg) {
     this.cfg = cfg
-    this._notifier = createNotifier(cfg, this.log) // U10：webhook 配置随 reload 更新
+    this._notifier = createNotifier(cfg, this.log) // webhook 配置随 reload 更新
     await this.stopAll()
     const seen = new Set()
     for (const entry of cfg.tasks ?? []) {
@@ -87,15 +87,15 @@ export class TaskManager {
         this.log.warn('忽略无效任务条目（缺 id/type）: %o', entry)
         continue
       }
-      if (seen.has(entry.id)) { // F6：同 cfg 内重复 id 直接拒绝（validateConfig 兜底）
+      if (seen.has(entry.id)) { // 同 cfg 内重复 id 直接拒绝（validateConfig 兜底）
         this.log.warn({ task: entry.id }, '任务 id 重复，忽略后续条目')
         continue
       }
       seen.add(entry.id)
       try {
         const rec = this._createEntry(entry)
-        // 必须先入表再启动：exclusive 互斥判定遍历 this.tasks.values()，
-        // 批次内尚未登记的任务不参与判定 → 两个常驻 exclusive 任务会同时启动（P1-3 实测）
+        // 必须先入表再启动：exclusive 互斥判定遍历 this.tasks.values()，批次内
+        // 尚未登记的任务不参与判定 → 两个常驻 exclusive 任务会同时启动
         this.tasks.set(entry.id, rec)
         if (entry.schedule) {
           this._createSchedule(rec)
@@ -122,9 +122,9 @@ export class TaskManager {
     for (const id of oldIds) {
       if (!newIds.has(id)) {
         await this.stopTask(id)
-        this.tasks.get(id)?.cron?.stop() // F5：cron 定时器必须随任务移除而停止
+        this.tasks.get(id)?.cron?.stop() // cron 定时器必须随任务移除而停止
         this.tasks.delete(id)
-        this._stateStore?.deleteCounter?.(id) // C6/N：reload 移除同样清理计数器
+        this._stateStore?.deleteCounter?.(id) // reload 移除同样清理计数器
       }
     }
     // 新增或变化的
@@ -133,12 +133,11 @@ export class TaskManager {
       const old = this.tasks.get(id)
       if (!old || JSON.stringify(sortKeys(old.entry)) !== JSON.stringify(sortKeys(entry))) {
         await this.stopTask(id)
-        this.tasks.get(id)?.cron?.stop() // F5
+        this.tasks.get(id)?.cron?.stop()
         try {
           const rec = this._createEntry(entry)
           this.tasks.set(id, rec) // 同 load：先入表再启动（exclusive 互斥判定依赖登记）
-          // A5（第四轮）：reload 变更后计数器回灌（doRebuild 同款——此前重建/重载
-          // 后 config 任务计数归零且快照覆写旧值，F5）
+          // reload 变更后计数器回灌（与 doRebuild 同款：任务重建后从快照恢复计数）
           this.restoreCounters(id, this._stateStore?.counters?.[id])
           if (entry.schedule) {
             this._createSchedule(rec)
@@ -150,21 +149,21 @@ export class TaskManager {
         }
       }
     }
-    // 移除/变更的任务其排队 rec 已陈旧——过滤（removeTask 有此清理，reload 漏了，
-    // 否则队列项泄漏且 reload 后排队任务永不重新入队，永久停在 created）（P1-6）
+    // 移除/变更的任务其排队 rec 已陈旧——过滤，否则队列项泄漏且 reload 后排队
+    // 任务永不重新入队（永久停在 created）
     this._pendingExclusive = this._pendingExclusive.filter(r => this.tasks.get(r.entry.id) === r)
-    this._syncStateTasks() // U1：reload 后 ad-hoc 条目集合可能变化
+    this._syncStateTasks() // reload 后 ad-hoc 条目集合可能变化
     this._snapshotCounters()
     this.cfg = cfg
-    this._notifier = createNotifier(cfg, this.log) // U10：webhook 配置随 reload 更新
+    this._notifier = createNotifier(cfg, this.log) // webhook 配置随 reload 更新
   }
 
   /**
-   * 启动任务，返回 run 完成 Promise（B2）。
-   * 已在运行/挂起 → 返回当前 run promise；终态 → 自动重置重启（F4）。
+   * 启动任务，返回 run 完成 Promise。
+   * 已在运行/挂起 → 返回当前 run promise；终态 → 自动重置重启。
    * exclusive 互斥：其他 exclusive 任务运行中时拒绝启动（返回 null）。
    * @param {number} [maxMinutes] 时长上限（scheduled 触发直传；排队路径记录到
-   *   rec.pendingMaxMinutes，drain 启动时补挂——E 修复：排队不再丢上限）
+   *   rec.pendingMaxMinutes，drain 启动时补挂——排队不再丢上限）
    * @returns {Promise<void>|null}
    */
   async startTask (id, rec, maxMinutes) {
@@ -176,10 +175,10 @@ export class TaskManager {
       const busy = [...this.tasks.values()].find(r =>
         r !== rec && r.task.exclusive && RUNNING_STATES.includes(r.task.state))
       if (busy) {
-        // 排队而非静默拒绝：冲突任务终态后自动补启动（此前被拒任务永远停在 created）
+        // 排队而非静默拒绝：冲突任务终态后自动补启动（否则被拒任务永远停在 created）
         this.log.warn({ task: id, conflict: busy.entry.id }, 'exclusive 任务运行中，排队等待')
-        // E 修复：时长上限随排队记录保存——runScheduled 的 withTimeout 在排队时
-        // 随函数栈丢弃（`if (!p) return`），巡逻类 scheduled 任务排队后永久运行
+        // 时长上限随排队记录保存：runScheduled 的 withTimeout 在排队时随函数栈丢弃
+        //（`if (!p) return`），否则巡逻类 scheduled 任务排队后永久运行
         rec.pendingMaxMinutes = maxMinutes ?? rec.pendingMaxMinutes ?? null
         this._pendingExclusive.push(rec)
         return null
@@ -187,12 +186,12 @@ export class TaskManager {
     }
 
     this.log.info({ task: id, type: rec.entry.type }, 'starting task')
-    // C8/S：exclusive 任务启动时登记移动仲裁器（!follow 据此拒绝冲突跟随）
+    // exclusive 任务启动时登记移动仲裁器（!follow 据此拒绝冲突跟随）
     if (rec.task.exclusive) setExclusiveOwner(rec.entry.id)
     const p = rec.task.start()
-    // A1 代际捕获：start() 同步段已 _runGen++（async 函数首个 await 之前）——
+    // 代际捕获：start() 同步段已 _runGen++（async 函数首个 await 之前）——
     // releaseArbiter 需要比对"仍是本代"才清（防同 id 重启后旧代 run 晚 settle
-    // 误清新一代的登记；第四轮验证确认的竞态）
+    // 误清新一代的登记）
     const startedGen = rec.task._runGen
     // 排队时保存的时长上限：drain 启动后补挂（与 runScheduled 直启路径同款到期语义）
     const pendingMinutes = rec.pendingMaxMinutes
@@ -203,12 +202,12 @@ export class TaskManager {
         () => this._expireQueuedScheduled(id, rec, pendingMinutes)
       )
     }
-    // 任务终态（完成/失败/停止）时快照计数器（U1：遥测跨重启保留）；
+    // 任务终态（完成/失败/停止）时快照计数器（遥测跨重启保留）；
     // 常驻任务完成/失败发聊天通知（scheduled 由 runScheduled 通知，跳过）
     const releaseArbiter = () => {
-      // C8/S + A1：终态清除仲裁器登记。owner 匹配防"A 停→B 启"竞态误清 B；
-      // 代际比对防同 id 重启后旧代 run 晚 settle 误清新一代登记（stop 超时强制
-      // 结束路径下 run promise 可滞后新代数秒乃至永不 settle）
+      // 终态清除仲裁器登记。owner 匹配防"A 停→B 启"竞态误清 B；代际比对防同 id
+      // 重启后旧代 run 晚 settle 误清新一代登记（stop 超时强制结束路径下 run
+      // promise 可滞后新代数秒乃至永不 settle）
       if (rec.task.exclusive && rec.task._runGen === startedGen && getExclusiveOwner() === rec.entry.id) {
         setExclusiveOwner(null)
       }
@@ -220,20 +219,20 @@ export class TaskManager {
     return p
   }
 
-  /** 常驻任务终态通知：秒完成/失败不再静默（用户可感知"指令已生效/已结束"）。 */
+  /** 常驻任务终态通知：完成/失败不再静默（用户可感知"指令已生效/已结束"）。 */
   _notifyCompletion (rec) {
     if (rec.cron) return // scheduled 任务由 runScheduled 通知
     if (rec.entry.notifyChat === false) return
     if (rec.task.state === 'completed') {
       this._notify(rec, 'completed')
-      this._maybeStartNext(rec) // 任务链（第 11 轮 G3）
+      this._maybeStartNext(rec) // 任务链
     } else if (rec.task.state === 'failed') {
       this._notify(rec, `failed: ${rec.task.lastError ?? '未知原因'}`)
     }
   }
 
   /**
-   * 任务链（第 11 轮 G3）：任务条目配 `next: { id, type, options?, schedule? }`——
+   * 任务链：任务条目配 `next: { id, type, options?, schedule? }`——
    * 本任务自然完成（completed）后自动注册并启动下一个任务（ad-hoc 形态，可被
    * !task remove 移除；不写回配置文件）。失败/停止不接力（只对"完成"接力——
    * 失败链会让错误静默蔓延）。目标任务已运行/排队中则不重复启动。
@@ -245,7 +244,7 @@ export class TaskManager {
     const existing = this.tasks.get(next.id)
     if (existing && ['init', 'running', 'paused'].includes(existing.task.state)) return
     if (existing) {
-      this.stopTask(next.id).catch(() => {}) // 残留终态任务先停（F4 重启语义）
+      this.stopTask(next.id).catch(() => {}) // 残留终态任务先停（重启语义）
     }
     this.log.info({ from: rec.entry.id, next: next.id }, 'task chain: 自然完成，启动下一个任务')
     try {
@@ -268,7 +267,7 @@ export class TaskManager {
   }
 
   /**
-   * 排队启动的 scheduled 任务到期/失败处理（E：与 runScheduled 直启路径一致）。
+   * 排队启动的 scheduled 任务到期/失败处理（与 runScheduled 直启路径一致）。
    * withTimeout 对 p 自身 rejection 也 reject——按任务终态区分"到时"与"运行失败"，
    * 失败不再误报"时长到点"。
    */
@@ -308,7 +307,7 @@ export class TaskManager {
       return
     }
     this.log.info({ task: id, maxMinutes }, 'scheduled trigger fired')
-    // maxMinutes 透传 startTask：排队路径把上限记录到 rec.pendingMaxMinutes（E）
+    // maxMinutes 透传 startTask：排队路径把上限记录到 rec.pendingMaxMinutes
     const p = this.startTask(id, undefined, maxMinutes)
     if (!p) return // 排队：到期处理由 startTask 的 pendingMaxMinutes 路径完成
 
@@ -332,7 +331,7 @@ export class TaskManager {
       try {
         await p
       } catch (err) {
-        // F 修复：run 协程 reject（base.js 失败路径返回已 reject 的 promise）不得上抛——
+        // run 协程 reject（base.js 失败路径返回已 reject 的 promise）不得上抛——
         // croner onTrigger 是 fire-and-forget（catch 选项默认 false）→ unhandledRejection
         // → fatalExit exit(2) 停服（NSSM 停止等人工）
         this.log.warn({ task: id, err: err.message }, 'scheduled 任务运行失败')
@@ -341,7 +340,7 @@ export class TaskManager {
       }
     }
     this._notify(rec, rec.task.state)
-    // 任务链（第 11 轮 G3）：scheduled 自然完成同样接力 next（rec.task 已终态）
+    // 任务链：scheduled 自然完成同样接力 next（rec.task 已终态）
     this._maybeStartNext(rec)
   }
 
@@ -356,12 +355,12 @@ export class TaskManager {
       .catch(err => this.log.warn({ err: err.message }, '完成通知发送失败'))
     // U10：webhook 推送（失败静默——不阻塞任务流程；不含聊天内容，只含任务摘要）
     this._notifier.send('task', `任务 ${rec.entry.id} (${rec.entry.type}) ${state}`, counters.trim())
-    // U7：终态经 LLM 一句话总结（附加层——固定模板之后；全局 1 分钟冷却防刷屏；
+    // 终态经 LLM 一句话总结（附加层——固定模板之后；全局 1 分钟冷却防刷屏；
     // 无 agent/失败/冷却中静默跳过，绝不阻塞任务流程）
     this._broadcastSummary(rec, state)
   }
 
-  /** U7：任务终态 LLM 一句话总结。 */
+  /** 任务终态 LLM 一句话总结。 */
   _broadcastSummary (rec, state) {
     if (!state || (!state.includes('completed') && !state.includes('failed'))) return
     const agent = this._getAgent?.()
@@ -381,10 +380,10 @@ export class TaskManager {
   }
 
   /**
-   * 任务停止/终态时释放移动仲裁器（A1 根治：释放不得只依赖 run promise settle——
-   * stop() 超时强制结束后 run 永不 settle → 释放点永不触发 → owner 泄漏 →
-   * !follow 永久被拒（跨重连不愈）。owner 匹配守卫：只清自己的登记（防
-   * "A 停→B 启"竞态误清 B；startTask 的 releaseArbiter 另有代际比对）。
+   * 任务停止/终态时释放移动仲裁器。释放不得只依赖 run promise settle——stop()
+   * 超时强制结束后 run 永不 settle → 释放点永不触发 → owner 泄漏 → !follow
+   * 永久被拒（跨重连不愈）。owner 匹配守卫：只清自己的登记（防"A 停→B 启"竞态
+   * 误清 B；startTask 的 releaseArbiter 另有代际比对）。
    */
   _releaseArbiter (rec) {
     if (rec.task.exclusive && getExclusiveOwner() === rec.entry.id) setExclusiveOwner(null)
@@ -399,10 +398,9 @@ export class TaskManager {
     if (!rec) return false
     this.log.info({ task: id }, 'stopping task')
     await rec.task.stop()
-    this._releaseArbiter(rec) // A1：run 挂死（stop 超时）也不得泄漏 owner
-    // A5（第四轮）：!task stop 排队中的 exclusive 任务（created 状态）——rec 留在
-    // _pendingExclusive 会让 !task list 误报"排队中"、getStatus.queuePosition 误报
-    // 位置（removeTask/reload 有此清理，stopTask 此前漏了，F4）
+    this._releaseArbiter(rec) // run 挂死（stop 超时）也不得泄漏 owner
+    // !task stop 排队中的 exclusive 任务（created 状态）：rec 留在 _pendingExclusive
+    // 会让 !task list 误报"排队中"、getStatus.queuePosition 误报位置
     this._pendingExclusive = this._pendingExclusive.filter(r => r !== rec)
     return true
   }
@@ -443,14 +441,14 @@ export class TaskManager {
     await Promise.all([...this.tasks.values()].map(async (rec) => {
       rec.cron?.stop()
       await rec.task.stop()
-      this._releaseArbiter(rec) // A1：teardown 路径同款释放（stop 超时也不泄漏）
+      this._releaseArbiter(rec) // teardown 路径同款释放（stop 超时也不泄漏）
     }))
-    this._snapshotCounters() // U1：停止前快照终态计数（tasks 随后清空）
+    this._snapshotCounters() // 停止前快照终态计数（tasks 随后清空）
     this.tasks.clear()
     this._pendingExclusive = []
   }
 
-  /** 快照持久化：ad-hoc 条目 + 全量计数器（U1）。 */
+  /** 快照持久化：ad-hoc 条目 + 全量计数器。 */
   _syncStateTasks () {
     // 可选调用：stateStore 可能为 null 或缺方法（测试/降级路径）——不得抛错打断任务流程
     this._stateStore?.setTasks?.(
@@ -467,13 +465,13 @@ export class TaskManager {
   }
 
   /**
-   * 运行时新增任务（!task new；不持久化到配置，U1 起写入状态快照跨重启保留）。
+   * 运行时新增任务（!task new；不持久化到配置，写入状态快照跨重启保留）。
    * @returns {{ entry, task, cron }} 新条目
    */
   addTask (entry) {
     if (this.tasks.has(entry.id)) throw new Error(`任务 id 已存在: ${entry.id}`)
     const rec = this._createEntry(entry)
-    rec.entry.adHoc = true // U1：标记运行时新增（快照持久化用；配置条目不标记）
+    rec.entry.adHoc = true // 标记运行时新增（快照持久化用；配置条目不标记）
     this.tasks.set(entry.id, rec)
     if (entry.schedule) {
       this._createSchedule(rec)
@@ -494,13 +492,13 @@ export class TaskManager {
     this._releaseArbiter(rec) // A1：移除路径同款释放
     this.tasks.delete(id)
     this._pendingExclusive = this._pendingExclusive.filter(r => r !== rec)
-    // C6/N：计数器随任务移除清理（此前快照只写不删 → state.json 垃圾数据无限增长）
+    // 计数器随任务移除清理（否则快照只写不删 → state.json 垃圾数据无限增长）
     this._stateStore?.deleteCounter?.(id)
     this.log.info({ task: id }, 'ad-hoc task removed')
     this._syncStateTasks()
   }
 
-  /** 快照计数器回灌（C6/N：重建后 ad-hoc 任务的遥测跨重启保留——此前只写不读）。 */
+  /** 快照计数器回灌（重建后 ad-hoc 任务的遥测跨重启保留）。 */
   restoreCounters (id, counters) {
     const rec = this.tasks.get(id)
     if (rec && counters && typeof counters === 'object') {
@@ -512,7 +510,7 @@ export class TaskManager {
     const now = Date.now()
     return [...this.tasks.values()].map((rec) => {
       const st = rec.task.getStatus()
-      // U8：调度增强字段（!task list 展示）——排队位置/时长剩余/下次 cron 触发
+      // 调度增强字段（!task list 展示）——排队位置/时长剩余/下次 cron 触发
       const queuePos = this._pendingExclusive.indexOf(rec)
       st.queuePosition = queuePos >= 0 ? queuePos + 1 : null // 1-based
       const maxMinutes = rec.entry.durationMinutes ?? rec.entry.options?.durationMinutes

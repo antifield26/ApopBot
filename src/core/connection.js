@@ -53,7 +53,7 @@ export class ConnectionManager {
       attempt: this.attempt,
       reconnectCount: this.reconnectCount,
       connectedAt: this.connectedAt,
-      // 断线期间 uptime 展示失真（connectedAt 不重置）——非 connected 状态返回 0（P2）
+      // 断线期间 uptime 展示失真（connectedAt 不重置）——非 connected 状态返回 0
       uptimeMs: this.state === STATE_CONNECTED && this.connectedAt ? Date.now() - this.connectedAt : 0,
       lastError: this.lastError
     }
@@ -93,9 +93,8 @@ export class ConnectionManager {
       // setControlState 于死 client 上抛错 → uncaughtException → fatalExit 停服
       if (seq !== this._connectSeq) return
       this.plugins = loaded
-      // 第 11 轮：本机/快速握手时 spawn 先于插件装载触发——onSpawn 读到的
-      // ctx.plugins 是空/旧代句柄（!follow 于死 client 上操作 → fatalExit 的
-      // 根因链）。装载完成后若 spawn 已先发生（state=CONNECTED），补发同步回调
+      // 本机/快速握手时 spawn 先于插件装载触发——onSpawn 会读到空/旧代句柄。
+      // 装载完成后若 spawn 已先发生（state=CONNECTED），补发同步回调
       //（消费点全部运行时读 ctx.plugins，无需二次 rebuild）。
       if (this.state === STATE_CONNECTED) this.hooks.onPluginsReady?.(loaded)
     } catch (err) {
@@ -122,7 +121,7 @@ export class ConnectionManager {
 
     // spawn 超时兜底必须在插件装载（await 动态 import）之前注册——否则 spawn 在装载
     // 期间已触发（本机/快速握手），后注册的监听器永远等不到事件 → 60s 后误杀正常 bot
-    // 并触发重连循环（P0，实测复现）。两处 bot.once('spawn') 按注册顺序先后触发，无冲突。
+    // 并触发重连循环。两处 bot.once('spawn') 按注册顺序先后触发，无冲突。
     this._spawnPromise = new Promise((resolve) => {
       bot.once('spawn', resolve)
     })
@@ -244,7 +243,7 @@ export class ConnectionManager {
       } catch { /* 已断开 */ }
     }
     // 清理残留状态：代际递增使陈旧回调（spawn 超时/end/error）全退——
-    // 否则手动断开后残留的 spawn 超时定时器仍对已 quit 的 bot 二次 quit（P1-8）
+    // 否则手动断开后残留的 spawn 超时定时器仍对已 quit 的 bot 二次 quit
     this._connectSeq++
     this._spawnPromise = null
     this._timeoutQuit = false

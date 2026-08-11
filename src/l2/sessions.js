@@ -1,5 +1,5 @@
-// 会话记忆落盘（v1.0.0 C5）：LLM 会话（按玩家多轮历史 + 跨对话工具记录）从进程内存
-// 升级为持久化——重启/重连后玩家多轮上下文不丢。
+// 会话记忆落盘：LLM 会话（按玩家多轮历史 + 跨对话工具记录）持久化——
+// 重启/重连后玩家多轮上下文不丢。
 //
 // 结构：{ schemaVersion: 1, sessions: { [user]: { history: [], calls: [] } } }
 // 写入策略与 state.js 同款：tmp+rename 原子写 + 2s 防抖 + process 'exit' flush。
@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createDebouncedFileStore } from '../util/debounced-file-store.js' // 第 11 轮 F3
+import { createDebouncedFileStore } from '../util/debounced-file-store.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const DEFAULT_FILE = path.join(ROOT, 'data', 'sessions.json')
@@ -47,8 +47,8 @@ export function loadSessions (file = DEFAULT_FILE) {
  */
 export function createSessionStore ({ file = DEFAULT_FILE, debounceMs = 2000, logger = null, maxSessions = DEFAULT_MAX_SESSIONS } = {}) {
   let last = loadSessions(file)
-  // 第 11 轮 F3：落盘样板（dirty/防抖/tmp+rename 原子写/exit flush）提取共享——
-  // 语义与既有实现逐条等价；LRU 裁剪在 encode 内（persist 时执行）
+  // 落盘样板共享（dirty/防抖/tmp+rename 原子写/exit flush）；LRU 裁剪在 encode 内
+  //（persist 时执行）
   const store = createDebouncedFileStore({
     file,
     debounceMs,
@@ -73,8 +73,8 @@ export function createSessionStore ({ file = DEFAULT_FILE, debounceMs = 2000, lo
     },
     /** 写入会话（内存为主存储；调度落盘）。 */
     set (user, value) {
-      // 第 8 轮：delete+set 刷新插入序——否则活跃玩家（内存命中从不触发 get 的
-      // 磁盘刷新）插入序停留在首次落盘位置，persist 的 LRU 裁尾会误裁活跃会话
+      // delete+set 刷新插入序——否则活跃玩家（内存命中从不触发 get 的磁盘刷新）
+      // 插入序停留在首次落盘位置，persist 的 LRU 裁尾会误裁活跃会话
       delete last.sessions[user]
       last.sessions[user] = {
         history: Array.isArray(value?.history) ? value.history.slice(-20) : [],
@@ -86,8 +86,8 @@ export function createSessionStore ({ file = DEFAULT_FILE, debounceMs = 2000, lo
     reset (user) {
       if (!(user in last.sessions)) return
       delete last.sessions[user]
-      // 立即落盘（第 8 轮）：!agent reset 语义要求崩溃窗口内不"复活"——
-      // 此前走 2s 防抖，SIGKILL/断电窗口内会话残留磁盘，重启后私密上下文恢复
+      // 立即落盘：!agent reset 语义要求崩溃窗口内不"复活"——若走 2s 防抖，
+      // SIGKILL/断电窗口内会话残留磁盘，重启后私密上下文恢复
       store.flush()
     },
     /** 立即落盘（测试/优雅退出）。 */

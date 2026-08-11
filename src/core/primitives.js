@@ -1,4 +1,4 @@
-// 动作原语注册表（v1.0.0 C3）：LLM act 动作数组与任务脚本共用的原子动作层。
+// 动作原语注册表：LLM act 动作数组与任务脚本共用的原子动作层。
 // 取代原 skills.js 的 20 个固定技能——原语可自由组合表达任意意图，不再有
 // "提示词→固定技能"的映射瓶颈。每个原语：
 //   { schema, permission, exclusiveClass, guardText, timeoutMs, cooldownMs?, handler }
@@ -22,7 +22,7 @@ import { environmentSnapshot } from './environment.js'
 import { exploreStep, notifyValuableFound } from './explore.js'
 import * as discovery from './discovery.js'
 import { createMovement, REASON_TEXT, findSurfaceBlocks } from './movement.js'
-import { isArea } from '../tasks/util.js' // 第 11 轮 R2：区域校验 5 份消重（farm/combat/breed/explore 同源）
+import { isArea } from '../tasks/util.js' // 区域校验 5 份消重（farm/combat/breed/explore 同源）
 import { attackEntity, useEntityOn } from './entity-actions.js'
 import { hasExclusiveActive, getExclusiveOwner } from './arbiter.js'
 import { validateTaskOptions } from './task-schemas.js'
@@ -44,8 +44,8 @@ function checkActionCooldown (name) {
 }
 
 /**
- * 自动存储（第 11 轮 G3）：背包满（NoChests）时附近找箱子/木桶存入物品——
- * 替代 mine/chop/farm 脚本的 5 分钟干等。规则：
+ * 自动存储：背包满（NoChests）时附近找箱子/木桶存入物品——避免 mine/chop/farm
+ * 脚本在背包满时干等。规则：
  * - 只搜 32 格内 chest/barrel（至多开 3 个，防 UI 卡死）
  * - 工具（*_sword/_pickaxe/_axe/_shovel/_hoe）与可食用物品不存（保持装备与食物）
  * - 单箱存 ≥1 项即返回（收集流程可继续）；全部失败返回 0（回退 inventoryFull 语义）
@@ -108,7 +108,7 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '',
     timeoutMs: 5000,
     handler: async (c) => {
-      // U14 精简输出（同 status 技能）：LLM 决策用不上的运维指标不进上下文
+      // 精简输出（同 status 技能）：LLM 决策用不上的运维指标不进上下文
       const s = c.conn.getStatus()
       const e = c.bot?.entity
       return {
@@ -137,7 +137,7 @@ export function createPrimitiveRegistry (ctx) {
         counts[it.name] = (counts[it.name] ?? 0) + (it.count ?? 1)
       }
       const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, maxItems ?? 10)
-      // slotsUsed = 占用槽位数（items() 每槽一个实例——原 FishTask 背包满判定语义；
+      // slotsUsed = 占用槽位数（items() 每槽一个实例——背包满判定用；
       // items 数组是去重后的物品种类，不能当槽位用）
       return { items: entries.map(([name, count]) => ({ name, count })), total: entries.length ? entries.reduce((s, [, n]) => s + n, 0) : 0, slotsUsed: allItems.length }
     }
@@ -172,7 +172,7 @@ export function createPrimitiveRegistry (ctx) {
       let ents = []
       if (Array.isArray(filter)) {
         ents = nearbyEntities(c.bot, { maxDistance: maxDistance ?? 32, limit: 32 })
-        // 大小写不敏感（与字符串路径 nearbyEntities 的 toLowerCase 语义一致——数组路径此前漏掉）
+        // 大小写不敏感（与字符串路径 nearbyEntities 的 toLowerCase 语义一致）
         ents = ents.filter(e => filter.some(f => {
           const needle = String(f).toLowerCase()
           return String(e.name ?? '').toLowerCase().includes(needle) || String(e.type ?? '').toLowerCase() === needle
@@ -223,9 +223,8 @@ export function createPrimitiveRegistry (ctx) {
       }
       const candidates = []
       const matchedNames = []
-      // 区域过滤 + 中心距离告警（两条路径共用——此前 regex 路径提前返回漏掉 area 过滤，
-      // 且 regex 用 findBlocks 扫任意位置含地下/洞穴，与 blockNames 的 findSurfaceBlocks
-      // 语义不一致；统一为过滤 + 告警）
+      // 区域过滤 + 中心距离告警（两条路径共用：regex 路径用 findBlocks 扫任意位置，
+      // 含地下/洞穴，与 blockNames 的 findSurfaceBlocks 语义不同——统一走过滤 + 告警）
       const finish = () => {
         const me = c.bot.entity?.position
         const sorted = candidates
@@ -257,14 +256,14 @@ export function createPrimitiveRegistry (ctx) {
           const n = byName[p.type] ?? 'unknown'
           if (!matchedNames.includes(n)) matchedNames.push(n)
           candidates.push([p.x, p.y, p.z])
-          // 第 11 轮 G2：记忆被动积累——LLM 观察即探索（记录带维度；chunk 去重
+          // 记忆被动积累——LLM 观察即探索（记录带维度；chunk 去重
           // + 全局上限天然防膨胀；被挖除后 blockUpdate 删记忆，再次观察自动重记）
           if (n !== 'unknown') discovery.recordResource(n, { x: p.x, y: p.y, z: p.z }, dim)
         }
         return finish()
       }
       if (!names || names.length === 0) throw new Error('observe_blocks 需要 blockNames/blockName/regex 之一')
-      // 第 11 轮 G2：观察即记录（记录带维度；chunk 去重 + 全局上限天然防膨胀）
+      // 观察即记录（记录带维度；chunk 去重 + 全局上限天然防膨胀）
       const dim = c.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
       for (const name of names) {
         let found
@@ -368,16 +367,16 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '',
     timeoutMs: 5000,
     handler: async (c, { blockName, maxCount }) => {
-      // 第 11 轮：大小写归一——记忆 key 是 explore 记录的小写名（iron_ore），
-      // LLM 传 Iron_Ore 此前返回空且无提示（误导 LLM 去重新探索）
+      // 大小写归一——记忆 key 是 explore 记录的小写名（iron_ore），LLM 传 Iron_Ore
+      // 会查空且无提示（误导 LLM 去重新探索）
       const name = String(blockName ?? '').toLowerCase()
       const me = c.bot?.entity?.position
-      // 第 11 轮 G1：维度过滤——只返回当前维度的记录（下界/末地坐标 8:1 映射
+      // 维度过滤——只返回当前维度的记录（下界/末地坐标 8:1 映射
       // 混存会误导；返回带 dimension 供 LLM 判断）
       const dim = c.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
       const out = []
       for (const h of discovery.query(name, me, maxCount ?? 5, dim)) {
-        // 地形记忆验证（第 10 轮）：已加载区块逐条核对是否仍是该方块——不是则
+        // 地形记忆验证：已加载区块逐条核对是否仍是该方块——不是则
         // 自动删除（记忆自愈，杜绝过期坐标误导）；未加载区块无法验证标
         // verified:false（LLM 需 observe_block 确认后再行动）
         let verified = false
@@ -413,7 +412,7 @@ export function createPrimitiveRegistry (ctx) {
       type: 'object',
       required: ['x', 'y', 'z'],
       properties: {
-        // A3：世界边界 ±30000000——LLM 幻觉传超大值会进 GoalBlock 界外寻路异常
+        // 世界边界 ±30000000——LLM 幻觉传超大值会进 GoalBlock 界外寻路异常
         x: { type: 'number', min: -30000000, max: 30000000 },
         y: { type: 'number', min: -30000000, max: 30000000 },
         z: { type: 'number', min: -30000000, max: 30000000 },
@@ -426,8 +425,8 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '移动',
     timeoutMs: 120000,
     handler: async (c, { x, y, z, range, timeoutMs }, runtime) => {
-      // 第 11 轮：signal 贯通——此前 goto 忽略 abort（注释声称"立即中断"但原语
-      // 没传 signal），stop()/断线时 goto 仍跑满 120s，busy 全程占用
+      // signal 贯通——goto 长时阻塞必须响应 stop()/断线中止，否则跑满 120s、
+      // busy 全程占用（executor 超时拦不住原语内部的长等待）
       const r = await createMovement(c.bot, c.logger).gotoPoint(new Vec3(x, y, z), {
         range,
         timeoutMs: timeoutMs ?? 60000,
@@ -451,10 +450,10 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '探索',
     timeoutMs: 45000,
     handler: async (c, { maxDistance, direction }, runtime) => {
-      // 第 11 轮：signal 贯通（同 goto——stop()/断线中止时探索步立即退出）
+      // signal 贯通（同 goto——stop()/断线中止时探索步立即退出）
       const r = await exploreStep(c.bot, c.logger, { maxDistance, direction, signal: runtime?.signal ?? null })
       if (!r.ok) throw new Error(`探索失败: ${r.reason}`)
-      notifyValuableFound(c.cfg, c.logger, r.found) // D：重要资源 webhook 推送（节流，失败静默）
+      notifyValuableFound(c.cfg, c.logger, r.found) // 重要资源 webhook 推送（节流，失败静默）
       return { from: [r.from.x, r.from.y, r.from.z], to: [r.to.x, r.to.y, r.to.z], found: r.found.map(f => ({ name: f.name, x: f.x, y: f.y, z: f.z })), hostile: r.entities.hostile ?? [] }
     }
   })
@@ -482,9 +481,9 @@ export function createPrimitiveRegistry (ctx) {
         return `方块 ${block.name} 不可挖掘（距离过远或不可挖掘）——先 goto 靠近到 5 格内`
       }
       checkActionCooldown('dig')
-      await withTimeout(c.bot.dig(block), 30000, 'dig timeout') // 断线保护（A4 同款）
-      // 地形记忆失效（第 10 轮）：挖除的方块从探索记忆删除——记忆只增不减会让
-      // query_map 长期返回过期坐标（用户实测误判 find 失效的根因）
+      await withTimeout(c.bot.dig(block), 30000, 'dig timeout') // 断线保护
+      // 地形记忆失效：挖除的方块从探索记忆删除——记忆只增不减会让
+      // query_map 长期返回过期坐标
       discovery.removeResourceAt(x, y, z)
       return `已挖掘 ${block.name} @ ${x},${y},${z}`
     }
@@ -540,11 +539,10 @@ export function createPrimitiveRegistry (ctx) {
     handler: async (c, { positions, blockNames, blockName, area, maxBlocks, chestLocations }, runtime) => {
       if (!c.bot?.collectBlock?.collect) throw new Error('collectBlock 插件不可用（配置 mineflayerPlugins.collectBlock=true）')
       // 解析候选：优先 positions；否则按名称扫描。
-      // 契约（26.1.2 实测，mine.js 同款修复）：collectblock 的 Targets.getClosest()
-      // 访问 target.position（Block/Entity 契约）——positions 必须经 blockAt 转
-      // Block；blockAt 返回 null（跨会话坐标/区块卸载）或坐标非法（NaN）时**跳过
-      // 该点**——此前兜底裸 Vec3 会触发插件 collectAll 的 UnknownType 崩溃 → 整批
-      // 失败、已采数量全部不入账、mine 脚本对同一批坐标无限重试
+      // 契约：collectblock 的 Targets.getClosest() 访问 target.position（Block/Entity
+      // 契约）——positions 必须经 blockAt 转 Block；blockAt 返回 null（跨会话坐标/
+      // 区块卸载）或坐标非法（NaN）时**跳过该点**——裸 Vec3 会触发插件 collectAll
+      // 的 UnknownType 崩溃（整批失败、已采数量不入账、脚本对同一批坐标无限重试）
       const toBlocks = (pts) => pts
         .map(p => {
           if (!Array.isArray(p) || p.length < 3 || !p.slice(0, 3).every(Number.isFinite)) return null
@@ -571,7 +569,7 @@ export function createPrimitiveRegistry (ctx) {
       }
       if (targets.length === 0) return { collected: 0, inventoryFull: false }
       // chestLocations 转 Vec3（collectblock 的 getClosestChest 调 c.distanceTo——配置
-      // 普通对象必须转）；坐标非法/缺维度（NaN）过滤——此前 NaN chest 距离恒不可达
+      // 普通对象必须转）；坐标非法/缺维度（NaN）过滤——NaN chest 距离恒不可达
       const chests = Array.isArray(chestLocations)
         ? chestLocations
             .map(c => Array.isArray(c)
@@ -579,7 +577,7 @@ export function createPrimitiveRegistry (ctx) {
               : (c && Number.isFinite(c.x) && Number.isFinite(c.y) && Number.isFinite(c.z) ? new Vec3(c.x, c.y, c.z) : null))
             .filter(Boolean)
         : undefined
-      // 分批 ≤4（C4/J：批间 pause/stop 响应延迟有界——与 mine/chop 任务同款语义）
+      // 分批 ≤4（批间 pause/stop 响应延迟有界——与 mine/chop 任务同款语义）
       let collected = 0
       const cap = Math.min(maxBlocks ?? 16, targets.length)
       for (let i = 0; i < cap; i += 4) {
@@ -588,15 +586,15 @@ export function createPrimitiveRegistry (ctx) {
         try {
           await withTimeout(c.bot.collectBlock.collect(batch, { chestLocations: chests }), 120000, 'collect timeout')
           collected += batch.length
-          // 地形记忆失效（第 10 轮）：收集成功的坐标从探索记忆删除（同 dig）
+          // 地形记忆失效：收集成功的坐标从探索记忆删除（同 dig）
           for (const b of batch) {
             if (b?.position) discovery.removeResourceAt(b.position.x, b.position.y, b.position.z)
           }
         } catch (err) {
           if (err.code === 'NoChests') {
-            // 第 11 轮 G3：自动存储——背包满时附近找箱子存物品再继续（替代
-            // mine/chop/farm 脚本 5 分钟干等；存成功重试同一批，失败回退
-            // inventoryFull 语义由脚本处理）
+            // 自动存储——背包满时附近找箱子存物品再继续（避免 mine/chop/farm
+            // 脚本背包满空转；存成功重试同一批，失败回退 inventoryFull 语义
+            // 由脚本处理）
             if (runtime?.signal?.aborted) return { collected, stopped: true }
             const { stored, found } = await autoDeposit(c.bot, c.logger)
             if (stored > 0) {
@@ -608,11 +606,11 @@ export function createPrimitiveRegistry (ctx) {
               i -= 4 // 重试同一批（已挖除的 collectblock 自动跳过）
               continue
             }
-            return { collected, inventoryFull: true } // F2：背包满（无箱子可存）
+            return { collected, inventoryFull: true } // 背包满（无箱子可存）
           }
-          // 第 11 轮：collect 中途失败（NoPath/目标变化）时批次整体不计——已挖除
-          // 的方块丢失计数且地形记忆残留。blockAt 复核已挖除块补记（未加载按
-          // 未挖保守 0），记忆统一清（已不准确的坐标）——失败块仍在下一轮扫描
+          // collect 中途失败（NoPath/目标变化）时批次整体不计——blockAt 复核已挖除
+          // 的块补记计数（未加载按未挖保守 0），记忆统一清（已不准确的坐标）；
+          // 失败块在下一轮扫描中重试
           for (const b of batch) {
             const now = c.bot.blockAt(b.position)
             if (now && now.type === 0) collected++
@@ -646,9 +644,9 @@ export function createPrimitiveRegistry (ctx) {
       if (!c.bot?.placeBlock || !c.bot?.equip) throw new Error('plant 能力不可用（插件缺失）')
       // farm._seedByCrop 同款：SEED_BY_CROP + seedOverrides 合并（值 = 种子物品名）
       const seedByCrop = { ...SEED_BY_CROP, ...(seedOverrides ?? {}) }
-      // 第 11 轮修复：cropTypes 此前被 void 忽略——按背包第一颗种子乱种
-      //（farm 指定 cropTypes:['carrots'] 时若先有 wheat_seeds 会种小麦进胡萝卜田）。
-      // 现在按 cropTypes 优先匹配（未指定 = 全部作物任意种子，兼容旧行为）
+      // 按 cropTypes 优先匹配种子（未指定 = 全部作物任意种子）——否则按背包
+      // 第一颗种子乱种（farm 指定 cropTypes:['carrots'] 时若先有 wheat_seeds
+      // 会种小麦进胡萝卜田）
       const wantedCrops = Array.isArray(cropTypes) && cropTypes.length > 0
         ? cropTypes
         : Object.keys(seedByCrop)
@@ -674,8 +672,7 @@ export function createPrimitiveRegistry (ctx) {
         const soil = c.bot.blockAt(farmland[i])
         const above = soil ? c.bot.blockAt(soil.position.offset(0, 1, 0)) : null
         if (above && above.boundingBox !== 'empty') continue // 已占用
-        // 第 11 轮：只在 wantedSeeds（cropTypes 对应种子）内选取——此前取背包
-        // 第一颗任意种子
+        // 只在 wantedSeeds（cropTypes 对应种子）内选取——不取背包第一颗任意种子
         const seeds = c.bot.inventory?.items()?.find(it => wantedSeeds.has(it.name))
         if (!seeds) return { planted, noSeeds: true }
         try {
@@ -722,7 +719,7 @@ export function createPrimitiveRegistry (ctx) {
       if (matches.length === 0) return { hits: 0, targetGone: false, targetName: null, reason: `附近没有匹配 ${filter} 的实体（observe_entities 查看）` }
       matches.sort((a, b) => a.position.distanceTo(me.position) - b.position.distanceTo(me.position))
       const target = matches[0]
-      // 战斗循环（combat 任务同款：存在检查 + 接近 + 攻击）——26.1 门控 bug 走
+      // 战斗循环（combat 任务同款：存在检查 + 接近 + 攻击）——攻击走
       // entity-actions 原始包；targetGone 供脚本数击杀（entityGone 监听等价语义）
       const move = createMovement(c.bot, c.logger)
       const ATTACK_RANGE = 3.5
@@ -730,8 +727,8 @@ export function createPrimitiveRegistry (ctx) {
       let hits = 0
       let interruptedStreak = 0 // 连续被走位打断次数（目标持续移动时放弃追击，防无限重试）
       for (let i = 0; i < (maxHits ?? 5); i++) {
-        // 取消/断线信号贯通（任务 stop 不再"超时后幽灵追打"——executor 60s 超时
-        // 拦不住 approach 循环，handler 必须自查 signal）
+        // 取消/断线信号贯通——executor 超时拦不住 approach 循环，handler 必须
+        // 自查 signal 才能在 stop/断线时停止追击
         if (runtime?.signal?.aborted) return { hits, targetGone: false, targetName: target.name, reason: '动作被中断' }
         if (!alive() || !target.position) return { hits, targetGone: true, targetName: target.name }
         const dist = me.position.distanceTo(target.position)
@@ -799,10 +796,10 @@ export function createPrimitiveRegistry (ctx) {
       await withTimeout(c.bot.equip(food, 'hand'), 10000, 'equip timeout')
       let fed = 0
       for (let i = 0; i < count; i++) {
-        // A4：喂食前目标存在检查（写无效 entityId 的 use_entity 包按协议违规处理）
+        // 喂食前目标存在检查（写无效 entityId 的 use_entity 包按协议违规处理）
         const alive = c.bot.entities instanceof Map ? c.bot.entities.has(target.id) : !!c.bot.entities?.[target.id]
         if (!alive) return { fed, targetGone: true, targetName: target.name }
-        useEntityOn(c.bot, target) // 26.1 门控 bug 绕过（项目层原始包）
+        useEntityOn(c.bot, target) // 走 entity-actions 原始包
         fed++
         if (i < count - 1) await new Promise(r => setTimeout(r, useCooldownMs))
       }
@@ -825,7 +822,7 @@ export function createPrimitiveRegistry (ctx) {
     handler: async (c, { itemName }) => {
       const item = c.bot.inventory?.items()?.find(it => it.name === itemName)
       if (!item) return `背包里没有 ${itemName}（observe_inventory 查看）`
-      await withTimeout(c.bot.equip(item, 'hand'), 10000, 'equip timeout') // A4：断线保护
+      await withTimeout(c.bot.equip(item, 'hand'), 10000, 'equip timeout') // 断线保护
       return `已装备 ${itemName}`
     }
   })
@@ -940,8 +937,8 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '',
     timeoutMs: 5000,
     handler: async (c, { x, y, z, yaw, pitch, relative }) => {
-      // relative 分支必须在 yaw 分支之前——afk 传 {yaw:0.05, relative:true} 时
-      // 此前命中 yaw 绝对分支，每次转动都把视角 snap 回绝对 0.05（并非增量漂移）
+      // relative 分支必须在 yaw 分支之前——否则 afk 传 {yaw:0.05, relative:true}
+      // 会命中 yaw 绝对分支，每次转动都把视角 snap 回绝对 0.05（并非增量漂移）
       if (relative === true) {
         const e = c.bot.entity
         await withTimeout(c.bot.look(e.yaw + (yaw ?? 0.05), e.pitch + (pitch ?? 0), true), 5000, 'look timeout')
@@ -987,10 +984,10 @@ export function createPrimitiveRegistry (ctx) {
     timeoutMs: 305000,
     handler: async (c, { timeoutMs }, runtime) => {
       if (!c.bot?.fish) return { caught: false, reason: 'fish 能力不可用（插件缺失）' }
-      // FishTask 同款：bot.fish() 无超时——withTimeout + 取消信号 race
-      //（任务 stop/断线不再"继续抛竿到上钩或 60s"——注释契约在此实现）
-      // 第 11 轮：abort 监听器必须配对移除（wait 原语同款纪律）——fish 任务挂机
-      // 数小时（60s/次抛竿）会在同一 AbortSignal 上累积上百个监听器
+      // FishTask 同款：bot.fish() 无超时——withTimeout + 取消信号 race 使任务
+      // stop/断线能打断抛竿（60s 超时由调用方控制）
+      // abort 监听器必须配对移除（wait 原语同款纪律）——fish 任务挂机数小时
+      //（60s/次抛竿）会在同一 AbortSignal 上累积上百个监听器
       let onAbort = null
       let caught = false
       try {
@@ -1031,7 +1028,7 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '',
     timeoutMs: 10000,
     handler: async (c, { type, id, options }) => {
-      // C5（R3 根治版）：LLM 生成的 ad-hoc options 过 schema（与 !task new 同款入口拦截）
+      // LLM 生成的 ad-hoc options 过 schema（与 !task new 同款入口拦截）
       const v = validateTaskOptions(type, options)
       if (!v.ok) throw new Error(`参数校验失败: ${v.error}`)
       c.tasks.addTask({ id, type, options: options ?? {}, notifyChat: true })
@@ -1083,7 +1080,7 @@ export function createPrimitiveRegistry (ctx) {
         c.plugins.follow.stop()
         return '已停止跟随'
       }
-      // A3（第四轮）：启动跟随与 exclusive 任务互斥（双控制器冲突防线）
+      // 启动跟随与 exclusive 任务互斥（双控制器冲突防线）
       if (hasExclusiveActive()) {
         throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法跟随（任务结束后可试）`)
       }
@@ -1096,7 +1093,7 @@ export function createPrimitiveRegistry (ctx) {
       const lower = targetName.toLowerCase()
       const player = Object.values(c.bot.players ?? {}).find(p => p.username.toLowerCase() === lower)
       if (!player) return `找不到玩家 ${targetName}`
-      // 目标防御：bot.players 含 Bot 自己——跟随自己 = 原地打转（目标选择错误根因）
+      // 目标防御：bot.players 含 Bot 自己——跟随自己 = 原地打转
       if (targetName.toLowerCase() === String(c.bot.username ?? '').toLowerCase()) {
         return `不能跟随 Bot 自己——请指定其他玩家（如"跟随我"）`
       }

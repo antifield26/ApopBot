@@ -1,9 +1,9 @@
 import { isArea } from '../util.js'
-// 农场任务脚本（v1.0.0 C8）：区域内 种植 → 等待成熟 → 收割 → 补种 的循环。
-// 语义与原 FarmTask 逐条对应：
+// 农场任务脚本：区域内 种植 → 等待成熟 → 收割 → 补种 的循环。
+// 语义说明：
 // - init 校验（area 六坐标/cropTypes 非空/未知作物与方块/插件）
 // - 成熟收割（分批 4 + NoChests→5min 清空等待 + 其他失败→30s 重试）
-// - 收割后 continue（不种植/不等待——原任务 harvest 后跳过其余分支）
+// - 收割后 continue（不种植/不等待）
 // - 种植（replant 默认 true；seedOverrides 透传；种植成功 continue）
 // - 未成熟 → 等待生长（growthCheckSeconds 默认 30s，内部等待可打断）
 // - 空闲：stopWhenIdle → 完成；否则巡逻等待（玩家放种子/成熟后继续）
@@ -15,7 +15,7 @@ export default {
   naturalCompletion: true,
   maxActions: 100000,
   defaultOptions: { growthCheckSeconds: 30, maxCycles: 1 },
-  /** init 校验（原 FarmTask.init 等价迁移）。 */
+  /** init 校验。 */
   async init (task) {
     const o = task.options
 
@@ -48,12 +48,12 @@ export default {
           ], else: [
             { ctrl: 'if', cond: { type: 'last', ok: false }, then: [{ ctrl: 'wait', ms: 30000 }] }
           ] },
-          { ctrl: 'continue' } // 收获后跳过种植/等待（原任务 harvest 分支 continue）
+          { ctrl: 'continue' } // 收获后跳过种植/等待
         ], else: [
           // 种植（replant 默认 true；false 跳过）
           { ctrl: 'if', cond: { type: 'config', key: 'replant', equals: false }, then: [], else: [
             { op: 'plant_crops', args: { area: '${area}', cropTypes: '${cropTypes}', seedOverrides: '${seedOverrides}' }, count: { name: 'planted', field: 'planted' } },
-            // 种上了 → 本轮结束（原任务 planted>0 → cycles++ continue）
+            // 种上了 → 本轮结束
             { ctrl: 'if', cond: { type: 'result', ref: '$last', field: 'planted', gte: 1 }, then: [
               { ctrl: 'continue' }
             ] }

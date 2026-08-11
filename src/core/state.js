@@ -1,5 +1,5 @@
-// 运行状态持久化（U1）：ad-hoc 任务条目（!task new 添加）+ 任务遥测计数器的 JSON 快照。
-// 目标：NSSM restart 后人工加的任务与计数不丢（此前全内存态，重启即失）。
+// 运行状态持久化：ad-hoc 任务条目（!task new 添加）+ 任务遥测计数器的 JSON 快照。
+// 目标：NSSM restart 后人工加的任务与计数不丢。
 // 明确不做运行时现场恢复：运行中任务重启后按 cron/enabled 语义重新调度（配置即真相），
 // 配置文件中已有的任务以配置文件为准（快照只补配置里没有的 ad-hoc 条目）。
 //
@@ -8,12 +8,12 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createDebouncedFileStore } from '../util/debounced-file-store.js' // 第 11 轮 F3
+import { createDebouncedFileStore } from '../util/debounced-file-store.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const DEFAULT_FILE = path.join(ROOT, 'data', 'state.json')
 
-// v1.0.0（C5）：快照 schema 版本——当前 2（v1 无版本号，结构相同仅补标记）。
+// 快照 schema 版本——当前 2（v1 无版本号，结构相同仅补标记）。
 // 未来版本（> 当前）拒绝加载并明确报错（升级 Bot 而非静默降级/损坏）。
 export const STATE_SCHEMA_VERSION = 2
 
@@ -23,9 +23,9 @@ export function loadState (file = DEFAULT_FILE) {
   try {
     data = JSON.parse(readFileSync(file, 'utf8'))
   } catch {
-    // 修复（本地测试冷启动暴露）：漏 memory 键 → createStateStore 的 memory getter
+    // 损坏/缺 memory 键时回退空态——否则 createStateStore 的 memory getter
     // JSON.parse(JSON.stringify(undefined)) 抛 '"undefined" is not valid JSON' →
-    // feature layer rebuild 失败（生产机 state.json 已存在所以从未触发）
+    // feature layer rebuild 失败
     return { schemaVersion: STATE_SCHEMA_VERSION, tasks: [], counters: {}, memory: {} }
   }
   return migrateState(data)
@@ -39,9 +39,8 @@ export function loadState (file = DEFAULT_FILE) {
 export function migrateState (data) {
   const raw = data?.schemaVersion
   const v = (raw === undefined || raw === null) ? 1 : raw
-  // 手改损坏：版本号非法（0/负数/小数/非数字）——此前进入迁移循环 MIGRATIONS[0]
-  // 抛裸 TypeError → loadState 之外向上炸 → 启动崩溃（违背"损坏回退空态"承诺）。
-  // 按 v1 形状防御处理（normalize 兜底坏形状，输出 schemaVersion 2）
+  // 版本号非法（0/负数/小数/非数字）：按 v1 形状防御处理（normalize 兜底坏形状，
+  // 输出 schemaVersion 2）——坏版本号进迁移循环会抛裸 TypeError → 启动崩溃
   if (!Number.isInteger(v) || v < 1) {
     return normalize({ ...(data ?? {}), schemaVersion: 1 })
   }
@@ -66,7 +65,7 @@ function normalize (data) {
     schemaVersion: STATE_SCHEMA_VERSION,
     tasks: Array.isArray(data?.tasks) ? data.tasks.filter(t => t && typeof t === 'object' && t.id && t.type) : [],
     counters: data?.counters && typeof data.counters === 'object' && !Array.isArray(data.counters) ? data.counters : {},
-    // B1（L2 进化）：探索记忆（discovery.js 快照）——非对象/坏形状按空处理
+    // 探索记忆（discovery.js 快照）——非对象/坏形状按空处理
     memory: data?.memory && typeof data.memory === 'object' && !Array.isArray(data.memory) ? data.memory : {}
   }
 }
@@ -77,8 +76,8 @@ function normalize (data) {
  */
 export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logger = null } = {}) {
   let last = loadState(file)
-  // 第 11 轮 F3：落盘样板（dirty/防抖/tmp+rename 原子写/exit flush）提取共享——
-  // 原子写语义（Windows EPERM/EBUSY 防御）与 exit 覆盖保留在共享模块内
+  // 落盘由共享模块承接：dirty/防抖/tmp+rename 原子写（Windows EPERM/EBUSY 防御）
+  // 与优雅退出 flush 均在 debounced-file-store 内
   const store = createDebouncedFileStore({
     file,
     debounceMs,
@@ -114,7 +113,7 @@ export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logg
       last.counters = { ...last.counters, [id]: { ...counters } }
       store.schedule()
     },
-    /** 删除单任务计数器（任务移除时清理，防快照无限增长——C6/N）。 */
+    /** 删除单任务计数器（任务移除时清理，防快照无限增长）。 */
     deleteCounter (id) {
       if (!(id in last.counters)) return
       const next = { ...last.counters }

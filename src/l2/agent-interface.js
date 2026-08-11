@@ -6,7 +6,7 @@
 // act(user, name, params)：直调动作原语（!agent act，不经 LLM）。
 // stop()：AbortController 中止进行中的请求。
 //
-// v1.0.0 C4：动作协议——工具集 = act（动作数组 ≤maxActionsPerCall）+ 观察/回复；
+// 动作协议——工具集 = act（动作数组 ≤maxActionsPerCall）+ 观察/回复；
 // 动作原语见 src/core/primitives.js（权限/exclusive/校验/冷却/审计由 executor 统一）。
 // 错误永不向上抛——以友好回复返回（配合 logger.error 留痕）。
 
@@ -14,10 +14,10 @@ import { isOp } from '../commands/permissions.js'
 import { environmentLine } from '../core/environment.js'
 import { withTimeout } from '../util/promise-timeout.js'
 
-// v1.0.0 C11：确定性错误不反思（权限/参数/未知动作是模型无法从教训中获益的——
-// 它们是规则约束，不是运行时失败；NoPath/超时/NoChests 等运行时失败才值得沉淀）
-// 第 8 轮扩词：exclusive 拒绝（"运行中"）、插件未启用、参数边界（不能大于/不能小于）——
-// 此前这些确定性规则错误被送进 LLM 反思（浪费 token，系统提示本就写明规则）
+// 确定性错误不反思（权限/参数/未知动作是模型无法从教训中获益的——它们是规则
+// 约束，不是运行时失败；NoPath/超时/NoChests 等运行时失败才值得沉淀）。
+// 扩词：exclusive 拒绝（"运行中"）、插件未启用、参数边界（不能大于/不能小于）——
+// 这些确定性规则错误若被送进 LLM 反思会浪费 token（系统提示本就写明规则）
 const DETERMINISTIC_ERROR = /权限不足|缺少参数|必须是|未知动作|未知技能|冷却中|不在 ops|运行中|插件未启用|不能大于|不能小于/
 
 /** 经验教训注入（buildSystem 之后拼接——最近 8 条 ≤600 字符）。 */
@@ -30,19 +30,19 @@ function experienceInjection (experience) {
   return `\n\n经验教训（最近）:\n${text}`
 }
 
-// 文本长度上限（低配 4B 模型上下文与聊天消息长度双重约束；B6 从硬编码提为常量）
+// 文本长度上限（低配 4B 模型上下文与聊天消息长度双重约束）
 const INPUT_MAX_CHARS = 1000 // 用户消息截断
 const REPLY_MAX_CHARS = 250 // 回复截断（与 chat.maxLength 默认一致）
 const TOOL_RESULT_MAX_CHARS = 2000 // 工具结果回填截断上限（预算裁剪的硬上限）
-// 第 11 轮：单轮工具调用上限（此前代码 slice(0,4) 与 CORE_SYSTEM_PROMPT 的 ≤8
-// 声明不符——多余调用静默丢弃，模型不知情会重复发出/误以为已执行。统一为 4，
-// 与 maxActionsPerCall 组合预算 = 4×8=32 动作/轮）
+// 单轮工具调用上限：与 CORE_SYSTEM_PROMPT 的声明一致（≤4）；多余调用回填"未执行"
+// 结果（模型能看见，不会重复发出/误以为已执行）。与 maxActionsPerCall 组合预算 =
+// 4×8=32 动作/轮
 const MAX_TOOL_CALLS_PER_ROUND = 4
 
 /**
- * 第 8 轮：工具结果截断——优先保持 JSON 结构完整（顶层数组/对象截到最后一个完整
- * 元素，附 truncated 标记）；纯文本直接截。此前硬 slice 把 observe_* 结构化结果
- * 切成未闭合无效 JSON 回填给模型（无法解析 → 幻觉编造/重复观察重试，成本放大）。
+ * 工具结果截断——优先保持 JSON 结构完整（顶层数组/对象截到最后一个完整元素，
+ * 附 truncated 标记）；纯文本直接截。硬 slice 会把 observe_* 结构化结果切成
+ * 未闭合无效 JSON 回填给模型（无法解析 → 幻觉编造/重复观察重试，成本放大）。
  * 非严格 JSON（半截兜底）仍带截断标记——模型至少知道结果不完整。
  */
 export function truncateJson (jsonStr, maxChars) {
@@ -80,23 +80,23 @@ export function truncateJson (jsonStr, maxChars) {
   } catch { /* 非严格 JSON——半截兜底 */ }
   return jsonStr.slice(0, maxChars) + '…(截断)'
 }
-// A2：工具结果回填的下限——预算裁剪时也不得低于此（低于则整条丢弃更有意义）
+// 工具结果回填的下限——预算裁剪时也不得低于此（低于则整条丢弃更有意义）
 const TOOL_RESULT_MIN_CHARS = 200
-// A2：上下文预算的尾差缓冲（工具定义 schema/系统提示的估算误差 + 回复预留）
+// 上下文预算的尾差缓冲（工具定义 schema/系统提示的估算误差 + 回复预留）
 const BUDGET_RESERVE_TOKENS = 384
 
-// 会话记忆（U2）：按玩家名的多轮上下文，模块级 Map——agent 实例在重连/热重载时
-// 被 feature-layer 重建，模块级存储保证记忆跨代际保留（会话是玩家维度的，不是 bot 维度的）。
-// 上限 MAX_HISTORY_MESSAGES 条（含本轮），先出后入裁剪；只存 user/assistant 纯文本轮，
-// 不存工具调用中间轮（长且不必要）。act 直调不污染会话。
-// 会话数上限 MAX_SESSIONS（C7/T）：Map 迭代序 = 插入序，访问时 delete+set 刷新为
-// 最新（LRU），超上限驱逐最久未访问的会话——此前每说过一句话的玩家永久驻留一条。
+// 会话记忆：按玩家名的多轮上下文，模块级 Map——agent 实例在重连/热重载时被
+// feature-layer 重建，模块级存储保证记忆跨代际保留（会话是玩家维度的，不是 bot
+// 维度的）。上限 MAX_HISTORY_MESSAGES 条（含本轮），先出后入裁剪；只存
+// user/assistant 纯文本轮，不存工具调用中间轮（长且不必要）。act 直调不污染会话。
+// 会话数上限 MAX_SESSIONS：Map 迭代序 = 插入序，访问时 delete+set 刷新为最新
+//（LRU），超上限驱逐最久未访问的会话——否则每说过一句话的玩家永久驻留一条。
 const MAX_HISTORY_MESSAGES = 10
 const MAX_SESSIONS = 32
 const SESSIONS = new Map()
-// A5（第四轮）：summarize 全局冷却——模块级（agent 随重连/热重载重建，实例级会复位）。
-// 覆盖死亡播报（feature-layer）与任务终态播报（manager）全部组合：低配 PC + Ollama
-// 单请求队列下并发两条 LLM 请求会让 10s 超时静默触发或拖慢主对话（第四轮验证确认）
+// summarize 全局冷却——模块级（agent 随重连/热重载重建，实例级会复位）。覆盖死亡
+// 播报（feature-layer）与任务终态播报（manager）全部组合：低配 PC + Ollama 单请求
+// 队列下并发两条 LLM 请求会让 10s 超时静默触发或拖慢主对话
 const SUMMARY_COOLDOWN_MS = 60000
 let lastSummarizeAt = 0
 
@@ -106,7 +106,7 @@ export function _resetSummarizeCooldown () {
 }
 
 /**
- * A2：token 估算（qwen3 BPE 近似，确定性可测，偏保守）——
+ * token 估算（qwen3 BPE 近似，确定性可测，偏保守）——
  * CJK ×1.0 + ASCII ×0.25 + 其他 ×0.5。字符级截断 ≠ token 级截断的工程折中：
  * 超窗时宁可多裁一点（历史轮/工具结果），也不让 Ollama 静默截断（信息丢失不可控）。
  */
@@ -127,8 +127,8 @@ export function messageTokens (m) {
     return m.toolResults.reduce((s, r) => s + estimateTokens(r.output), 0)
   }
   if (m.toolCalls?.length) {
-    // P2-5（第五轮）：工具参数 JSON 计入估算——此前只计名字，参数大的调用
-    //（run_task 的 options）真实用量被低估 → 预算裁剪误判不裁
+    // 工具参数 JSON 计入估算：只计名字会让参数大的调用（run_task 的 options）
+    // 真实用量被低估 → 预算裁剪误判不裁
     return estimateTokens(m.content ?? '') +
       estimateTokens(JSON.stringify(m.toolCalls.map(t => ({ name: t.name, arguments: t.arguments }))))
   }
@@ -166,7 +166,7 @@ export function applyTokenBudget (messages, fixedTokens, budget) {
       const targetPer = Math.max(TOOL_RESULT_MIN_CHARS, Math.floor(textBudget / results.length))
       for (const r of results) {
         if (r.output.length > targetPer) {
-          // 结构感知截断（第 8 轮）——预算二次截断不再破坏 2000 硬截的 JSON 结构
+          // 结构感知截断——预算二次截断不再破坏 2000 硬截的 JSON 结构
           const truncated = truncateJson(r.output, targetPer)
           over -= estimateTokens(r.output) - estimateTokens(truncated)
           r.output = truncated
@@ -188,8 +188,8 @@ export function applyTokenBudget (messages, fixedTokens, budget) {
 
 /**
  * 读取会话并刷新 LRU 序（delete+set 移到迭代末尾）。
- * U15（第五轮）：会话值从纯数组升级为 { history, calls }——calls 记录最近工具操作
- * （跨对话注入，LLM 知道上次实际执行了什么）。兼容旧结构（纯数组 → 转 history）。
+ * 会话值形如 { history, calls }——calls 记录最近工具操作（跨对话注入，LLM 知道
+ * 上次实际执行了什么）。兼容旧结构（纯数组 → 转 history）。
  */
 function getSession (user) {
   const v = SESSIONS.get(user)
@@ -201,7 +201,7 @@ function getSession (user) {
   return null
 }
 
-/** 写入会话（LRU 上限驱逐最久未访问者——统一走 putBounded，第六轮 C11 去重）。 */
+/** 写入会话（LRU 上限驱逐最久未访问者——统一走 putBounded）。 */
 function setSession (user, value) {
   putBounded(SESSIONS, user, Array.isArray(value) ? { history: value, calls: [] } : value)
 }
@@ -213,8 +213,8 @@ function putBounded (map, key, value, max = MAX_SESSIONS) {
   if (map.size > max) map.delete(map.keys().next().value)
 }
 
-// v1.0.0 C4：动作协议提示词（替代"意图→固定技能"映射）——教 LLM 用 act 动作数组
-// + 观察原语直接操作 Bot。op 清单与工具 schema 对应 src/core/primitives.js。
+// 动作协议提示词——教 LLM 用 act 动作数组 + 观察原语直接操作 Bot（不经"意图→
+// 固定技能"映射）。op 清单与工具 schema 对应 src/core/primitives.js。
 const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手（minecraft-bot）。你可以通过工具直接操控 Bot 在世界中的行动。
 
 【行动协议】
@@ -236,7 +236,7 @@ const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手
 
 /**
  * 每次对话注入调用者身份：LLM 必须知道"谁在说话、是否有 op 权限"，
- * 否则面对危险操作请求只会回复"需要验证 op 身份"（实测反馈——身份此前未进上下文）。
+ * 否则面对危险操作请求只会回复"需要验证 op 身份"。
  * @param {string} user 消息来源玩家
  * @param {object} cfg
  */
@@ -247,7 +247,7 @@ function buildSystem (user, cfg) {
   return `${CORE_SYSTEM_PROMPT}\n\n当前会话：${auth}`
 }
 
-// ---- 工具集（v1.0.0 C4）：act（动作数组）+ 观察/回复工具 ----
+// ---- 工具集：act（动作数组）+ 观察/回复工具 ----
 // 观察类（readonly）与 reply 作为独立工具（单次查询/说话便宜、LLM 常用）；
 // 其余动作（goto/dig/...）只经 act 数组——动作是"一次一串"，观察是"单次一问"。
 
@@ -298,16 +298,16 @@ export class AgentInterface {
     this.provider = deps.provider
     this.executor = deps.executor
     this.cfg = deps.config ?? {}
-    // v1.0.0 C5：会话落盘通道（缺省 null = 不落盘——测试/无持久化场景）
+    // 会话落盘通道（缺省 null = 不落盘——测试/无持久化场景）
     this.sessionStore = deps.sessionStore ?? null
-    // v1.0.0 C11：经验记忆库（动作失败反思沉淀；缺省 null = 不反思/不注入）
+    // 经验记忆库（动作失败反思沉淀；缺省 null = 不反思/不注入）
     this.experience = deps.experience ?? null
     this.log = ctx.logger.child({ module: 'l2' })
     this.busy = false
-    // 按玩家冷却（C7/T）：此前全局单值——一个 op 的请求冷却挡住所有玩家的 !agent chat
+    // 按玩家冷却：全局单值会让一个玩家的请求冷却挡住所有玩家的 !agent chat
     this.cooldowns = new Map()
     this._abort = null
-    // LLM 计量（U5）：本次对话累计 tokens + 最近一次请求耗时（/metrics 用）
+    // LLM 计量：本次对话累计 tokens + 最近一次请求耗时（/metrics 用）
     this.usage = { inputTokens: 0, outputTokens: 0, latencyMs: null }
   }
 
@@ -329,8 +329,8 @@ export class AgentInterface {
       return { reply: `请求冷却中（${Math.ceil((until - now) / 1000)}s 后重试）` }
     }
     if (this.busy) {
-      // F1-b（第五轮）：busy 阻塞可长达 60-120s（move_to/find_block 工具执行）——
-      // 附带已进行秒数让玩家知道不是卡死
+      // busy 阻塞可长达 60-120s（move_to/find_block 工具执行）——附带已进行
+      // 秒数让玩家知道不是卡死
       const elapsed = this._busySince ? Math.round((now - this._busySince) / 1000) : 0
       return { reply: `上一个请求仍在处理中（已进行 ${elapsed}s），请稍候` }
     }
@@ -341,8 +341,8 @@ export class AgentInterface {
     this._abort = ac
     try {
       // 会话注入：历史（裁剪后）+ 本轮用户消息（history 是副本，工具循环内 push 不污染存储）。
-      // U15：session.calls 是跨对话工具操作记录（最近 20 条，注入用）
-      // v1.0.0 C5：内存优先，miss 时从磁盘回填（重启后恢复多轮上下文）
+      // session.calls 是跨对话工具操作记录（最近 20 条，注入用）
+      // 内存优先，miss 时从磁盘回填（重启后恢复多轮上下文）
       let session = getSession(user)
       if (session === null && this.sessionStore) {
         const disk = this.sessionStore.get(user)
@@ -352,35 +352,35 @@ export class AgentInterface {
         }
       }
       const history = (session?.history ?? []).slice(-MAX_HISTORY_MESSAGES)
-      // 第 11 轮：拷贝而非活引用——session 是 SESSIONS 中存储对象的引用（getSession
-      // 不克隆），循环内 toolCalls.push 直接改写存储；若本轮回写 setSession 因
-      // 中途抛错未执行（catch 路径），存储已残留无对应 user 消息的工具记录，
-      // 下次对话被 U15 注入"最近工具操作"→ 跨对话上下文自相矛盾
+      // 拷贝而非活引用——session 是 SESSIONS 中存储对象的引用（getSession 不克隆），
+      // 循环内 toolCalls.push 会直接改写存储；若本轮回写 setSession 因中途抛错
+      // 未执行（catch 路径），存储已残留无对应 user 消息的工具记录，下次对话被
+      // 注入"最近工具操作"→ 跨对话上下文自相矛盾
       const toolCalls = (session?.calls ?? []).slice()
       const userMsg = String(text).slice(0, INPUT_MAX_CHARS)
       const messages = [...history, { role: 'user', content: userMsg }]
       const maxSteps = this.cfg.maxSteps ?? 5
       let finished = false
       let reply = '（无回复）'
-      // v1.0.0 C11：本轮运行时失败动作收集（反思触发源）
+      // 本轮运行时失败动作收集（反思触发源）
       const failures = []
       for (let step = 0; step < maxSteps && !finished; step++) {
-        // v1.0.0 C4：固定工具集 = act + 观察/回复（从原语注册表生成）
+        // 固定工具集 = act + 观察/回复（从原语注册表生成）
         const tools = buildTools(this.executor, this.cfg.maxActionsPerCall ?? 8)
-        // A3：环境自动注入——每次工具轮重新生成（bot 移动后数据新鲜）；开关可关；
+        // 环境自动注入——每次工具轮重新生成（bot 移动后数据新鲜）；开关可关；
         // 缺失字段 environmentLine 内部兜底（返回空串）
-        // U15：最近工具操作注入（≤3 条 × ≤60 字符摘要）——跨对话规划连续性的核心：
+        // 最近工具操作注入（≤3 条 × ≤60 字符摘要）——跨对话规划连续性的核心：
         // 会话刻意不存工具轮，第二次 chat 时 LLM 不知道上次实际执行了什么
         let toolLog = ''
         if (toolCalls.length) {
           toolLog = `\n最近工具操作: ${toolCalls.slice(-3).map(c => `${c.name}${c.result ? `→${c.result}` : ''}`).join('；')}`
         }
-        // v1.0.0 C2：单 provider（云端）——恒拼接完整提示词（分层分支已移除）
-        // v1.0.0 C11：经验教训注入（最近 8 条 ≤600 字符——跨会话自主能力进化）
+        // 单 provider（云端）——恒拼接完整提示词
+        // 经验教训注入（最近 8 条 ≤600 字符——跨会话自主能力进化）
         const system = buildSystem(user, this.ctx.cfg) +
           experienceInjection(this.experience) +
           (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`) + toolLog
-        // A2：上下文预算裁剪（provider 有窗口时）——fixed = system + 工具定义；
+        // 上下文预算裁剪（provider 有窗口时）——fixed = system + 工具定义；
         // 超预算按序裁剪历史/工具结果/用户消息。窗口 null（云端/测试）→ 不裁剪
         const window = this.provider.contextWindow?.()
         if (window) {
@@ -388,8 +388,8 @@ export class AgentInterface {
           const fixedTokens = estimateTokens(system) + estimateTokens(JSON.stringify(tools))
           if (fixedTokens > budget && !this._budgetWarned) {
             this._budgetWarned = true
-            // P2-5（第五轮）：warn 带具体数字——2048 窗口下 fixed > budget 是结构性
-            // 不可收敛（裁剪三步后仍超窗，依赖 Ollama 静默截断）：提示调参方向
+            // warn 带具体数字——2048 窗口下 fixed > budget 是结构性不可收敛（裁剪
+            // 三步后仍超窗，依赖 Ollama 静默截断）：提示调参方向
             this.log.warn({ fixedTokens, budget, window }, `L2 固定 prompt（system+技能定义）超出上下文预算（window ${window}）——历史/工具结果将被全部裁剪后仍可能超窗。建议调高 l2.cloudMaxContextWindow 或减少 maxTokens/工具数`)
           }
           applyTokenBudget(messages, fixedTokens, budget)
@@ -399,7 +399,7 @@ export class AgentInterface {
           system,
           signal: ac.signal
         })
-        // token/耗时计量（U5）：累计本轮全部 provider 调用
+        // token/耗时计量：累计本轮全部 provider 调用
         if (res.usage) {
           this.usage.inputTokens += res.usage.inputTokens ?? 0
           this.usage.outputTokens += res.usage.outputTokens ?? 0
@@ -412,17 +412,17 @@ export class AgentInterface {
           finished = true
           break
         }
-        // v1.0.0 C4：执行工具调用（act → 动作数组走执行器；观察/回复 → 单动作）
+        // 执行工具调用（act → 动作数组走执行器；观察/回复 → 单动作）
         const results = []
-        // 第 11 轮：超限调用静默丢弃会让模型不知情（重复发出/误以为已执行）——
-        // 回填失败结果（不执行），模型下一轮能看到"未执行"并收敛
+        // 超限调用回填失败结果（不执行）：静默丢弃会让模型不知情（重复发出/误以为
+        // 已执行）；回填后模型下一轮能看到"未执行"并收敛
         for (const tc of allCalls.slice(MAX_TOOL_CALLS_PER_ROUND)) {
           results.push({ id: tc.id, name: tc.name, output: `未执行（单轮工具调用上限 ${MAX_TOOL_CALLS_PER_ROUND}，请减少本轮动作）` })
         }
         for (const tc of calls) {
           let r
-          // signal 贯通（第 8 轮）：stop()/断线中止不再只断 provider fetch——
-          // 进行中的动作（goto 最长 120s）也立即中断，busy 释放有界
+          // signal 贯通：stop()/断线中止不只断 provider fetch——进行中的动作
+          //（goto 最长 120s）也立即中断，busy 释放有界
           if (tc.name === 'act') {
             r = await this.executor.executeBatch(tc.arguments?.actions ?? [], { user, source: 'llm', signal: ac.signal })
           } else {
@@ -439,7 +439,7 @@ export class AgentInterface {
           if (typeof output !== 'string') output = JSON.stringify(output)
           if (output.length > TOOL_RESULT_MAX_CHARS) output = truncateJson(output, TOOL_RESULT_MAX_CHARS)
           results.push({ id: tc.id, name: tc.name, output })
-          // v1.0.0 C11：本轮运行时失败收集（反思触发源——排除确定性错误）
+          // 本轮运行时失败收集（反思触发源——排除确定性错误）
           if (tc.name === 'act') {
             for (const entry of r.results ?? []) {
               if (!entry.ok && !DETERMINISTIC_ERROR.test(entry.result ?? '')) {
@@ -449,7 +449,7 @@ export class AgentInterface {
           } else if (!r.ok && !DETERMINISTIC_ERROR.test(String(r.result ?? ''))) {
             failures.push({ op: tc.name, result: String(r.result ?? '').slice(0, 120) })
           }
-          // U15：跨对话工具操作记录（摘要 ≤120 字符；失败也记录——LLM 下次知道上次错在哪）
+          // 跨对话工具操作记录（摘要 ≤120 字符；失败也记录——LLM 下次知道上次错在哪）
           const failed = tc.name === 'act' ? r.rejected : !r.ok
           const summary = failed
             ? `失败:${tc.name === 'act' ? r.rejected : r.result}`
@@ -463,11 +463,10 @@ export class AgentInterface {
         messages.push({ role: 'user', content: '', toolResults: results })
       }
       if (!finished) {
-        // C7/U 修复：maxSteps 耗尽——此前返回"（无回复）"占位且写入会话污染下一轮；
-        // 显式文案提示重试
+        // maxSteps 耗尽：返回显式文案提示重试（占位"（无回复）"会写入会话污染下一轮）
         reply = `已达最大工具步数（${maxSteps}），请重试`
       }
-      // v1.0.0 C11：反思——本轮运行时失败 → 一句话总结教训 → 写入经验库
+      // 反思——本轮运行时失败 → 一句话总结教训 → 写入经验库
       //（fire-and-forget：8s 上限，失败静默；60s 全局冷却复用 summarize 通道）
       if (failures.length > 0) this._reflect(user, failures)
       // 回写会话：本轮 user 轮 + 最终 assistant 轮（纯文本，裁剪到上限）+ 工具操作记录
@@ -475,7 +474,7 @@ export class AgentInterface {
       history.push({ role: 'assistant', content: reply.slice(0, REPLY_MAX_CHARS) })
       const sessionValue = { history: history.slice(-MAX_HISTORY_MESSAGES), calls: toolCalls.slice(-20) }
       setSession(user, sessionValue)
-      // v1.0.0 C5：落盘（2s 防抖 + exit flush）——重启/重连后多轮上下文不丢
+      // 落盘（2s 防抖 + exit flush）——重启/重连后多轮上下文不丢
       this.sessionStore?.set(user, sessionValue)
       return { reply: reply.slice(0, REPLY_MAX_CHARS) }
     } catch (err) {
@@ -493,11 +492,11 @@ export class AgentInterface {
    * @returns {Promise<{ ok: boolean, result: unknown }>}
    */
   async act (user, name, params) {
-    // P2-3（第五轮）：act 直调不经 busy 门——!agent act goto 可打进进行中的
-    // chat 工具循环（两个控制流并发改 pathfinder/装备状态）。busy 时拒绝。
-    // 第 8 轮补齐反方向：act 执行期间也置 busy——!agent act goto（最长 120s）
-    // 运行中再发 !agent chat/!agent act 此前可打进长动作（双 goto 互覆盖 goal）。
-    // 代价：act 长动作占 busy 期间其他玩家的 chat 排队——这是串行化意图，非缺陷
+    // act 直调不经 busy 门——!agent act goto 可打进进行中的 chat 工具循环（两个
+    // 控制流并发改 pathfinder/装备状态）。busy 时拒绝；act 执行期间也置 busy——
+    // 否则 !agent act goto（最长 120s）运行中再发 !agent chat/!agent act 可打进
+    // 长动作（双 goto 互覆盖 goal）。代价：act 长动作占 busy 期间其他玩家的 chat
+    // 排队——这是串行化意图，非缺陷
     if (this.busy) return { ok: false, result: '上一个请求仍在处理中，请稍候' }
     this.busy = true
     try {
@@ -508,7 +507,7 @@ export class AgentInterface {
   }
 
   /**
-   * v1.0.0 C11：反思——本轮运行时失败 → 一句话总结教训 → 经验库。
+   * 反思——本轮运行时失败 → 一句话总结教训 → 经验库。
    * fire-and-forget（8s 上限，失败静默——绝不阻塞对话回复）；60s 全局冷却
    * 复用 summarize 通道（死亡播报/任务总结/反思不并发抢推理）。
    */
@@ -531,7 +530,7 @@ export class AgentInterface {
   }
 
   /**
-   * 单次 LLM 一句话总结（U6/U7：死亡播报/任务终态播报）——无会话、无工具循环、
+   * 单次 LLM 一句话总结（死亡播报/任务终态播报）——无会话、无工具循环、
    * 不占用 busy/冷却状态。任何失败/超时返回 null（调用方回退固定模板），
    * 绝不阻塞调用方（10s 短超时）。
    * @param {string} prompt
@@ -539,7 +538,7 @@ export class AgentInterface {
    */
   async summarize (prompt) {
     if (!this.provider?.chat) return null
-    // A5：全局冷却（60s）——死亡与任务终态并发时只发一条 LLM 请求
+    // 全局冷却（60s）——死亡与任务终态并发时只发一条 LLM 请求
     const now = Date.now()
     if (now - lastSummarizeAt < SUMMARY_COOLDOWN_MS) return null
     lastSummarizeAt = now
@@ -563,7 +562,7 @@ export class AgentInterface {
     this._abort?.abort()
   }
 
-  /** U9：provider 连通性诊断（!agent doctor，只读）。 */
+  /** provider 连通性诊断（!agent doctor，只读）。 */
   async diagnose () {
     if (!this.provider?.diagnose) {
       return [{ ok: false, label: 'provider', error: 'provider 不支持诊断' }]
@@ -572,13 +571,13 @@ export class AgentInterface {
     return Array.isArray(r) ? r : [r]
   }
 
-  /** 清空指定玩家的会话记忆（!agent reset；v1.0.0 C5 同步清磁盘）。 */
+  /** 清空指定玩家的会话记忆（!agent reset；同步清磁盘）。 */
   reset (user) {
     SESSIONS.delete(user)
     this.sessionStore?.reset(user)
   }
 
-  /** 当前会话数（U3 /metrics 用）。 */
+  /** 当前会话数（/metrics 用）。 */
   sessionCount () {
     return SESSIONS.size
   }

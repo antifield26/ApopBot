@@ -1,15 +1,15 @@
 // 任务基类：状态机 created → init → running ⇄ paused → stopped/completed/failed。
 //
-// run-completion 语义（B2 修复基础）：
+// run-completion 语义：
 //   start() 返回 run 完成的 Promise；run() 正常返回 → completed（自然完成），
 //   stop() 触发 → stopped，init/run 抛错 → failed。终态（stopped/completed/failed）
-//   可再次 start()（F4 重启语义）。
+//   可再次 start()（重启语义）。
 //
-// 暂停语义（F3 修复）：pause()/resume() 是"用户暂停"；任务内部等待（无目标/重试/
-// 背包满等）用 _internalWait(ms, reason)，不再触碰 paused 状态、不置 lastError，
+// 暂停语义：pause()/resume() 是"用户暂停"；任务内部等待（无目标/重试/
+// 背包满等）用 _internalWait(ms, reason)，不触碰 paused 状态、不置 lastError，
 // 以 waitingReason 呈现于 getStatus。用户 pause 与 stop 都会打断内部等待。
 //
-// 取消语义（F1 修复）：stop() 调用子类 _cancel() 钩子取消进行中的 mineflayer 动作
+// 取消语义：stop() 调用子类 _cancel() 钩子取消进行中的 mineflayer 动作
 // （collectBlock.cancelTask / pathfinder.stop / fish 超时等），并以 10s 上限等待
 // run 协程退出，stop 永不挂起。
 
@@ -30,11 +30,11 @@ export class BaseTask {
   constructor (id, type, options, ctx) {
     this.id = id
     this.type = type
-    // 浅复制（第 11 轮）：loadConfig 对整棵 cfg deepFreeze——config 路径装载的任务
-    // options 是冻结对象，脚本 init 若写回（combat 的 weaponName）会在 ESM strict
-    // 模式下抛 TypeError（config 装载的 combat 任务永不运行的根因）。复制后写
-    // task.options 不影响 config 条目（manager reload 的 diff 基于 config 条目对象）。
-    // 嵌套对象（area 等）共享引用——当前脚本只读嵌套对象，可接受。
+    // 浅复制：loadConfig 对整棵 cfg deepFreeze——config 路径装载的任务 options 是
+    // 冻结对象，脚本 init 若写回（combat 的 weaponName）会在 ESM strict 模式下抛
+    // TypeError。复制后写 task.options 不影响 config 条目（manager reload 的 diff
+    // 基于 config 条目对象）。嵌套对象（area 等）共享引用——当前脚本只读嵌套对象，
+    // 可接受。
     this.options = { ...(options ?? {}) }
     this.ctx = ctx
     this.bot = ctx.bot
@@ -44,19 +44,17 @@ export class BaseTask {
     this.lastError = null
     this.counters = {} // 任务遥测计数（mined/caught/wiggles/…）
     this.waitingReason = null // 内部等待原因（getStatus 展示，非错误）
-    this.waitingSince = null // 第 11 轮 G4：waitingReason 开始时间（idle 播报判定）
+    this.waitingSince = null // waitingReason 开始时间（idle 播报判定）
     this.runCount = 0
-    this.exclusive = false // true = 运行期间拒绝启动其他 exclusive 任务（M2 的新任务类型）
+    this.exclusive = false // true = 运行期间拒绝启动其他 exclusive 任务
     this._stopRequested = false
     this._pauseRequested = false
     this._runPromise = null
     this._runGen = 0 // run 代际：start 换代后仍存活的旧 run 协程自弃（防 stop 超时后双 run 并发）
     this._resumeNotify = null
     this._pauseWaiters = [] // _waitIfPaused 的挂起 resolve（stop/pause 唤醒）
-    // C4/P 修复：_internalWait 的 per-wait token 集合——此前单槽
-    // （_internalWaitNotify/_internalWaitTimer）在"stop 超时强制结束 + 立即重启"的
-    // 跨代际场景下会串扰：旧代定时器触发清掉新代的槽 → 新代等待无法被 stop/pause
-    // 唤醒（响应退化为 10s 兜底）。per-wait token 使唤醒只作用于当前代的等待。
+    // _internalWait 的 per-wait token 集合：每次等待自建 token 登记于此，唤醒只
+    // 作用于当前代的等待（旧代残留等待醒来后由代际守卫直接退出，不串扰新代）
     this._internalWaits = new Set()
   }
 
@@ -85,9 +83,9 @@ export class BaseTask {
 
   /**
    * 主循环。返回的 Promise 在任务结束时 resolve（自然完成/stop/pause 均会退出）。
-   * C4/O 修复（防御）：pause 落在 init 微任务窗口时 state 已置 paused——这里
-   * 不得覆盖回 running，否则 resume() 因 state!=='paused' 直接返回、
-   * _pauseRequested 永不清除 → 任务永久卡在 _waitIfPaused（伪死锁）。
+   * 防御：pause 落在 init 微任务窗口时 state 已置 paused——这里不得覆盖回 running，
+   * 否则 resume() 因 state!=='paused' 直接返回、_pauseRequested 永不清除 → 任务
+   * 永久卡在 _waitIfPaused（伪死锁）。
    * @returns {Promise<void>}
    */
   async run () {
@@ -164,19 +162,18 @@ export class BaseTask {
   }
 
   /**
-   * 任务内部等待（F3：不触碰 paused 状态）。stop/pause 时提前返回。
+   * 任务内部等待（不触碰 paused 状态）。stop/pause 时提前返回。
    * 竞态守卫：stop() 先于 run 循环到达此处时（fire-and-forget 启动后立即 stop），
    * 立即返回而非挂起——否则 stop() 会空等 STOP_WAIT_TIMEOUT_MS。
-   * C4/P 修复：per-wait token（每次调用自建并登记到实例 Set）——唤醒只作用于
-   * 当前代的等待；旧代协程残留的等待醒来后由代际守卫直接退出，其 finally 也
-   * 只清自己代际的 waitingReason（不串扰新代）。
+   * per-wait token：唤醒只作用于当前代的等待；旧代协程残留的等待醒来后由代际
+   * 守卫直接退出，其 finally 也只清自己代际的 waitingReason（不串扰新代）。
    * @param {number} ms
    * @param {string} reason 展示原因（如 no-target / inventory-full）
    */
   async _internalWait (ms, reason = 'wait') {
     if (this._stopRequested) return
     this.waitingReason = reason
-    this.waitingSince = this.waitingSince ?? Date.now() // 首次进入等待时记录（第 11 轮 G4）
+    this.waitingSince = this.waitingSince ?? Date.now() // 首次进入等待时记录
     const gen = this._runGen
     try {
       await new Promise((resolve) => {
@@ -205,7 +202,7 @@ export class BaseTask {
     this._internalWaits.clear()
   }
 
-  /** 终态重置为 created（F4 重启语义）。 */
+  /** 终态重置为 created（重启语义）。 */
   _reset () {
     this._state = 'created'
     this._stopRequested = false
@@ -216,16 +213,16 @@ export class BaseTask {
     this.waitingSince = null
     this._runPromise = null
     this._pauseWaiters = []
-    // C4：残留 token 一并清（防旧代等待占用槽位）；A5：必须 clearTimeout 各 token
-    // 的 timer——只 clear Set 会让孤儿定时器存活到原等待时长（no-target 最长 5 分钟），
+    // 残留 token 一并清（防旧代等待占用槽位）；必须 clearTimeout 各 token 的
+    // timer——只 clear Set 会让孤儿定时器存活到原等待时长（no-target 最长 5 分钟），
     // 维持事件循环引用并事后空转 resolve；_wakeInternalWait 本就 clearTimeout+resolve
     //（resolve 后旧代协程由代际守卫退出，无害）
     this._wakeInternalWait()
   }
 
   /**
-   * 完整启动流程（由 TaskManager 调用）：init → run，返回 run 完成 Promise（B2）。
-   * 已在 init/running/paused 时返回当前 run promise；终态自动重置后重启（F4）。
+   * 完整启动流程（由 TaskManager 调用）：init → run，返回 run 完成 Promise。
+   * 已在 init/running/paused 时返回当前 run promise；终态自动重置后重启。
    */
   async start () {
     if (['init', 'running', 'paused'].includes(this._state)) return this._runPromise ?? null
@@ -237,24 +234,24 @@ export class BaseTask {
       await this.init()
       if (this._stopRequested) { this._setState('stopped'); return null }
       this.runCount++
-      // A1 修复：run promise 必须绑定局部引用——_runPromise 是单槽字段，同 id
-      // 重启后会被新一代覆盖；start() 若返回/await 字段当前值，旧代调用方
-      //（startTask/runScheduled）会挂到新一代的 run 上（p 永不 settle / 误到时）
+      // run promise 绑定局部引用：_runPromise 是单槽字段，同 id 重启后会被新一代
+      // 覆盖；start() 若返回/await 字段当前值，旧代调用方（startTask/runScheduled）
+      // 会挂到新一代的 run 上（p 永不 settle / 误到时）
       runPromise = this.run(gen)
       this._runPromise = runPromise
       await runPromise
-      // A1 修复：自然完成判定必须限本代（gen 匹配）——stop 超时强制结束 + 同 id
-      // 重启后旧代协程醒来时 _stopRequested 已被新代 _reset 清空、state 是新代的
-      // running，不加代际检查会把新代任务误置 completed
+      // 自然完成判定限本代（gen 匹配）：stop 超时强制结束 + 同 id 重启后旧代协程
+      // 醒来时 _stopRequested 已被新代 _reset 清空、state 是新代的 running，不加
+      // 代际检查会把新代任务误置 completed
       if (gen === this._runGen && !this._stopRequested && this._state === 'running') this._setState('completed') // 自然完成
     } catch (err) {
       if (gen !== this._runGen) return null // 旧代际的失败不影响新 run 的状态
       this.lastError = err.message
       this._setState('failed')
       this.log.error({ err: err.message }, 'task failed')
-      // C4/F 修复：失败路径返回 null 而非已 reject 的 _runPromise——
-      // 采纳窗口关闭：startTask/runScheduled 的 await p 不再收到 rejection
-      //（croner 漂浮 rejection → unhandledRejection → fatalExit 停服，链在此断）
+      // 失败路径返回 null 而非已 reject 的 _runPromise：startTask/runScheduled 的
+      // await p 不再收到 rejection（croner 漂浮 rejection → unhandledRejection →
+      // fatalExit 停服，链在此断）
       return null
     }
     return runPromise

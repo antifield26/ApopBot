@@ -2,8 +2,8 @@
 // sendChat 将长文本按 cfg.chat.maxLength 分片发送（优先在空白处断开，
 // 避免把单词截成两半），片间 100ms 间隔防刷屏触发服务端速率限制。
 //
-// 颜色码剥离：Paper 26.1.2 起聊天消息含 § 颜色码会被服务器直接踢出
-// （multiplayer.disconnect.illegal_characters，实测定位）。源码中的 §a/§c 前缀
+// 颜色码剥离：聊天消息含 § 颜色码会被服务器直接踢出
+//（multiplayer.disconnect.illegal_characters）。源码中的 §a/§c 前缀
 // 保留作设计标记，发送层统一剥离（若服务器日后允许颜色码，改此处即可恢复）。
 
 const INTER_MESSAGE_DELAY_MS = 100

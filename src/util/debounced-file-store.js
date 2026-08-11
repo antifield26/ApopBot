@@ -5,8 +5,8 @@
 // - schedule()：标记脏 + 首次防抖（timer 单例，unref 不阻塞退出）
 // - persist()：非脏直接返回；tmp+rename 原子写（Windows EPERM/EBUSY 防御）；
 //   失败清理半写 tmp + warn
-// - exit flush：进程级单次注册，所有实例共享（此前每个 store 实例各注册一个
-//   'exit' 监听——测试多实例累积，且每实例重复 flush 已清理实例）
+// - exit flush：进程级单次注册，所有实例共享（每实例各注册一个 'exit' 监听会
+//   在测试多实例场景累积，且重复 flush 已清理的实例）
 // - flush()：清 timer + 立即落盘（!agent reset / 优雅退出用）
 
 import { writeFileSync, mkdirSync, renameSync, rmSync } from 'node:fs'
@@ -67,7 +67,7 @@ export function createDebouncedFileStore ({ file, debounceMs, logger = null, enc
 
   function flush () {
     if (timer) { clearTimeout(timer); timer = null }
-    dirty = true // 强制落盘（!agent reset 语义：即使此前无 schedule 也写）
+    dirty = true // 强制落盘（!agent reset 语义：即使无 schedule 也写）
     persist()
   }
 

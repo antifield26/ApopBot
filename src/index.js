@@ -35,7 +35,7 @@ let logger = createLogger(cfg)
 // 与连接层 fatal 语义一致 exit(2) 停止等人工（flush 带 1s 兜底防卡死）
 function fatalExit (err, label) {
   logger.fatal({ err: err?.message ?? String(err) }, `${label} —— 按 fatal 停止等人工`)
-  // U10：fatal 停服推送（无人值守时唯一感知通道；ctx.notifier 随 reload 更新）
+  // fatal 停服推送（无人值守时唯一感知通道；ctx.notifier 随 reload 更新）
   ctx.notifier?.send('fatal', `Bot 停止等人工（${label}）`, err?.message ?? String(err))
   let exited = false
   const exitNow = () => { if (!exited) { exited = true; process.exit(2) } }
@@ -59,25 +59,25 @@ const ctx = {
   conn: null,
   agent: null,
   commands: null,
-  stateStore: null, // U1：ad-hoc 任务/计数器快照（feature-layer 重建时传 TaskManager）
+  stateStore: null, // ad-hoc 任务/计数器快照（feature-layer 重建时传 TaskManager）
   onReload: null, // !reload 命令走同一 reload 队列（与 SIGHUP/配置监视一致）
-  notifier: createNotifier(cfg, logger) // U10：webhook 通知（fatalExit 使用；reload 更新）
+  notifier: createNotifier(cfg, logger) // webhook 通知（fatalExit 使用；reload 更新）
 }
 
-// 功能层每次 spawn 全量重建（B1：重连后任务/命令/chat 监听必须绑定新 bot）
+// 功能层每次 spawn 全量重建（重连后任务/命令/chat 监听必须绑定新 bot）
 const layer = createFeatureLayerManager(ctx, logger)
 
 const conn = new ConnectionManager(cfg, logger, {
   onSpawn: (bot) => {
-    // 插件在 spawn 事件前已装载完成（connection.js 时序），同步到 ctx 供 !follow/技能使用。
-    // 第 11 轮：本机/快速握手时 spawn 可先于装载（此时 conn.plugins 为空/旧代）——
-    // 装载完成后由 onPluginsReady 补发同步（消费点全部运行时读 ctx.plugins）
+    // 插件通常在 spawn 事件前已装载完成，同步到 ctx 供 !follow/技能使用。
+    // 本机/快速握手时 spawn 可先于装载（conn.plugins 为空/旧代）——由
+    // onPluginsReady 在装载完成后补发最新句柄（消费点全部运行时读 ctx.plugins）
     ctx.plugins = conn.plugins ?? null
     layer.rebuild(bot)
   },
   onPluginsReady: (plugins) => {
-    // 竞态修复（第 11 轮）：spawn 先于插件装载完成时，装载完成后补发最新句柄——
-    // 否则 !follow 在死 client 上 setControlState → uncaughtException → fatalExit 停服
+    // spawn 先于插件装载完成时补发最新句柄——陈旧句柄绑定已断开的 client，
+    // !follow 在其上 setControlState 会抛错（uncaughtException → fatalExit 停服）
     ctx.plugins = plugins
   },
   onStateChange: (state) => {
@@ -85,18 +85,17 @@ const conn = new ConnectionManager(cfg, logger, {
     // 断线期（最长退避 5 分钟）任务/agent 不得继续在死 bot 上空转失败重试——
     // 拆除功能层（teardown 幂等 + 与 rebuild 串行）；重连成功后 onSpawn → rebuild 重建
     if (state !== 'connected') {
-      // A5（第四轮）：queue 有意原样返回 run 的 rejection（C3/L 修复）——此处
-      // 不接 catch 则 teardown 抛错 = unhandledRejection → fatalExit 停服
-      //（对比其他 queue 调用方均接了 catch；teardown 内部虽全防御，纵深防线）
+      // queue 原样返回 run 的 rejection——此处不接 catch 则 teardown 抛错 =
+      // unhandledRejection → fatalExit 停服（teardown 内部虽全防御，纵深防线）
       layer.queue(() => layer.teardown()).catch(err => logger.warn({ err: err.message }, 'teardown 失败'))
     }
   }
 })
 ctx.conn = conn
 
-// 运行状态快照（U1）：data/state.json，5s 防抖写；优雅退出时 flush
+// 运行状态快照：data/state.json，5s 防抖写；优雅退出时 flush
 ctx.stateStore = createStateStore({ logger })
-// B1（L2 进化）：探索记忆接入持久化通道（recordResource/recordAnchor 修改后 5s 防抖落盘）
+// 探索记忆接入持久化通道（recordResource/recordAnchor 修改后 5s 防抖落盘）
 discovery.attachStore(ctx.stateStore)
 
 /**
@@ -119,12 +118,11 @@ async function reload () {
 
   const logChanged = JSON.stringify(newCfg.log) !== JSON.stringify(ctx.cfg.log)
   const l2Changed = JSON.stringify(newCfg.l2) !== JSON.stringify(ctx.cfg.l2)
-  // K 修复：http 变更检测必须在赋值前计算——原比较在 ctx.cfg = newCfg 之后，
-  // 两侧恒等 → statusServer 的 stop/start 永不执行（http 热重载死代码，必须重启）
+  // http 变更检测必须在赋值前计算——赋值后两侧恒等，stop/start 永不执行
   const httpChanged = JSON.stringify(newCfg.http) !== JSON.stringify(ctx.cfg.http)
   ctx.cfg = newCfg
   ctx.conn.updateCfg(newCfg)
-  ctx.notifier = createNotifier(newCfg, logger) // U10：webhook 配置随 reload 更新（fatalExit 使用）
+  ctx.notifier = createNotifier(newCfg, logger) // webhook 配置随 reload 更新（fatalExit 使用）
 
   if (logChanged) {
     const rotateChanged = JSON.stringify(newCfg.log.rotate) !== JSON.stringify(ctx.cfg.log.rotate)
@@ -135,9 +133,8 @@ async function reload () {
       ctx.logger = logger
       ctx.conn.log = logger
     } else {
-      // 第 11 轮：仅 level 变化 → 只调 level 不重建 transport——此前重建后新旧
-      // 两个 pino-roll 指向同一 bot.log，各自轮转 rename 时旧 fd 写被改名文件
-      // → 丢行/坏 JSONL（文档只承认句柄累积，未覆盖双写同一文件）
+      // 仅 level 变化 → 只调 level 不重建 transport——重建后新旧两个 pino-roll
+      // 指向同一 bot.log，轮转 rename 时旧 fd 写被改名文件（丢行/坏 JSONL）
       logger.level = newCfg.log.level
       ctx.logger.level = newCfg.log.level
       logger.info({ level: newCfg.log.level }, '日志级别变更（transport 复用）')
@@ -166,7 +163,7 @@ const reloadQueued = () => layer.queue(reload)
 ctx.onReload = reloadQueued
 
 // 当前生效的配置文件路径（--config 参数，否则 config/config.json 存在时用生产路径，
-// 最后退回 default.json），用于热监视——与 loadConfig 的回退顺序一致（B7）
+// 最后退回 default.json），用于热监视——与 loadConfig 的回退顺序一致
 function activeConfigPath () {
   const argv = process.argv.slice(2)
   const i = argv.indexOf('--config')
@@ -176,7 +173,7 @@ function activeConfigPath () {
   return path.join(ROOT, 'config', 'default.json')
 }
 
-// 配置文件热监视（O5：fs.watch 防抖 500ms；rename 事件重挂 watcher）
+// 配置文件热监视（fs.watch 防抖 500ms；rename 事件重挂 watcher）
 function watchConfig () {
   const file = activeConfigPath()
   let timer = null
@@ -204,11 +201,11 @@ function watchConfig () {
 }
 const stopWatch = watchConfig()
 
-// 只读 HTTP 状态端点（U3）：/health + /metrics，默认关闭（cfg.http.enabled=true 才监听）
+// 只读 HTTP 状态端点：/health + /metrics，默认关闭（cfg.http.enabled=true 才监听）
 const statusServer = createStatusServer(() => ctx.cfg, logger, () => ({
   conn: ctx.conn,
-  bot: ctx.bot, // U12：/metrics 坐标/血量/饱食度（运维看"卡在哪"）
-  discoveryStats: discovery.stats(), // D：探索记忆统计
+  bot: ctx.bot, // /metrics 坐标/血量/饱食度（运维看"卡在哪"）
+  discoveryStats: discovery.stats(), // 探索记忆统计
   tasks: ctx.tasks?.getStatus() ?? [],
   sessionCount: ctx.agent?.sessionCount?.() ?? 0,
   lastLlmLatencyMs: ctx.agent?.usage?.latencyMs ?? null,

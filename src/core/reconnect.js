@@ -9,10 +9,10 @@ const CLASSIFIERS = [
   { type: 'access_denied', fatal: true, keywords: ['whitelist', 'not white-listed', 'banned', 'suspended', 'verify'] },
   // maintenance 必须在 version_mismatch 之前：维护/更新踢出消息常含 "version"
   // （"Server updating to version X"）——若先命中 version_mismatch（fatal）则
-  // 本可退避扛过的维护窗口被误判致命 → exit(2) 停服等人工（第 8 轮修复）
+  // 本可退避扛过的维护窗口被误判致命 → exit(2) 停服等人工
   { type: 'maintenance', fatal: false, keywords: ['maintenance', 'updating', 'restarting', 'server is closed', 'server closed'] },
-  // version 关键词收窄：裸 'version'/'client' 覆盖面太宽（维护消息/网络层文本均含），
-  // 只剩明确的版本不匹配措辞；协议号分支（protocol/unsupported）在下方兜底
+  // version 关键词只用明确的版本不匹配措辞：裸 'version'/'client' 覆盖面太宽
+  //（维护消息/网络层文本均含）；协议号分支（protocol/unsupported）在下方兜底
   { type: 'version_mismatch', fatal: true, keywords: ['outdated', 'out of date', 'protocol version', 'version mismatch', 'not compatible', 'incompatible'] },
   { type: 'behavior', fatal: false, keywords: ['flying', 'spam', 'speed'] },
   { type: 'server_full', fatal: false, keywords: ['server is full', 'full server'] },

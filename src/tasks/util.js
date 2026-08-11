@@ -1,4 +1,4 @@
-// 任务/原语公共工具（第六轮 R2 缓做项落实——第 11 轮：_isArea 5 份消重）。
+// 任务/原语公共工具。
 
 /** 区域对象校验（farm/collect/combat/breed/explore 与原语共用；六坐标整数）。 */
 export function isArea (a) {

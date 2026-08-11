@@ -1,4 +1,4 @@
-// 脚本任务执行器（v1.0.0 C6）：BaseTask 状态机外壳 + 脚本 DSL 解释器。
+// 脚本任务执行器：BaseTask 状态机外壳 + 脚本 DSL 解释器。
 //
 // 脚本化重构的核心理念：任务 = 动作原语脚本，与 LLM 的 act 动作数组共用同一
 // 执行层（executor/executor.js）。BaseTask 的全部语义（暂停/恢复/取消/代际/
@@ -51,8 +51,8 @@ export class ScriptTask extends BaseTask {
     if (!this.scriptDef?.script?.steps || !Array.isArray(this.scriptDef.script.steps)) {
       throw new Error(`任务类型 ${this.type} 脚本定义缺失 steps`)
     }
-    // 脚本级 init 钩子（原任务 init 校验的等价迁移：options 语义/插件依赖/
-    // 未知方块类型等——在脚本定义里显式声明）
+    // 脚本级 init 钩子（options 语义/插件依赖/未知方块类型等校验在脚本定义里
+    // 显式声明）
     if (typeof this.scriptDef.init === 'function') {
       await this.scriptDef.init(this)
     }
@@ -71,9 +71,9 @@ export class ScriptTask extends BaseTask {
     stopPathfinding(this.bot)
   }
 
-  /** 终态重启（F4）：必须重建 _abort——stop 已 abort 旧控制器，不复建则重启后
-   *  signal.aborted 恒真 → executor 每个动作步立即软失败（'动作被中断'）→
-   *  scheduled 任务第二次及以后触发全部僵尸（永不做事、永不自然完成）。 */
+  /** 终态重启时重建 _abort：stop 已 abort 旧控制器，不复建则重启后 signal.aborted
+   *  恒真 → executor 每个动作步立即软失败（'动作被中断'）→ scheduled 任务第二次
+   *  及以后触发全部僵尸（永不做事、永不自然完成）。 */
   _reset () {
     super._reset()
     this._abort = new AbortController()
@@ -157,11 +157,11 @@ export class ScriptRunner {
       user: 'system', // 脚本通道（任务只能由 op 启动/配置——见 executor 权限门）
       source: 'script',
       taskId: this.task.id,
-      // 第 11 轮：exclusive 任务（owner 自己）跳过守卫；非 exclusive 任务
-      //（mine/fish/afk）不 bypass——其 build/movement 类动作在 exclusive 任务
-      // 运行中被守卫软拒绝（脚本 if 重试，mine 的 collect-retry 30s 语义天然承接），
-      // 与 LLM act 语义一致。此前 mine 可与 farm/chop 并发抢 pathfinder/
-      // collectBlock（互设 setGoal → GoalChanged 抖动/饥饿）
+      // exclusive 任务（owner 自己）跳过守卫；非 exclusive 任务（mine/fish/afk）
+      // 不 bypass——其 build/movement 类动作在 exclusive 任务运行中被守卫软拒绝
+      //（脚本 if 重试，mine 的 collect-retry 30s 语义天然承接），与 LLM act 语义
+      // 一致；否则 mine 可与 farm/chop 并发抢 pathfinder/collectBlock（互设
+      // setGoal → GoalChanged 抖动/饥饿）
       bypassExclusive: this.task.exclusive === true,
       signal: this.task._abort.signal,
       isPaused: () => this.task._pauseRequested,
@@ -171,14 +171,13 @@ export class ScriptRunner {
     this.lastResult = entry
     if (step.as) this.results.set(step.as, entry)
     // 软失败：entry.ok=false 记录在 lastResult（含结果文案），脚本用
-    // { ctrl:'if', cond:{type:'last', ok:false} } 显式处理（重试/等待/退出）——
-    // 与原任务循环的容错语义一致（如 mine 的 collect 失败等下一轮）；
+    // { ctrl:'if', cond:{type:'last', ok:false} } 显式处理（重试/等待/退出）；
     // 没有任何 if 处理时任务继续循环，由 maxActions 兜底防死循环
     if (!entry.ok) {
       this.task.log.warn({ op: step.op, result: entry.result }, '脚本动作失败（软失败，由脚本条件处理）')
     } else if (step.count) {
       // count 支持两种形态：'name'（成功 +1）或 {name, field}（从结果取数值，
-      // 如 collect_blocks 的 collected——原任务每批 incr(batch.length) 的等价迁移）
+      // 如 collect_blocks 的 collected——每批按实际采集数计数）
       const by = typeof step.count === 'object'
         ? (Number(entry.result?.[step.count.field]) || 0)
         : 1
@@ -306,11 +305,11 @@ function evalCond (cond, runner) {
     case 'counter':
       return (runner.task.counters[cond.name] ?? 0) >= (cond.gte ?? 1)
     case 'config': {
-      // 第 11 轮：回退 defaultOptions——combat 未显式配置 maxTargets 时
+      // config 条件回退 defaultOptions：combat 未显式配置 maxTargets 时
       // options[key] 是 undefined，`undefined === 0` 恒 false → `not` 取反进入
       // 内圈 → kills >= 0（defaultOptions 的 0）恒真 → 首杀即完成（默认 0=不限
-      // 语义失效的根因）。回退使未配置行为与 defaultOptions 声明一致；chop
-      // logTypes / farm replant（无默认）等现有条件不受影响。
+      // 语义失效）。回退使未配置行为与 defaultOptions 声明一致；chop logTypes /
+      // farm replant（无默认）等条件不受影响。
       const opt = runner.task.options[cond.key] !== undefined
         ? runner.task.options[cond.key]
         : runner.task.scriptDef.defaultOptions?.[cond.key]

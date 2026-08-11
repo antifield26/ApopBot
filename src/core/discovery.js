@@ -1,4 +1,4 @@
-// 探索记忆（L2 进化 B1）：DiscoveryMap 模块级单例——已访问锚点 + 资源发现缓存。
+// 探索记忆：DiscoveryMap 模块级单例——已访问锚点 + 资源发现缓存。
 // 目的：LLM 探索过的区域与资源坐标跨对话/跨重启保留（会话记忆是玩家聊天维度，
 // 无空间记忆）；query_map 技能按需查询，不重复扫描（省算力省 token）。
 //
@@ -20,8 +20,8 @@ const state = {
   store: null // stateStore（attachStore 注入）
 }
 
-// 第 11 轮：坐标反查索引（'fx,fy,fz' → Set<blockName>）——blockUpdate 监听每事件
-// 调用 removeResourceAt，全表扫描（≤512 条 × Object.entries）在大挖掘/森林大火时
+// 坐标反查索引（'fx,fy,fz' → Set<blockName>）——blockUpdate 监听每事件调用
+// removeResourceAt，全表扫描（≤512 条 × Object.entries）在大挖掘/森林大火时
 // 每格一次主线程压力。索引使未命中路径 O(1)（绝大多数事件坐标不在记忆里）。
 // 与 resources 双写同步：recordResource/removeResourceAt/importSnapshot/_reset 均维护。
 const byCoord = new Map()
@@ -82,19 +82,19 @@ export function importSnapshot (memory) {
     while (entries.length > MAX_RESOURCES_TOTAL) entries.shift()
     state.resources = {}
     for (const e of entries) {
-      // 第 11 轮 G1：快照往返保留维度（重建时漏拷 dimension——下界记录回灌后
-      // 丢失维度字段，query 按维度过滤查不到）
+      // 快照往返保留维度——否则下界记录回灌后丢失 dimension 字段，
+      // query 按维度过滤查不到
       (state.resources[e.name] ??= []).push({
         x: e.x, y: e.y, z: e.z, ts: e.ts,
         ...(e.dimension ? { dimension: e.dimension } : {})
       })
     }
   }
-  rebuildIndex() // 第 11 轮：索引与回灌同步
+  rebuildIndex() // 索引与回灌同步
   persist()
 }
 
-/** 登记访问锚点（explore 任务每站调用）。第 11 轮 G1：带维度（下界/末地坐标独立）。 */
+/** 登记访问锚点（explore 任务每站调用）。带维度（下界/末地坐标独立）。 */
 export function recordAnchor (pos, dimension = null) {
   if (!pos) return
   state.anchors.push({
@@ -117,15 +117,15 @@ export function recordResource (name, pos, dimension = null) {
   const existing = list.find(r => chunkKey(r) === key)
   if (existing) {
     existing.ts = now()
-    // 第 11 轮 G1：旧记录补维度（同 chunk 跨维度记录已不可能——chunkKey 按
-    // x/z 去重，维度不同则记录冲突；此处仅补旧数据缺失的维度）
+    // 旧记录补维度（同 chunk 跨维度记录已不可能——chunkKey 按 x/z 去重，
+    // 维度不同则记录冲突；此处仅补旧数据缺失的维度）
     if (!existing.dimension && dimension) existing.dimension = dimension
     return false
   }
-  // 第 11 轮 G1：维度字段——下界/末地坐标与主世界混存会误导查询（8:1 映射），
+  // 维度字段——下界/末地坐标与主世界混存会误导查询（8:1 映射），
   // query 按维度过滤；旧数据（无维度）仅匹配主世界查询
   list.push({ x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z), ts: now(), ...(dimension ? { dimension } : {}) })
-  // 第 11 轮：索引维护（与 resources 双写）
+  // 索引维护（与 resources 双写）
   const ck = coordKey(pos.x, pos.y, pos.z)
   const s = byCoord.get(ck)
   if (s) s.add(name)
@@ -162,7 +162,7 @@ export function recordResource (name, pos, dimension = null) {
 }
 
 /**
- * 删除指定坐标的全部资源记录（地形记忆失效——第 10 轮）。
+ * 删除指定坐标的全部资源记录（地形记忆失效）。
  * 调用点：dig/collect_blocks 挖除后、blockUpdate 方块变化时、query_map 验证失败自愈。
  * 按坐标精确删除（一个坐标只可能是一种方块——无需 name 参数；同坐标下多个
  * name 的记录一并清除，防御未来同坐标多记录场景）。
@@ -171,8 +171,8 @@ export function recordResource (name, pos, dimension = null) {
 export function removeResourceAt (x, y, z) {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return 0
   const fx = Math.floor(x); const fy = Math.floor(y); const fz = Math.floor(z)
-  // 第 11 轮：byCoord 索引 O(1) 判空——blockUpdate 高频事件（挖掘/火烧/水流）的
-  // 绝大多数坐标不在记忆里，此前全表扫描（≤512 条 × Object.entries + filter）
+  // byCoord 索引 O(1) 判空——blockUpdate 高频事件（挖掘/火烧/水流）的
+  // 绝大多数坐标不在记忆里
   const names = byCoord.get(coordKey(fx, fy, fz))
   if (!names) return 0
   let removed = 0
@@ -191,9 +191,8 @@ export function removeResourceAt (x, y, z) {
 
 /**
  * 查询已知资源（按与 pos 的欧氏距离升序；不重新扫描）。
- * 第 11 轮 G1：dimension 提供时按维度过滤——旧记录（无维度字段，主世界时代
- * 数据）只对主世界查询匹配；下界/末地查询只返回带对应维度的记录（8:1 坐标
- * 映射下跨维度坐标会误导 LLM/玩家）。
+ * dimension 提供时按维度过滤——旧记录（无维度字段）只对主世界查询匹配；
+ * 下界/末地查询只返回带对应维度的记录（8:1 坐标映射下跨维度坐标会误导 LLM/玩家）。
  * @returns {Array<{x,y,z,ts,dimension?}>}
  */
 export function query (name, pos, maxCount = 5, dimension = null) {
@@ -228,7 +227,7 @@ export function stats () {
     : state.anchors.length === 1
       ? `单点 (${state.anchors[0].x},${state.anchors[0].z})`
       : '无'
-  // 第 11 轮 G1：维度分布（运维看"探索到哪个维度"）
+  // 维度分布（运维看"探索到哪个维度"）
   const dimCounts = {}
   for (const r of Object.values(state.resources).flat()) {
     const d = r.dimension ?? 'overworld'

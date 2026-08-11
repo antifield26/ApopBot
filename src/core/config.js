@@ -6,7 +6,7 @@ import { validateTaskOptions } from './task-schemas.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
-// 第七轮 C2：配置契约版本（v1.0.0 冻结）——l2 子键白名单为契约的一部分，
+// 配置契约版本（冻结）——l2 子键白名单为契约的一部分，
 // 未知键/已移除键（ollama 系）显式报错；升级大版本配置时同步提升
 export const CONFIG_SCHEMA_VERSION = 2
 
@@ -33,14 +33,14 @@ const BUILTIN_DEFAULTS = {
     rotate: { frequency: 'daily', keepDays: 14 }
   },
   tasks: [],
-  notify: { webhook: '' }, // U10：运维 webhook 通知（空 = 关闭；企业微信/Server酱自动识别）
+  notify: { webhook: '' }, // 运维 webhook 通知（空 = 关闭；企业微信/Server酱自动识别）
   mineflayerPlugins: {
     pathfinder: true,
     collectBlock: true,
     autoEat: true,
     armorManager: true
   },
-  // L2 LLM 层（v1.0.0 C2：单 Provider——仅云端 Anthropic 兼容 API；
+  // L2 LLM 层（单 Provider——仅云端 Anthropic 兼容 API；
   // 预设 DeepSeek：Anthropic 兼容端点 api.deepseek.com/anthropic（裸域名 + /v1/messages
   // 是 OpenAI 兼容路由，Anthropic 协议会 404）；本地 Ollama/auto 已移除，
   // l2 键白名单强制，残留旧键启动即报错）。
@@ -50,8 +50,8 @@ const BUILTIN_DEFAULTS = {
     model: 'deepseek-v4-flash',
     cloudBaseUrl: 'https://api.deepseek.com/anthropic',
     cloudApiKeyEnv: 'ANTHROPIC_API_KEY',
-    // U13（第五轮）：默认 8——动作技能就位后真实链条（observe→act×3→reply）
-    // 打满上限前留有工具步给观察/反思；v1.0.0 起 act 单步含 ≤8 动作数组
+    // 默认 8——动作技能就位后真实链条（observe→act×3→reply）
+    // 打满上限前留有工具步给观察/反思；act 单步含 ≤8 动作数组
     maxSteps: 8,
     cooldownMs: 5000,
     // 生成超时/长度（thinking 关闭：1024 tokens 足够动作数组+回复）
@@ -63,12 +63,12 @@ const BUILTIN_DEFAULTS = {
     // thinking=enabled 时按 effort（low/medium/high/max）注入 reasoning_effort。
     thinking: 'disabled',
     effort: 'low',
-    // 第六轮 C10：云端上下文窗口——云端同样走预算守卫（window − maxTokens − reserve），
+    // 云端上下文窗口——云端同样走预算守卫（window − maxTokens − reserve），
     // 是动作数组/观察结果回填的容量基础；32k 上下文端点请调低
     cloudMaxContextWindow: 65536,
-    // 第七轮 C3：单次 act 动作数组上限（LLM 每轮动作预算 = maxSteps × maxActionsPerCall）
+    // 单次 act 动作数组上限（LLM 每轮动作预算 = maxSteps × maxActionsPerCall）
     maxActionsPerCall: 8,
-    // 环境感知自动注入（A3）：每次对话 system 尾部追加 ≤150 字符环境行
+    // 环境感知自动注入：每次对话 system 尾部追加 ≤150 字符环境行
     envInjection: true
   },
   // 聊天安全层：服务端单条消息上限 256 字符，Bot 分片发送时留冗余
@@ -76,7 +76,7 @@ const BUILTIN_DEFAULTS = {
     maxLength: 250,
     commandCooldownMs: 750
   },
-  // 只读 HTTP 状态端点（U3）：默认关闭；只绑 127.0.0.1（暴露到局域网需自行加防火墙）
+  // 只读 HTTP 状态端点：默认关闭；只绑 127.0.0.1（暴露到局域网需自行加防火墙）
   http: {
     enabled: false,
     port: 8123
@@ -121,7 +121,7 @@ const ENV_MAP = {
 
 // 布尔型环境变量键白名单：'true'/'false' 只对这些键转布尔——其他键收到
 // 'true'/'false' 应保持字符串（如 MCBOT_L2_THINKING=false——thinking 的合法值是
-// 'enabled'/'disabled' 字符串，转布尔后校验报"当前: false"误导（第 8 轮修复））
+// 'enabled'/'disabled' 字符串，转布尔后校验报"当前: false"误导）
 const BOOLEAN_ENV_KEYS = new Set([
   'log.pretty', 'l2.enabled', 'l2.envInjection', 'http.enabled'
 ])
@@ -222,8 +222,8 @@ export function loadConfig ({ argv = process.argv.slice(2), env = process.env } 
     if (fileCfg === null) throw new Error(`指定的配置文件不存在: ${explicit}`)
     cfg = deepMerge(cfg, fileCfg)
   } else if (!skipProdConfig) {
-    // 无显式 --config：存在 config/config.json（按 README 复制示例的生产路径）则合并——
-    // 此前只读 default.json，config.json 仅在 NSSM AppParameters 显式传入时生效
+    // 无显式 --config：存在 config/config.json（按 README 复制示例的生产路径）则合并，
+    // 未传 --config 且无该文件时仅 default.json 生效
     const prodFile = readJson(path.join(ROOT, 'config', 'config.json'))
     if (prodFile !== null) cfg = deepMerge(cfg, prodFile)
   }
@@ -258,7 +258,7 @@ function deepFreeze (obj) {
 
 /**
  * 启动前检查日志目录可写（创建 + 写权限探测）。
- * 目录只读/不可访问时给出明确错误而非 pino-roll 静默失败（原 ProtectSystem=strict 场景，Windows 同理适用）。
+ * 目录只读/不可访问时给出明确错误而非 pino-roll 静默失败。
  * @param {object} cfg
  * @throws {Error} 目录不可写时抛出
  */
@@ -273,8 +273,7 @@ export function assertLogDirWritable (cfg) {
   }
 }
 
-// 任务类型表（第六轮 C3 单一来源）：src/tasks/types.js 注册表派生——
-// 此前 manager TASK_TYPES + 本文件两表三处手工同步（tests 一致性断言防漂移）
+// 任务类型表单一来源：由 src/tasks/types.js 注册表派生（避免多处手工同步漂移）
 import { TASK_TYPES } from '../tasks/types.js'
 export const KNOWN_TASK_TYPES = Object.keys(TASK_TYPES)
 // 有自然完成语义的任务类型（scheduled 时无需 durationMinutes；afk/fish 必须配——
@@ -325,8 +324,8 @@ export function validateConfig (cfg) {
   } else if (cfg.scheduleTimezone !== undefined &&
     cfg.scheduleTimezone !== 'UTC' && // UTC 是合法 IANA 名但 supportedValuesOf 排除（协调世界时非时区）
     !Intl.supportedValuesOf('timeZone').includes(cfg.scheduleTimezone)) {
-    // 第六轮 C7：croner 只接受 IANA 时区名——Windows 控制面板时区名（"China Standard
-    // Time"）此前通过校验但 scheduled.js catch 吞错 → 任务静默永不调度（失败模式隐蔽）
+    // croner 只接受 IANA 时区名——Windows 控制面板时区名（"China Standard
+    // Time"）在此显式报错，避免任务静默永不调度
     errors.push(`scheduleTimezone 必须是 IANA 时区名（如 Asia/Shanghai/UTC），当前: ${cfg.scheduleTimezone}——` +
       'Windows 控制面板时区名（如 "China Standard Time"）不被支持，用 `tzutil /l` 对照或直接查 IANA 表')
   }
@@ -337,11 +336,11 @@ export function validateConfig (cfg) {
     if (typeof cfg.l2.cooldownMs !== 'number' || cfg.l2.cooldownMs < 0) errors.push('l2.cooldownMs 必须为非负数')
     if (typeof cfg.l2.cloudTimeoutMs !== 'number' || cfg.l2.cloudTimeoutMs <= 0) errors.push('l2.cloudTimeoutMs 必须为正数（毫秒）')
     if (typeof cfg.l2.maxTokens !== 'number' || cfg.l2.maxTokens <= 0) errors.push('l2.maxTokens 必须为正数')
-    // 第六轮 C10：云端上下文窗口 ≥4096（防误配——小于预算裁剪 reserve 就没有守卫意义）
+    // 云端上下文窗口 ≥4096（防误配——小于预算裁剪 reserve 就没有守卫意义）
     if (!Number.isInteger(cfg.l2.cloudMaxContextWindow) || cfg.l2.cloudMaxContextWindow < 4096) {
       errors.push(`l2.cloudMaxContextWindow 必须是 ≥4096 的整数，当前: ${cfg.l2.cloudMaxContextWindow}`)
     }
-    // 第七轮 C3：单次 act 动作数组上限 ≥1（每轮动作预算 = maxSteps × maxActionsPerCall）
+    // 单次 act 动作数组上限 ≥1（每轮动作预算 = maxSteps × maxActionsPerCall）
     if (!Number.isInteger(cfg.l2.maxActionsPerCall) || cfg.l2.maxActionsPerCall < 1) {
       errors.push(`l2.maxActionsPerCall 必须是 ≥1 的整数，当前: ${cfg.l2.maxActionsPerCall}`)
     }
@@ -353,15 +352,13 @@ export function validateConfig (cfg) {
       errors.push(`l2.effort 必须是 low/medium/high/max，当前: ${cfg.l2.effort}`)
     }
   }
-  // 第七轮 C2：l2 子键白名单（config 契约冻结）——v1.0.0 移除本地 provider 后，
-  // 存量配置里残留的 ollama/provider 键必须显式报错给迁移指引，不静默忽略
+  // l2 子键白名单（config 契约）：残留的 ollama/provider 键显式报错给迁移指引，不静默忽略
   if (cfg.l2) {
     const L2_KNOWN_KEYS = new Set([
       'enabled', 'model', 'cloudBaseUrl', 'cloudApiKeyEnv', 'maxSteps', 'cooldownMs',
       'cloudTimeoutMs', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'envInjection',
       'thinking', 'effort',
-      '_comment' // JSON 注释惯例（config.example.json 使用；与 mineflayerPlugins/顶层一致，第 11 轮豁免——
-      // 此前 example.json 复制即用流程启动即 exit(1)，见 config.test 的防漂移断言）
+      '_comment' // JSON 注释惯例（config.example.json 使用；与 mineflayerPlugins/顶层一致）
     ])
     for (const key of Object.keys(cfg.l2)) {
       if (!L2_KNOWN_KEYS.has(key)) {
@@ -380,7 +377,7 @@ export function validateConfig (cfg) {
   if (!Number.isInteger(cfg.http?.port) || cfg.http.port < 1 || cfg.http.port > 65535) {
     errors.push(`http.port 必须是 1-65535 的整数，当前: ${cfg.http?.port}`)
   }
-  // U10：webhook 通知可选——空字符串/未配置 = 关闭；非空必须是字符串（含 https:// 的完整 URL）
+  // webhook 通知可选——空字符串/未配置 = 关闭；非空必须是字符串（含 https:// 的完整 URL）
   if (cfg.notify && typeof cfg.notify.webhook !== 'string') {
     errors.push('notify.webhook 必须是字符串（webhook URL 或空字符串关闭）')
   }
@@ -401,9 +398,8 @@ export function validateConfig (cfg) {
     if (t.schedule && !NATURAL_COMPLETION_TYPES.includes(t.type) && !t.options?.durationMinutes) {
       errors.push(`${label} 类型 ${t.type} 无自然完成，scheduled 时必须配 options.durationMinutes`)
     }
-    // 第 8 轮：非法 cron 表达式启动即报错——此前 scheduled.js catch 吞错返回 null →
-    // 任务注册但永不触发、只留一条 error 日志（与 scheduleTimezone 同款"静默永不调度"
-    // 失败模式，当时区有启动校验而表达式没有）
+    // 非法 cron 表达式启动即报错——避免任务注册但永不触发、只留一条 error 日志
+    //（与 scheduleTimezone 同款"静默永不调度"失败模式）
     if (t.schedule) {
       try {
         new Cron(t.schedule)
@@ -411,7 +407,7 @@ export function validateConfig (cfg) {
         errors.push(`${label} schedule 非法 cron 表达式: ${t.schedule}（任务将永不触发）`)
       }
     }
-    // 第 11 轮 G3：任务链 next 轻校验（含 type/id；options 交给 validateTaskOptions）
+    // 任务链 next 轻校验（含 type/id；options 交给 validateTaskOptions）
     if (t.next !== undefined) {
       if (typeof t.next !== 'object' || t.next === null || Array.isArray(t.next)) {
         errors.push(`${label} next 必须是对象（任务链 {id, type, options?}）`)
@@ -442,10 +438,9 @@ export function validateConfig (cfg) {
       if (Number.isInteger(a?.y1) && Number.isInteger(a?.y2) && a.y1 > a.y2) errors.push(`${label} area.y1 不能大于 y2`)
       if (Number.isInteger(a?.z1) && Number.isInteger(a?.z2) && a.z1 > a.z2) errors.push(`${label} area.z1 不能大于 z2`)
     }
-    // A2（第四轮）：config 路径任务 options 接入统一 schema 校验（此前只接了
-    // !task new 与 LLM run_task 两个入口——config 非法 options（afk intervalMinutes:0、
-    // combat attackRange:-1 等）静默放行 → init 抛错被 load 逐条容错吞掉 → 任务
-    // 静默不运行、玩家无感知）。失败并入 errors：启动 exit(1) / reload 保留旧配置。
+    // config 路径任务 options 接入统一 schema 校验——非法 options（afk intervalMinutes:0、
+    // combat attackRange:-1 等）在配置期显式报错，避免任务静默不运行、玩家无感知。
+    // 失败并入 errors：启动 exit(1) / reload 保留旧配置。
     const v = validateTaskOptions(t.type, opts)
     if (!v.ok) errors.push(`${label} ${v.error}`)
   }
@@ -453,7 +448,7 @@ export function validateConfig (cfg) {
   const KNOWN_TOP_KEYS = new Set([
     'mcVersion', 'host', 'port', 'username', 'auth', 'spawnTimeoutMs',
     'reconnect', 'ops', 'log', 'tasks', 'mineflayerPlugins', 'l2', 'chat', 'http', 'scheduleTimezone',
-    'notify', // U10：webhook 运维通知
+    'notify', // webhook 运维通知
     '_comment' // JSON 注释惯例（config.example.json 顶层使用；复制为 config.json 必须放行）
   ])
   for (const k of Object.keys(cfg)) {

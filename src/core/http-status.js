@@ -1,4 +1,4 @@
-// 只读 HTTP 状态端点（U3）：/health 与 /metrics，本机运维可观测（curl 即可）。
+// 只读 HTTP 状态端点：/health 与 /metrics，本机运维可观测（curl 即可）。
 // 零新依赖（node:http），默认关闭（cfg.http.enabled=false）。
 // 安全边界：只绑 127.0.0.1、只读、无写操作；暴露到局域网需自行加反向代理/防火墙。
 // getCfg 是函数（热重载后取最新配置）；getState 每次请求时取最新状态快照。
@@ -35,7 +35,7 @@ export function createStatusServer (getCfg, logger, getState) {
     })
     server.on('error', (err) => {
       logger.warn({ err: err.message }, 'http status server error')
-      // 第 11 轮：EADDRINUSE 等监听失败后必须置 null——server 非 null 使后续
+      // EADDRINUSE 等监听失败后必须置 null——server 非 null 使后续
       // start() 短路，/health /metrics 在本进程生命周期内永久死亡（热重载重试
       // 也无用；error 事件在 node http server 上主要来自 listen 失败——请求
       // 处理错误已由 handler try/catch 承接）
@@ -86,7 +86,7 @@ function metricsPayload (s) {
       heapMb: Math.round(mem.heapUsed / 1024 / 1024)
     },
     bot: {
-      // U12：bot 当前坐标/血量/饱食度——配合 tasks.waitingReason 判断"卡在哪"
+      // bot 当前坐标/血量/饱食度——配合 tasks.waitingReason 判断"卡在哪"
       //（如坐标不动 + waitingReason=no-target = 无怪；inventory-full = 背包满）
       position: e ? [Math.round(e.x), Math.round(e.y), Math.round(e.z)] : null,
       health: s.bot?.health ?? null, // update_health 包通道（26.1 实体元数据不解析 health）
@@ -108,10 +108,10 @@ function metricsPayload (s) {
     })),
     l2: {
       sessions: s.sessionCount ?? 0,
-      lastLatencyMs: s.lastLlmLatencyMs ?? null, // U5 计量接入
+      lastLatencyMs: s.lastLlmLatencyMs ?? null,
       lastUsageTokens: s.lastLlmUsage ?? null
     },
-    // D（L2 进化）：探索记忆统计（anchors/资源记录/覆盖范围）
+    // 探索记忆统计（anchors/资源记录/覆盖范围）
     discovery: disc ? {
       anchors: disc.anchors ?? 0,
       resources: disc.resources ?? 0,

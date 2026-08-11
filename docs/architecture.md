@@ -83,6 +83,13 @@ minecraft-bot (Node.js ≥22, ESM)
 - `.npmrc`：`legacy-peer-deps=true`（补丁不改版本号，peer 校验解析依赖官方版本即可，保留以维持单一副本解析）；无 git 依赖 → 无 `allow-git`
 - 门禁：`npm run check:compat`（含 3.7 补丁哨兵门禁——4 个补丁缺失/未应用即 FAIL；每次部署预检）；上游合并后迁移 = 删 patches + 删 postinstall（见 scripts/upstream-lib.mjs 头注释）
 
+## 注释与文档约定（第 12 轮规范化）
+
+- **代码注释只解释当前代码**的意图/契约/边界（现在时态）：为什么这样设计、何时触发、什么条件下跳过、与哪里的契约对应
+- **不写历史**：注释中禁止轮次标记（`（第 N 轮）`、`（C\d+）`、`（U\d+）`、`（P\d+）` 等）、commit 引用、"此前……"修复叙事——这些信息统一记录在 CHANGELOG.md（逐轮变更）与 docs/roadmap.md（决策与验证细节）
+- 历史修复若对理解当前行为必要（如"必须停在块面 ±1e-4 否则服务器拉回"），以**现在时的行为后果**表述，不叙述修复过程
+- 新代码合入时：轮次式开发中"这轮做了什么"只进 CHANGELOG/roadmap，注释保持与文档解耦（改文档不需改注释）
+
 ## 已知风险
 
 - mineflayer PR #3902 / minecraft-protocol PR #1487 上游仍未合并。补丁是本地载体：升级这两个包版本时补丁 context 冲突会显式报错（patch-package 行为，不会静默），需按 docs/upstream-migration.md 重新生成；26.1.2 的 use_entity 仍走旧格式（`useEntityUsesEntityId` feature=false），项目层 entity-actions.js 的旧格式原始包与之一致（部署机已验证），上游合并新格式后可删（保守保留）

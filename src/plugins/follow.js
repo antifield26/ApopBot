@@ -1,12 +1,12 @@
 // 自定义插件：跟随指定玩家（供 !follow 命令使用）。
 //
 // 实现：混合跟随。pathfinder 的 GoalFollow 基于 A*，其动作集不含跳跃——目标跳过
-// 障碍/跳上台阶后 Bot 无法到达（实测丢失跟随）。故近距离用 setControlState 直接
-// 控制（前进 + 爬升跳跃 sticky jump），卡住（原地无位移）/目标远离/前方虚空时切
-// pathfinder 寻路绕行，接近后回到直接控制。
+// 障碍/跳上台阶后 Bot 无法到达。故近距离用 setControlState 直接控制（前进 + 爬升
+// 跳跃 sticky jump），卡住（原地无位移）/目标远离/前方虚空时切 pathfinder 寻路
+// 绕行，接近后回到直接控制。
 // sticky jump：目标高于阈值（0.6 格）时持续按住跳跃键直到高度差修正（≤0.3 格），
 // 而不是每 tick 用瞬时差判断——跟随延迟下目标 y 数据滞后，瞬时差波动会导致跳跃
-// 被错误松开、只跳一次且跳在滞后位置（实测反馈）。
+// 被错误松开、只跳一次且跳在滞后位置。
 //
 // 分层说明：本插件是独立于任务/命令体系的 setInterval 直接控制层（近距离
 // setControlState，远距才借用 pathfinder）。统一移动层（src/core/movement.js）
@@ -24,13 +24,13 @@ const DIRECT_RANGE = 6 // 此距离内用直接控制（跳跃可用）；更远
 const STUCK_TICKS = 6 // 直接控制 N 轮（3s）无位移 → 切寻路绕行
 const PATH_UPDATE_DIST = 2 // 寻路模式下目标位移超过此值才重建 goal（低配机避免每 tick 重算 A*）
 // 重建冷却：pathfinder 的 setGoal 会 resetPath（清路径 + 丢进行中 A* 分片 + 停控制）——
-// 目标持续移动时每 2 格就重建会让 A* 永远算不完 → 原地不动（实测回归）。
+// 目标持续移动时每 2 格就重建会让 A* 永远算不完 → 原地不动。
 // 位移 2 格 + 冷却 1.5s 双条件：A* 有 1.5s 计算窗口（40ms/tick ≈ 37 分片）
 const GOAL_RECALC_COOLDOWN_MS = 1500
-// 跳跃判定（用户反馈）：按移动方向前方的方块，而非目标高度差——
-// 目标在平地上但 Bot 面前有 1 格台阶（y 差 < 0.6）时目标高度判定不触发跳跃 →
-// 被挡停在方块前；目标远处在高处时又持续无效跳跃。改为前方 1 格（Bot 脚部同层）
-// 实心 = 台阶/墙/坡 → 持续跳跃直到越过（连续 2 tick 前方空才松开，防跳跃中瞬时误判）
+// 跳跃判定：按移动方向前方的方块，而非目标高度差——目标在平地上但 Bot 面前有
+// 1 格台阶（y 差 < 0.6）时目标高度判定不触发跳跃 → 被挡停在方块前；目标远处在
+// 高处时又持续无效跳跃。取前方 1 格（Bot 脚部同层）实心 = 台阶/墙/坡 → 持续跳跃
+// 直到越过（连续 2 tick 前方空才松开，防跳跃中瞬时误判）
 const JUMP_CLEAR_TICKS = 2
 
 /**
@@ -59,8 +59,8 @@ export function followPlugin (bot) {
   /** 移动方向前方 1 格（Bot 脚部同层）是实心障碍 → 需要跳跃（台阶/墙/坡）。
    * 注意用 sign 偏移：dx/dz 是方向余弦（<1），直接 offset 后 floor 会落在脚下格。 */
   function shouldJump (p, dx, dz) {
-    // A5（第四轮）：blockAt 包 try——tick 是 setInterval 回调，抛错 =
-    // uncaughtException → fatalExit 停服；位置异常时按"无障碍"处理（防跳崖即可）
+    // blockAt 包 try——tick 是 setInterval 回调，抛错 = uncaughtException →
+    // fatalExit 停服；位置异常时按"无障碍"处理（防跳崖即可）
     let ahead = null
     try { ahead = bot.blockAt(p.offset(Math.sign(dx), 0, Math.sign(dz))) } catch { ahead = null }
     if (!ahead || ahead.boundingBox === 'empty') return false
@@ -83,8 +83,8 @@ export function followPlugin (bot) {
     if (!target?.position || !bot.entity?.position) { stopMoving(); return }
     const p = bot.entity.position
     const tp = target.position
-    // A5（第四轮）：NaN 坐标防御——异常位置继续运算（distanceTo/offset 直进
-    // blockAt）会抛错，setInterval 回调内抛错 = uncaughtException → exit(2) 停服
+    // NaN 坐标防御——异常位置继续运算（distanceTo/offset 直进 blockAt）会抛错，
+    // setInterval 回调内抛错 = uncaughtException → exit(2) 停服
     if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z) ||
         !Number.isFinite(tp.x) || !Number.isFinite(tp.y) || !Number.isFinite(tp.z)) {
       stopMoving()
@@ -94,11 +94,10 @@ export function followPlugin (bot) {
     const yDiff = tp.y - p.y
 
     if (dist <= REACH) {
-      // 已跟上：停下。目标在 Bot 上方且前方是台壁（1 格高障碍）时——
-      // 前进+跳跃爬升对齐；此前只 set jump 不 forward → 原地跳永远上不去
-      //（实测"1 格障碍前停止移动"根因）。必须清残留寻路 goal——否则
-      // pathfinder 的 monitorMovement 每 physicsTick 覆盖控制状态继续走向
-      // 旧目标（双控制器冲突 → 跟随失效/原地不动）
+      // 已跟上：停下。目标在 Bot 上方且前方是台壁（1 格高障碍）时——前进+跳跃
+      // 爬升对齐（只 set jump 不 forward 会原地跳永远上不去）。必须清残留寻路
+      // goal——否则 pathfinder 的 monitorMovement 每 physicsTick 覆盖控制状态
+      // 继续走向旧目标（双控制器冲突 → 跟随失效/原地不动）
       const dx = dist > 0 ? (tp.x - p.x) / dist : 0
       const dz = dist > 0 ? (tp.z - p.z) / dist : 0
       const wallAhead = yDiff > 0.3 && shouldJump(p, dx, dz)
@@ -107,7 +106,7 @@ export function followPlugin (bot) {
         bot.setControlState('jump', true)
       } else {
         stopMoving()
-        // 目标在正上方（无台壁）时原地补跳对齐（旧行为）
+        // 目标在正上方（无台壁）时原地补跳对齐
         bot.setControlState('jump', yDiff > 0.3 && shouldJump(p, dx, dz))
       }
       pathing = false
@@ -122,9 +121,9 @@ export function followPlugin (bot) {
     try { bot.lookAt(tp.offset(0, 0.5, 0)) } catch { /* 位置可能失效 */ }
 
     if (dist < DIRECT_RANGE && !pathing) {
-      // 直接控制：前进 + 前方方块检测跳跃（解决 GoalFollow 不跳导致丢失跟随的问题；
-      // 用户反馈：跳跃触发应按移动方向前方的方块，而非目标高度差——目标平地上
-      // 有 1 格台阶时 y 差判定不跳被挡住停下，目标远处高处又持续无效跳跃）
+      // 直接控制：前进 + 前方方块检测跳跃（GoalFollow 不跳会导致丢失跟随；跳跃
+      // 触发按移动方向前方的方块，而非目标高度差——目标平地上有 1 格台阶时 y 差
+      // 判定不跳被挡住停下，目标远处高处又持续无效跳跃）
       bot.setControlState('forward', true)
       const dx = (tp.x - p.x) / dist
       const dz = (tp.z - p.z) / dist
@@ -147,15 +146,15 @@ export function followPlugin (bot) {
     } else {
       // 寻路绕行：目标位移超阈值 + 冷却双条件才重建 goal——setGoal 会 resetPath
       //（清路径 + 丢进行中 A* 分片 + 停控制），目标持续移动时无冷却地重建会让
-      // A* 永远算不完 → 原地不动（实测回归）
+      // A* 永远算不完 → 原地不动
       stopMoving()
       pathing = true
       jumpHeld = false
       const moved = lastGoalPos && tp.distanceTo(lastGoalPos) > PATH_UPDATE_DIST
       const cooled = Date.now() - lastGoalTime > GOAL_RECALC_COOLDOWN_MS
       if (!lastGoalPos || (moved && cooled)) {
-        // GoalNear 构造签名 (x, y, z, range)——传 Vec3 单参会得到 NaN goal
-        //（Math.floor(Vec3)=NaN → A* 行为异常 → 原地不动，实测回归）
+        // GoalNear 构造签名 (x, y, z, range)——传 Vec3 单参得到 NaN goal
+        //（Math.floor(Vec3)=NaN → A* 行为异常 → 原地不动）
         try { bot.pathfinder.setGoal(new goals.GoalNear(tp.x, tp.y, tp.z, 1)) } catch { /* 未在移动 */ }
         lastGoalPos = tp.clone()
         lastGoalTime = Date.now()
@@ -209,8 +208,8 @@ export function followPlugin (bot) {
     if (target && entity.id === target.id) {
       const name = target.username ?? target.name ?? `实体#${target.id}`
       follow.stop()
-      // 目标掉线/死亡/传送——静默停止会让玩家以为还在跟随，聊天提示（P3）。
-      // 统一走 sendChat：剥 § 颜色码（裸 bot.chat 的 § 会被 Paper 踢出——P0 回归）
+      // 目标掉线/死亡/传送——静默停止会让玩家以为还在跟随，聊天提示。
+      // 统一走 sendChat：剥 § 颜色码（裸 bot.chat 的 § 会被 Paper 踢出）
       sendChat(bot, `§e已停止跟随 ${name}（目标消失）`).catch(() => { /* 聊天通道未就绪 */ })
     }
   })

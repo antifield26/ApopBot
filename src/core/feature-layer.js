@@ -1,9 +1,8 @@
-// 功能层生命周期（B1 修复）：每次 spawn 全量重建 tasks/commands/agent 并重挂 chat 监听。
+// 功能层生命周期：每次 spawn 全量重建 tasks/commands/agent 并重挂 chat 监听。
 //
-// 背景：ConnectionManager.onSpawn 在每次 spawn 时触发（含重连后的再次 spawn）。
-// 早期实现只在首次 spawn 初始化功能层，重连后 ctx.bot 换了新实例，但任务/命令/
-// chat 监听仍绑定旧 bot → 一次重连后 !命令 全失效、任务读死 bot 状态。
-// 修复方案：不做局部重绑定（BaseTask 构造时缓存 this.bot、插件注册 bot.on 监听，
+// ConnectionManager.onSpawn 在每次 spawn 时触发（含重连后的再次 spawn），ctx.bot
+// 每次都是新实例——任务/命令/chat 监听若绑定旧 bot 会全部失效。
+// 不做局部重绑定（BaseTask 构造时缓存 this.bot、插件注册 bot.on 监听，
 // 重绑定成本高且不可测），而是每次 spawn 全量重建，天然无状态泄漏。
 //
 // 重建经内部 promise 链串行化：重叠的 spawn/reload 不会并发初始化。
@@ -15,7 +14,7 @@ import { sendChat } from './chat.js'
 import { createNotifier } from './notify.js'
 import * as discovery from './discovery.js'
 
-// U16（第五轮）：玩家上线问候——模块级已知玩家 Set 与按玩家冷却。
+// 玩家上线问候——模块级已知玩家 Set 与按玩家冷却。
 // 模块级而非 doRebuild 闭包：player_info 首包会把登录时已在线的玩家全部触发
 // playerJoined（重连后闭包重建会把在线玩家当新人问候全服）；跨重建保留。
 // 只做上线问候且只走固定模板（LLM 不参与）：下线告别对离场玩家不可见，
@@ -31,7 +30,7 @@ export function _resetGreetState () {
   lastGreetAt.clear()
 }
 
-// R3 落地（第 11 轮 G4）：任务长 idle LLM 播报——waitingReason 持续超过
+// 任务长 idle LLM 播报——waitingReason 持续超过
 // IDLE_THRESHOLD_MS 时经 LLM 一句话解释（玩家/运维感知"卡在哪"）。模块级
 // interval（跨重建保留——doRebuild 每重建新建 interval 会累积泄漏），重建时
 // 只更新引用；已播报按 `任务id:原因` 去重 + 冷却。summarize 自带 60s 全局冷却。
@@ -70,8 +69,8 @@ export function _resetIdleWatcher () {
 
 export function createFeatureLayerManager (ctx, logger) {
   let pending = Promise.resolve()
-  // 热重载会重建 logger——所有日志/组件构造一律运行时取 ctx.logger（P1-5：
-  // 构造时捕获的初始 logger 会在重连后把任务日志写旧 transport）
+  // 热重载会重建 logger——所有日志/组件构造一律运行时取 ctx.logger
+  //（构造时捕获的初始 logger 会在重连后把任务日志写旧 transport）
   const log = () => ctx.logger ?? logger
 
   /** 拆除当前功能层（幂等，逐项容错：旧 bot 可能已死）。 */
@@ -106,30 +105,28 @@ export function createFeatureLayerManager (ctx, logger) {
 
     ctx.tasks = new TaskManager(ctx.cfg, log(), { bot }, ctx.stateStore, () => ctx.agent)
     await ctx.tasks.load(ctx.cfg) // load 内部按条目容错，不抛
-    // U10：webhook 通知。P2-1（第五轮）：必须用 ctx.notifier 实时引用——reload 只
-    // 更新 ctx.notifier（index.js），不重建 feature layer；第 11 轮根治：此前按值
-    // 捕获一次后闭包引用旧句柄——reload 改 webhook 后死亡/重生/重连推送仍走旧 URL。
-    // 改为事件发生时实时取值（reload 会替换 ctx.notifier，此处永不缓存）。
+    // webhook 通知：必须实时取 ctx.notifier——reload 只更新 ctx.notifier（index.js），
+    // 不重建 feature layer；按值捕获一次会让闭包引用旧句柄——reload 改 webhook 后
+    // 死亡/重生/重连推送仍走旧 URL。事件发生时实时取值（此处永不缓存）。
     const notifier = () => ctx.notifier ?? createNotifier(ctx.cfg, log())
 
-    // A5（第四轮）：config 任务计数器回灌——_snapshotCounters 全量写（含 config 任务），
-    // 但 restoreCounters 此前只在下方 ad-hoc 恢复循环调用 → 重建后 config 任务计数归零，
-    // 且下一次快照即覆写 state.json 旧值（写了不读 = 数据丢失，F5）
+    // config 任务计数器回灌——快照全量写计数（含 config 任务），重建后不恢复则
+    // config 任务计数归零，且下一次快照即覆写 state.json 旧值（写了不读 = 数据丢失）
     for (const e of ctx.cfg.tasks ?? []) {
       ctx.tasks.restoreCounters(e.id, ctx.stateStore?.counters?.[e.id])
     }
 
-    // B1（L2 进化）：探索记忆回灌（模块级单例——跨重建/重连保留；容量与形状防御
+    // 探索记忆回灌（模块级单例——跨重建/重连保留；容量与形状防御
     // 在 importSnapshot 内部，坏数据按空处理）
     discovery.importSnapshot(ctx.stateStore?.memory)
 
-    // U1 恢复：快照中的 ad-hoc 任务（配置里已存在的以配置文件为准，不重复添加）
+    // 快照中的 ad-hoc 任务恢复（配置里已存在的以配置文件为准，不重复添加）
     const configIds = new Set((ctx.cfg.tasks ?? []).map(e => e.id))
     for (const entry of ctx.stateStore?.tasks ?? []) {
       if (configIds.has(entry.id)) continue
       try {
         ctx.tasks.addTask(entry)
-        // C6/N：计数器回灌——快照此前只写不读（重启后遥测归零，U1 承诺未兑现）
+        // 计数器回灌——快照里 ad-hoc 任务的计数恢复（否则重启后遥测归零）
         ctx.tasks.restoreCounters(entry.id, ctx.stateStore?.counters?.[entry.id])
         log().info({ task: entry.id }, 'restored ad-hoc task from state snapshot')
       } catch (err) {
@@ -150,8 +147,8 @@ export function createFeatureLayerManager (ctx, logger) {
         return true // 出错不算未知命令
       })
       // 未知命令静默是"指令无效"体验的一部分——明确反馈（含可用命令提示）。
-      // 统一走 sendChat：剥 § 颜色码 + 分片（Paper 26.1.2 含 § 被踢 → fatal 停服，
-      // 裸 bot.chat 的 § 前缀是 53d3352 引入的 P0 回归——C1 修复）
+      // 统一走 sendChat：剥 § 颜色码 + 分片（服务端对含 § 消息直接踢出 → fatal 停服，
+      // 裸 bot.chat 发 § 前缀会触发）
       if (hit === false) {
         const names = (ctx.commands?.list() ?? []).map(c => `!${c.name}`).join(' ')
         try { await sendChat(bot, `§c未知命令（可用: ${names}）`, ctx.cfg.chat?.maxLength) } catch { /* 聊天通道可能未就绪 */ }
@@ -159,15 +156,12 @@ export function createFeatureLayerManager (ctx, logger) {
     }
     bot.on('chat', ctx.chatHandler)
 
-    // 死亡处理（C2/D 修复 + U6 深化）：createBot 显式 respawn:false（第 11 轮——
-    // mineflayer 4.37.1 默认 respawn:true，此前注释前提错误）→ 死亡后 bot 停在
-    // 死亡界面，重生时序完全可控：任务在死尸上空转前先暂停。
-    // C2：死亡 → 通知 + 暂停全部任务 + 停止跟随 + 请求重生。
-    // U6：L2 可用时经 LLM 一句话播报死因；重生后自动恢复暂停的任务 + 播报重生位置。
-    // 第 11 轮（D4）：deathPaused 改 promise——此前在 pauseAll().then 微任务里
-    // 赋值、respawn handler 同步读取，快速重生服 respawn 先到 → deathPaused 仍
-    // [] → 本次死亡暂停的任务永久停摆（无日志）。respawn 侧 await 该 promise
-    // 保证"先暂停完、再恢复"。
+    // 死亡处理：createBot 显式 respawn:false → 死亡后 bot 停在死亡界面，
+    // 重生时序完全可控：任务在死尸上空转前先暂停。
+    // 死亡 → 通知 + 暂停全部任务 + 停止跟随 + 请求重生。
+    // L2 可用时经 LLM 一句话播报死因；重生后自动恢复暂停的任务 + 播报重生位置。
+    // deathPaused 是 promise：respawn 侧 await 保证"先暂停完、再恢复"——
+    // 快速重生服 respawn 可能先于 pauseAll 完成到达，同步读取会漏掉暂停名单
     let deathPaused = Promise.resolve([]) // 本次死亡暂停任务 id 的 promise（重生时恢复）
     bot.on('death', () => {
       const p = ctx.tasks?.pauseAll() ?? Promise.resolve([])
@@ -182,9 +176,9 @@ export function createFeatureLayerManager (ctx, logger) {
       const pos = bot.entity?.position
       const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
       sendChat(bot, `§c[bot] 已死亡（${loc}）——任务已暂停，自动重生中`).catch(() => { /* 聊天通道未就绪 */ })
-      // U10：死亡推送（webhook 独立于游戏聊天——无人值守时玩家可能不在线）
+      // 死亡推送（webhook 独立于游戏聊天——无人值守时玩家可能不在线）
       notifier().send('death', `Bot 死亡（${loc}）`, '任务已暂停，自动重生中')
-      // U6：LLM 一句话播报（附加层——任何失败回退模板，不得阻塞重生）
+      // LLM 一句话播报（附加层——任何失败回退模板，不得阻塞重生）
       if (ctx.agent?.summarize) {
         ctx.agent.summarize(`Bot 在 Minecraft 服务器死亡（坐标 ${loc}）。用一句话向服务器玩家播报（如可能的死因），简洁。`)
           .then((s) => { if (s) sendChat(bot, `§c[bot] ${s}`).catch(() => {}) })
@@ -192,7 +186,7 @@ export function createFeatureLayerManager (ctx, logger) {
       }
       try { bot.respawn() } catch { /* 重生通道未就绪 */ }
     })
-    // U16：玩家上线问候（entities.js 已发射 playerJoined/playerLeft，项目此前零监听）。
+    // 玩家上线问候（entities.js 发射 playerJoined/playerLeft 事件驱动）。
     // 只问候不告别（下线告别对离场玩家不可见）、只走固定模板（LLM 不参与）、
     // 独立 60s 按玩家冷却防刷屏——问候永不阻塞/不刷屏，也不占 summarize 全局冷却
     bot.on('playerJoined', (p) => {
@@ -212,19 +206,18 @@ export function createFeatureLayerManager (ctx, logger) {
       knownPlayers.delete(name)
     })
 
-    // 地形记忆失效（第 10 轮，方案 B）：方块变化（被挖/被放/火烧/水冲等）→ 该
-    // 坐标的探索记忆删除——记忆只增不减会让 query_map 长期返回过期坐标（用户
-    // 实测误判 find 失效的根因之一）。只覆盖已加载区块（mineflayer blockUpdate
-    // 的感知范围）——远处记忆变化由 query_map 查询验证（方案 C）兜底。事件挂在
-    // bot 实例上随重建/断线自然释放，无需 teardown 清理。
+    // 地形记忆失效：方块变化（被挖/被放/火烧/水冲等）→ 该坐标的探索记忆删除——
+    // 记忆只增不减会让 query_map 长期返回过期坐标。只覆盖已加载区块
+    //（mineflayer blockUpdate 的感知范围）——远处记忆变化由 query_map 查询验证兜底。
+    // 事件挂在 bot 实例上随重建/断线自然释放，无需 teardown 清理。
     bot.on('blockUpdate', (oldBlock) => {
       const p = oldBlock?.position
       if (p) discovery.removeResourceAt(p.x, p.y, p.z)
     })
 
     bot.on('respawn', async () => {
-      // U6：恢复本次死亡暂停的任务（手动暂停的保持暂停）。第 11 轮：await 暂停
-      // promise——确保 pauseAll 完成后再恢复（快速重生服 respawn 先到的竞态）
+      // 恢复本次死亡暂停的任务（手动暂停的保持暂停）；await 暂停 promise 确保
+      // pauseAll 完成后再恢复（快速重生服 respawn 先到的竞态）
       const ids = await deathPaused
       deathPaused = Promise.resolve([])
       for (const id of ids) {
@@ -233,24 +226,24 @@ export function createFeatureLayerManager (ctx, logger) {
       const pos = bot.entity?.position
       const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
       sendChat(bot, `§a[bot] 已重生（${loc}），任务已恢复`).catch(() => { /* 聊天通道未就绪 */ })
-      notifier().send('respawn', `Bot 已重生（${loc}）`, '任务已恢复') // U10
+      notifier().send('respawn', `Bot 已重生（${loc}）`, '任务已恢复')
     })
 
     log().info({ bot: ctx.cfg.username }, 'feature layer ready')
 
     // 重连恢复通知：玩家可感知 Bot 已回来（首连安静上线，仅重连提示）。
-    // 同上：裸 § 会触发服务端踢出（P0），走 sendChat 剥离
+    // 同上：裸 § 会触发服务端踢出，走 sendChat 剥离
     const s = ctx.conn?.getStatus?.()
     if (s && s.reconnectCount > 0) {
       try { await sendChat(bot, `§a[bot] 已重新连接（累计重连 ${s.reconnectCount} 次）`, ctx.cfg.chat?.maxLength) } catch { /* 聊天通道可能未就绪 */ }
-      notifier().send('reconnect', `Bot 已重新连接（累计重连 ${s.reconnectCount} 次）`) // U10
-      // 第 11 轮 G4：连续重连告警——无人值守时 webhook 是唯一感知通道
+      notifier().send('reconnect', `Bot 已重新连接（累计重连 ${s.reconnectCount} 次）`)
+      // 连续重连告警——无人值守时 webhook 是唯一感知通道
       //（重连本身已推送，但高频重连=服务端/网络异常，需运维介入的更强信号）
       if (s.reconnectCount >= 3) {
         notifier().send('reconnect-alert', `Bot 已连续重连 ${s.reconnectCount} 次——请检查服务端状态`)
       }
     }
-    // 第 11 轮 G4：idle 播报 watcher 引用随重建更新（模块级 interval 跨重建保留）
+    // idle 播报 watcher 引用随重建更新（模块级 interval 跨重建保留）
     idleWatcher.bot = bot
     idleWatcher.ctx = ctx
   }
@@ -269,8 +262,8 @@ export function createFeatureLayerManager (ctx, logger) {
 
   /**
    * 将任意异步操作放入同一串行队列（reload 等，避免与 rebuild 交错）。
-   * 失败语义（L 修复）：队列链本身吸收错误（单次失败不毒化后续调用），
-   * 但返回值把错误上抛给调用方——!reload 据此反馈"运行时错误"而非假成功。
+   * 队列链本身吸收错误（单次失败不毒化后续调用），但返回值把错误上抛给
+   * 调用方——!reload 据此反馈"运行时错误"而非假成功。
    * @param {() => Promise<void>} fn
    * @returns {Promise<void>}
    */

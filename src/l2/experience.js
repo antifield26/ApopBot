@@ -1,4 +1,4 @@
-// 经验记忆库（v1.0.0 C11）：动作失败 → 反思总结 → 跨会话经验注入。
+// 经验记忆库：动作失败 → 反思总结 → 跨会话经验注入。
 // LLM 自主能力持续进化：失败教训沉淀为"经验教训"注入后续对话 system——
 // 下次遇到同类场景直接知道正确做法（对齐 Voyager/Reflexion 思想）。
 //
@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createDebouncedFileStore } from '../util/debounced-file-store.js' // 第 11 轮 F3
+import { createDebouncedFileStore } from '../util/debounced-file-store.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const DEFAULT_FILE = path.join(ROOT, 'data', 'experience.json')
@@ -39,8 +39,8 @@ export function loadExperience (file = DEFAULT_FILE) {
  */
 export function createExperienceStore ({ file = DEFAULT_FILE, debounceMs = 2000, logger = null, capacity = 100 } = {}) {
   let last = loadExperience(file)
-  // 第 11 轮 F3：落盘样板（dirty/防抖/tmp+rename/exit flush）提取共享；
-  // 容量 FIFO 裁剪在 encode 内（persist 时执行，与既有语义一致）
+  // 落盘样板共享（dirty/防抖/tmp+rename/exit flush）；容量 FIFO 裁剪在 encode 内
+  //（persist 时执行）
   const store = createDebouncedFileStore({
     file,
     debounceMs,

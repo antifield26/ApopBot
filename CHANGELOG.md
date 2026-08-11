@@ -5,6 +5,7 @@
 
 ## [Unreleased]
 
+- **注释与文档规范化（第 12 轮）**：代码注释统一为"当前代码的意图/契约/边界"（现在时态）——清除全部轮次标记（`（第 N 轮）`/`（C\d+）`/`（U\d+）` 等 262 处）与历史修复叙事；历史变更统一由 CHANGELOG/roadmap 承载。规范约定写入 docs/architecture.md「注释与文档约定」节
 - **第 11 轮全面评估（5 HIGH + 20 MEDIUM + 重构 + 4 扩展主题，见 docs/roadmap.md）**：
   - **5 个确认缺陷修复**：combat 冻结 options 写 weaponName 抛 TypeError（config 装载的 combat 永不运行——BaseTask 浅复制根治 + 防未来脚本再犯）；combat maxTargets 默认 0 失效首杀即完成（evalCond config 型回退 defaultOptions）；config.example.json 过不了自身校验（l2._comment 豁免 + config.test 防漂移断言）；spawn 先于插件装载时 ctx.plugins 陈旧（onPluginsReady 补发回调）；notifier 按值捕获 reload 后 webhook 变更失效（事件时实时取值）
   - **完善 20 项**：fish caught 计数虚高（超时也 +1）/abort 监听器泄漏、审计日志多写者竞争（进程级共享单例）、plant_crops 按 cropTypes 匹配种子、collect 失败批次实采复核、mine 动作级互斥（非 exclusive 任务不 bypass 守卫）、工具调用上限 4 与提示词契约对齐（超限回填失败结果）、baseUrl `/v1` 双路径、goto/explore_step abort 贯通、云端抖动重试（429/5xx ≤2 次退避）、会话 calls 活引用拷贝、query_map 大小写归一、blockUpdate 坐标索引 O(1) 判空、http-status EADDRINUSE 可恢复、日志热重载仅 level 变化不重建 transport、deathPaused promise 化（快速重生服竞态）、respawn:false 显式（mineflayer 默认 respawn:true 此前双发）、parser JSON 转义引号

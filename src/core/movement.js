@@ -8,8 +8,7 @@
 //
 // 可取消性：isInterrupted 谓词 + 轮询，不用 AbortSignal——中断动作统一
 // stopPathfinding（pathfinder.stop → 下一 tick PathStopped 拒绝），与任务 _cancel
-// 现状一致；谓词同时查 _stopRequested || _pauseRequested（顺带修复 breed 接近
-// 不响应 pause 的既有缺陷）。
+// 现状一致；谓词同时查 _stopRequested || _pauseRequested。
 //
 // 失败语义（reason）：
 //   no-path      goto 拒绝 NoPath / approachEntity 收到 path_update noPath
@@ -26,11 +25,10 @@ const { goals } = pathfinderPkg
 // （goto 只 setGoal 一次，路径不随目标实时重算——目标静止时 A* 不被重置）
 const RECALC_DIST = 2
 
-// 卡住自愈（第 9 轮）：26.1 区块数据时序问题——A* 路径生成/直线合并的物理模拟
-// 可能用未加载的区块数据（blockAt null → 模拟中障碍不存在 → 路径穿过实际墙）→
-// bot 撞墙停滞，futility 重算反复算错（实测：goto 4 格目标 60s 超时、path_update
-// 恒 1 节点直线）。自愈：位置停滞 STUCK_DETECT_MS 后主动 stopPathfinding（触发
-// PathStopped → runOnce 失败标记 stuck）→ goto 重试全新 A*——区块加载后重试成功。
+// 卡住自愈：26.1 区块数据时序问题——A* 路径生成/直线合并的物理模拟可能用未加载
+// 的区块数据（blockAt null → 模拟中障碍不存在 → 路径穿过实际墙）→ bot 撞墙停滞。
+// 自愈：位置停滞 STUCK_DETECT_MS 后主动 stopPathfinding（触发 PathStopped →
+// runOnce 失败标记 stuck）→ goto 重试全新 A*（区块加载后重试成功）。
 const STUCK_DETECT_MS = 4000
 // 卡住重试次数上限（每次全新 A*——区块通常 1-2 次重试内加载完成）
 const STUCK_RETRY_LIMIT = 3
@@ -68,10 +66,10 @@ export function stopPathfinding (bot) {
 }
 
 /**
- * 卡住自愈的横移步（第 9 轮）：向目标垂直方向移动 2 格，离开贴墙位置。
- * 26.1 实测：bot 贴墙时起跳有水平碰撞延迟 → canWalkJump 闪烁 → 永远跳不过 1 格墙。
- * 横移后重试原目标，起跳无延迟即可通过。失败（侧向也是墙/超时）不阻塞——返回
- * 后由 goto 重试兜底。
+ * 卡住自愈的横移步：向目标垂直方向移动 2 格，离开贴墙位置。
+ * bot 贴墙时起跳有水平碰撞延迟 → canWalkJump 模拟闪烁 → 跳不过 1 格墙；
+ * 横移离开贴墙位置后起跳无延迟即可通过。失败（侧向也是墙/超时）不阻塞——
+ * 返回后由 goto 重试兜底。
  * @param {import('mineflayer').Bot} bot
  * @param {object} goal 原目标（用于计算侧向方向）
  */
@@ -97,9 +95,9 @@ async function sidestep (bot, goal, timeoutMs = 8000) {
 }
 
 /**
- * 卡住自愈的跳跃试探（第 9 轮）：贴墙起跳时 canWalkJump 模拟误判失败
- * （20 tick 不够——起跳前 2 tick 水平碰撞延迟），但真实物理贴墙跳可行
- * （实测连续跳 y 升 2 格越过 1 格墙顶）。
+ * 卡住自愈的跳跃试探：贴墙起跳时 canWalkJump 模拟误判失败（20 tick 不够——
+ * 起跳前 2 tick 水平碰撞延迟），但真实物理贴墙跳可行（连续跳 y 升 2 格
+ * 越过 1 格墙顶）。
  * 面向目标方向连续 forward+jump ~1.2s（25ms 重设——pathfinder 执行器
  * fullStop 每 tick 覆盖 controlState，重设频率必须高于 tick 频率）。
  * 失败无副作用（bot 原地跳几下），重试 goto 兜底。
@@ -117,9 +115,8 @@ async function jumpProbe (bot, goal) {
         bot.look(Math.atan2(-dx, -dz), 0)
       }
     }
-    // 先后退半步（第 9 轮实测）：bot 停在墙块重叠位（中心在块内、AABB 底与
-    // 前方墙块垂直重叠）时起跳瞬间被碰撞解算 velY=0（跳不起来）——后退
-    // ~0.4 格脱离重叠后起跳无碰撞（430.5 处实测跳跃正常、y 升 2 格越过墙顶）
+    // 先后退半步：bot 停在墙块重叠位（中心在块内、AABB 底与前方墙块垂直重叠）
+    // 时起跳瞬间被碰撞解算 velY=0（跳不起来）——后退 ~0.4 格脱离重叠后起跳无碰撞
     try {
       bot.setControlState('back', true)
       await new Promise(r => setTimeout(r, 400))
@@ -163,10 +160,9 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
    */
   async function goto (goal, { isInterrupted = null, timeoutMs = 60000, pollMs = 500 } = {}) {
     let result = await runOnce(goal, { isInterrupted, timeoutMs, pollMs })
-    // 卡住自愈（第 9 轮）：位置停滞 → stuck 标记 → 横移避开贴墙 → 重试全新 A*（最多 3 次）。
-    // 26.1 实测根因链：A* 路径正确（4 节点含跳上 68 台面），但 bot 贴墙起跳有 2 tick
-    // 水平碰撞延迟 → canWalkJump 20 tick 模拟闪烁（跳 1 tick 落下）→ 永远跳不过墙。
-    // 横移 2 格离开贴墙位置后重试 → 起跳无延迟 → 跳上成功。中断不重试
+    // 卡住自愈：位置停滞 → stuck 标记 → 横移避开贴墙 → 重试全新 A*（最多 3 次）。
+    // 贴墙起跳有 2 tick 水平碰撞延迟 → canWalkJump 20 tick 模拟闪烁（跳 1 tick
+    // 落下）→ 永远跳不过墙；横移 2 格离开贴墙位置后起跳无延迟。中断不重试
     let stuckRetries = 0
     while (result.stuck && stuckRetries < STUCK_RETRY_LIMIT && !isInterrupted?.()) {
       stuckRetries++
@@ -181,7 +177,7 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
       try { bot.pathfinder?.setGoal(null) } catch { /* 插件可能已卸载 */ }
       await new Promise(r => setTimeout(r, 200))
       // 3) 真实跳跃试探：canWalkJump 模拟对贴墙起跳误判失败（20 tick 不够），
-      //    但真实物理贴墙跳可行（实测连续跳 y 升 2 格越过墙顶）——面向目标
+      //    但真实物理贴墙跳可行（连续跳 y 升 2 格越过墙顶）——面向目标
       //    方向连续跳 ~1.2s 越过 1 格墙
       await jumpProbe(bot, goal)
       result = await runOnce(goal, { isInterrupted, timeoutMs, pollMs })
@@ -203,15 +199,15 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
     let stoppedByUs = false
     let stuckDetected = false
     const p = bot.pathfinder.goto(goal)
-    // 断线一致性（C2）：断线后 physics tick 停止 → path_stop 永不到达 → goto promise
-    // 永不 settle → runOnce 挂死（轮询器泄漏 + findBusy 不复发 + 任务 run 永不返回）。
+    // 断线一致性：断线后 physics tick 停止 → path_stop 永不到达 → goto promise
+    // 永不 settle → runOnce 挂死（轮询器泄漏 + 任务 run 永不返回）。
     // 与 bot 'end' 事件 race：end 先到即以 interrupted 返回收尾；finally 清理监听。
     let disconnected = false
     let endResolve
     const ended = new Promise((resolve) => { endResolve = resolve })
     const onEnd = () => { disconnected = true; endResolve() }
     bot.once('end', onEnd)
-    // 停滞检测状态（第 9 轮卡住自愈）：A* 计算期（STUCK_GRACE_MS）后位置连续
+    // 停滞检测（卡住自愈）：A* 计算期（STUCK_GRACE_MS）后位置连续
     // STUCK_DETECT_MS 不动 → 主动 stop → PathStopped → 标记 stuck 供 goto 重试
     let lastPos = null
     let stuckSince = null
@@ -269,7 +265,7 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
       bot.removeListener('end', onEnd)
       // 失败路径清理残留 stateGoal（NoPath 后 stateGoal 挂着，等区块更新会重新 A*，
       // 必须清）。用 setGoal(null) 而非 stopPathfinding——stop 的 path_stop 异步触发，
-      // 会毒害紧随其后的重试 goto（实测：陈旧 path_stop 打断新 goto → 误判 interrupted）
+      // 会打断紧随其后的重试 goto（陈旧 path_stop → 误判 interrupted）
       if (!succeeded) {
         try { bot.pathfinder?.setGoal(null) } catch { /* 插件可能已卸载 */ }
       }
@@ -293,7 +289,7 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
    * @param {number} range 到达半径
    */
   async function gotoNearest (points, range = 3, opts = {}) {
-    // C8/X 防御：GoalCompositeAny([]) heuristic=Infinity → A* 跑满 5s 预算再重试
+    // 防御：GoalCompositeAny([]) heuristic=Infinity → A* 跑满 5s 预算再重试
     // 一次（~10s 后误报"移动超时"）。当前调用方（!find/find_block）已前置空检查，
     // 此守卫防未来调用方漏检
     if (!Array.isArray(points) || points.length === 0) {
@@ -307,9 +303,9 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
 
   /**
    * 接近实体（goto 封装，combat/breed 用）。范围内 → 清残留 goal + ok。
-   * 实现要点：goto(GoalNear 快照) 只 setGoal 一次——此前每 500ms 重建 goal 会触发
+   * 实现要点：goto(GoalNear 快照) 只 setGoal 一次——频繁重建 goal 会触发
    * pathfinder 的 resetPath（清已算路径 + 丢进行中 A* + clearControlStates）→
-   * 复杂地形 A* 永远算不完 → Bot 原地不动（实测回归）。
+   * 复杂地形 A* 永远算不完 → Bot 原地不动。
    * 目标位移超 RECALC_DIST 视为"目标跑了"→ interrupted → 调用方重扫（保持追逐，
    * 且不打断 A* 计算）；不可达由 goto 的 NoPath/Timeout 拒绝。
    * @param {{ position?: { x, y, z } }} entity
@@ -328,7 +324,7 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
       entity?.position && entity.position.distanceTo(anchor) > RECALC_DIST
     )
     // GoalNear 构造签名 (x, y, z, range)——传 Vec3 单参会 NaN（Math.floor(Vec3)），
-    // A* 行为异常（follow 实测回归同款，此处全库排查发现）
+    // A* 行为异常
     const r = await goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, range), {
       isInterrupted: combined,
       timeoutMs,
@@ -352,7 +348,7 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
 export function findSurfaceBlocks (bot, blockName, { maxDistance = 64, maxCandidates = 64 } = {}) {
   const block = bot.registry?.blocksByName?.[blockName]
   if (!block) throw new Error(`未知方块类型: ${blockName}`)
-  // C5/G 纵深防御：命令层 16-256 已校验，但技能/未来调用方可能直传任意值——
+  // 纵深防御：命令层 16-256 已校验，但技能/未来调用方可能直传任意值——
   // findBlocks 同步无界枚举（OctahedronIterator），超大 maxDistance 冻结主线程分钟级
   maxDistance = Math.min(256, Math.max(16, Math.floor(maxDistance) || 16))
   maxCandidates = Math.min(64, Math.max(1, Math.floor(maxCandidates) || 1))

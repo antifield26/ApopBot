@@ -1,6 +1,6 @@
 // 进程信号处理：SIGINT/SIGTERM/SIGBREAK 优雅退出（Windows 下 NSSM stop 发送 Ctrl+C
 // 事件 → Node 映射 SIGINT；Ctrl+C 等待超时后 NSSM 发 CTRL_BREAK → Node 映射 SIGBREAK——
-// 第六轮 C5 注册 handler 后走同一优雅路径，不再默认终止）。
+// 注册 handler 后走同一优雅路径，不再默认终止）。
 // 热重载：无 SIGHUP 的平台（Windows）用配置监视 + !reload；Linux 下 SIGHUP 仍注册（systemd ExecReload）。
 
 import { withTimeout } from '../util/promise-timeout.js'
@@ -27,8 +27,8 @@ export function setupSignals (deps) {
       await withTimeout((async () => {
         await deps.ctx.tasks?.stopAll()
         await deps.ctx.agent?.stop()
-        await deps.ctx.stateStore?.flush() // U1：快照立即落盘（防抖窗口内不强杀丢失）
-        await deps.conn?.disconnect?.() // 双可选链：conn 为空对象时 disconnect 是 undefined，直接调用会 TypeError（实测）
+        await deps.ctx.stateStore?.flush() // 快照立即落盘（防抖窗口内不强杀丢失）
+        await deps.conn?.disconnect?.() // 双可选链：conn 为空对象时 disconnect 是 undefined，直接调用会 TypeError
         await new Promise((resolve) => { log.flush(resolve) })
       })(), SHUTDOWN_TIMEOUT_MS, 'shutdown timeout')
     } catch (err) {
@@ -41,7 +41,7 @@ export function setupSignals (deps) {
 
   process.on('SIGINT', () => gracefulShutdown('SIGINT'))
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
-  // 第六轮 C5：NSSM stop 在 Ctrl+C 超时（AppStopMethodConsole 20s）后发 CTRL_BREAK——
+  // NSSM stop 在 Ctrl+C 超时（AppStopMethodConsole 20s）后发 CTRL_BREAK——
   // Node 将 Windows CTRL_BREAK 映射为 SIGBREAK，注册 handler 后不再默认终止进程；
   // shuttingDown 幂等标志防重入（20s 窗口内 CTRL_BREAK 到达时为 no-op）。
   // 非 Windows 平台该事件永不触发，零影响。
@@ -49,7 +49,7 @@ export function setupSignals (deps) {
 
   process.on('SIGHUP', async () => {
     // 热重载会重建 logger——日志一律走当前实例（ctx.logger），否则 SIGHUP 日志
-    // 仍写旧 transport（P1-5：与 shutdown 路径同款修复）
+    // 仍写旧 transport
     const log = deps.ctx?.logger ?? deps.logger
     log.info('SIGHUP received, reloading config and tasks')
     try {

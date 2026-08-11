@@ -1,9 +1,9 @@
-// 伐木任务脚本（v1.0.0 C7）：区域内批量砍伐原木/木头。
-// 语义与原 ChopTask 逐条对应：
+// 伐木任务脚本：区域内批量砍伐原木/木头。
+// 语义说明：
 // - init 校验（logTypes 显式 → 逐名校验未知方块；缺省 → 全部 /_log$|_wood$/）
 // - 无目标：stopWhenDone → 完成；否则 5min no-target 等待（树会重新长）
 // - NoChests → 5min inventory-full；其他 collect 错误 → 30s 重试
-// - 默认 radius 48 / maxBlocks 64（与原任务一致）
+// - 默认 radius 48 / maxBlocks 64
 
 export default {
   id: 'chop',
@@ -11,7 +11,7 @@ export default {
   naturalCompletion: true,
   maxActions: 100000,
   defaultOptions: { radius: 48, maxBlocks: 64, logRegex: '_log$|_wood$' },
-  /** init 校验（原 ChopTask.init 等价迁移：显式 logTypes 校验未知方块）。 */
+  /** init 校验（显式 logTypes 校验未知方块）。 */
   async init (task) {
     const o = task.options
     if (!task.bot.registry?.blocksByName) throw new Error('chop 任务需要 bot.registry（minecraft-data 数据）')
