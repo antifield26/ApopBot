@@ -3,7 +3,7 @@
 ## 背景
 
 本项目为 PaperMC 26.1.2（协议 775）的适配以 **4 个本地补丁**（`patches/`，patch-package
-承载）实现——v1.0.0（第七轮）起依赖全部为官方 npm 版本（供应链干净、零 git 依赖）：
+承载）实现——依赖全部为官方 npm 版本（供应链干净、零 git 依赖）：
 
 | 包 | 版本 | 补丁 | 上游状态 |
 |---|---|---|---|
@@ -44,8 +44,8 @@ node scripts/smoke.mjs --steps connect,spawn,move
 # 6. 文档同步：architecture.md 依赖 pin 节 / CHANGELOG / 本文件
 ```
 
-> 注：`scripts/migrate-upstream.mjs` 与 `scripts/upstream-lib.mjs` 仍保留 v1.0.0 之前
-> git-pin 时代的迁移逻辑（PR 分支 → npm 正式版）。v1.0.0 起项目已无 git 依赖，该
+> 注：`scripts/migrate-upstream.mjs` 与 `scripts/upstream-lib.mjs` 保留 git-pin
+> 时代的迁移逻辑（PR 分支 → npm 正式版）。当前项目已无 git 依赖，该
 > 逻辑过时——正确迁移 = 上面的删补丁流程。保留脚本仅为历史参考，勿直接运行。
 
 ## 26.1.2 适配的补丁外残留（上游合并后一并清理）

@@ -22,7 +22,7 @@ winget install --id Git.Git                                                     
 
 重开 shell 后验证：`node -v`（≥22）、`nssm version`。
 
-> v1.0.0（C1）：依赖全部为官方 npm 版，26.1.2 协议适配由 `patches/` 的 patch-package
+> 依赖全部为官方 npm 版，26.1.2 协议适配由 `patches/` 的 patch-package
 > 补丁承担（`npm install`/`npm ci` 的 postinstall 自动应用，无需任何手工步骤）。
 > 升级 mineflayer/minecraft-protocol 版本时补丁会因 context 冲突报错——先删补丁重装
 > 再按 docs/upstream-migration.md 重新生成。
@@ -49,7 +49,7 @@ winget install --id Git.Git                                                     
 
 - `host` 指向服务端域名 `mc.antifield.work`（DNS 指向 Pi 的当前 IP；Pi 换 IP 只改 DNS，Bot 重连时自动解析新地址，DNS 解析失败归类为 network_error 自动退避重连而非 fatal）。`localhost` 仅限开发机连本机服务端
 - `username: mcbot` 已在服务端白名单；smoke 用 `config/smoke.json` 以 mcbot-test 身份登录（同样需白名单）
-- L2 仅云端 Anthropic 兼容 API（v1.0.0），预设 DeepSeek（`deepseek-v4-flash`，端点 `api.deepseek.com/anthropic`）；API key 走 `l2.cloudApiKeyEnv` 指定环境变量（service.env 注入），见 [docs/l2.md](l2.md)
+- L2 仅云端 Anthropic 兼容 API，预设 DeepSeek（`deepseek-v4-flash`，端点 `api.deepseek.com/anthropic`）；API key 走 `l2.cloudApiKeyEnv` 指定环境变量（service.env 注入），见 [docs/l2.md](l2.md)
 
 ## 部署（管理员 PowerShell）
 
@@ -96,7 +96,7 @@ Get-Content logs\nssm-stderr.log -Encoding UTF8 -Tail 50  # 启动期 stderr（�
 | 组件 | 占用 |
 |---|---|
 | Windows + 系统进程 | ~2GB |
-| （v1.0.0 起推理在云端——本地无 LLM 进程） | — |
+| （推理在云端——本地无 LLM 进程） | — |
 | Bot（Node） | 200–400MB |
 | 余量 | ~1GB（浏览器等重程序按需关闭） |
 
@@ -104,7 +104,7 @@ Get-Content logs\nssm-stderr.log -Encoding UTF8 -Tail 50  # 启动期 stderr（�
 - Bot 已设 `BELOW_NORMAL_PRIORITY_CLASS`：其他程序优先；卡顿可 `nssm set minecraft-bot AppPriority NORMAL_PRIORITY_CLASS` 后 restart
 - `maxSteps: 8` / `maxActionsPerCall: 8` 保持默认（防 LLM 工具循环吃 CPU）；`l2.cooldownMs` 可调大（如 10000）降低请求负载；`l2.cloudTimeoutMs` 默认 60s
 - 任务均为区域限定；farm/chop/combat/breed 为 exclusive 互斥（不会并发抢寻路/采集）
-- 无 MemoryMax 等价物：用任务管理器观察；LLM 推理在云端（v1.0.0），本地负载主要是 Bot 自身
+- 无 MemoryMax 等价物：用任务管理器观察；LLM 推理在云端，本地负载主要是 Bot 自身
 
 ## 验证清单
 

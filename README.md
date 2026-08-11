@@ -54,13 +54,13 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 | `explore` | — | 方形螺旋游荡覆盖（每站采样记录 23 种资源与实体到探索记忆，LLM 经 `query_map` 查询）；`maxDistance` 半径上限（16-256）、`area` 可限定 | `stopWhenDone: true` 时环满即完成 / 无则到边界后以当前位置重启（有界漫游）；scheduled 由 durationMinutes 到时停止 |
 
 - 调度：`schedule`（cron 表达式，时区 `scheduleTimezone`）触发后运行到完成，防重叠、`durationMinutes` 时长上限、完成/失败聊天通知（`notifyChat: false` 关闭）
-- **任务链**（v1.1 第 11 轮）：任务条目可配 `next: {id, type, options?}`——自然完成后自动接力下一个任务，如 `{"id":"mine-then-chop","type":"mine","options":{...},"next":{"id":"chop-a","type":"chop","options":{"area":{...}}}}`
-- **自动存储**（v1.1 第 11 轮）：collect_blocks 背包满（NoChests）时自动找附近 32 格箱子/木桶存入（工具与食物豁免）再继续——不再干等 5 分钟
+- **任务链**：任务条目可配 `next: {id, type, options?}`——自然完成后自动接力下一个任务，如 `{"id":"mine-then-chop","type":"mine","options":{...},"next":{"id":"chop-a","type":"chop","options":{"area":{...}}}}`
+- **自动存储**：collect_blocks 背包满（NoChests）时自动找附近 32 格箱子/木桶存入（工具与食物豁免）再继续——不再干等 5 分钟
 - 仅 farm/chop 强制 area（mine 可选、combat/breed 可省略=无区域约束；afk/fish 无区域）；farm/chop/combat/breed/explore 为 exclusive（互斥，避免争抢寻路/采集）；mine 非 exclusive——exclusive 任务运行期间其采集动作软失败自动重试
 - 遥测：`counters`（mined/caught/planted/chopped/kills/breedings…）显示于 `!task list`
-- **维度感知**（v1.1 第 11 轮）：探索记忆按维度存储——下界/末地坐标独立，`query_map` 只返回当前维度的记录（旧主世界数据兼容）；`observe_blocks` 观察到的资源自动记入探索记忆（LLM 探索即积累）；任务长 idle（等待原因持续 10 分钟）经 LLM 一句话播报原因
-- **LLM 能力深化**（第 13 轮）：长期目标记忆（`!agent goal` + `set_goal` 原语——目标+计划跨会话注入）；对话滚动摘要（历史超限 LLM 压缩，"继续"不断片）；检索式经验（按失败动作匹配注入 + 重复教训合并计数）；退化状态自动注入（低血/饥饿/背包满/工具将坏，零工具调用成本）；`observe_tasks` 任务状态感知；世界事件被动感知（被攻击/低血/背包满/稀有收集——下次对话 LLM 知道发生了什么）；命名地点（`!home` + `set_place`——家/矿场语义坐标，`query_map place:` 查询）
-- **Bot 功能扩展**（第 13 轮）：仓库管理（`storage.chests` 配置 + `store_items`/`fetch_items`——背包满自动存配置仓库，替代临时找箱）；工具耐久管理（挖掘自动换最优工具 + 护甲自动装备）；farm 扩展 5 作物（甘蔗/南瓜/西瓜/甜浆果/可可——三种成熟判定四种种植模式）；`sleep` 睡觉（天黑过夜，farm/combat `sleepAtNight` 可选）；`harvest_animals` 剪羊毛/捡掉落物
+- **维度感知**：探索记忆按维度存储——下界/末地坐标独立，`query_map` 只返回当前维度的记录（旧主世界数据兼容）；`observe_blocks` 观察到的资源自动记入探索记忆（LLM 探索即积累）；任务长 idle（等待原因持续 10 分钟）经 LLM 一句话播报原因
+- **LLM 能力深化**：长期目标记忆（`!agent goal` + `set_goal` 原语——目标+计划跨会话注入）；对话滚动摘要（历史超限 LLM 压缩，"继续"不断片）；检索式经验（按失败动作匹配注入 + 重复教训合并计数）；退化状态自动注入（低血/饥饿/背包满/工具将坏，零工具调用成本）；`observe_tasks` 任务状态感知；世界事件被动感知（被攻击/低血/背包满/稀有收集——下次对话 LLM 知道发生了什么）；命名地点（`!home` + `set_place`——家/矿场语义坐标，`query_map place:` 查询）
+- **Bot 功能扩展**：仓库管理（`storage.chests` 配置 + `store_items`/`fetch_items`——背包满自动存配置仓库，替代临时找箱）；工具耐久管理（挖掘自动换最优工具 + 护甲自动装备）；farm 扩展 5 作物（甘蔗/南瓜/西瓜/甜浆果/可可——三种成熟判定四种种植模式）；`sleep` 睡觉（天黑过夜，farm/combat `sleepAtNight` 可选）；`harvest_animals` 剪羊毛/捡掉落物
 
 ## 快速开始（开发机）
 
@@ -77,7 +77,7 @@ npm start                   # 连接 localhost:25565
 
 ## 部署（Windows PC）
 
-Bot 以 NSSM Windows 服务运行于 PC（L2 推理在云端——v1.0.0 起无本地 LLM 进程）；PaperMC 服务端仍在树莓派（systemd）。见 [docs/deploy.md](docs/deploy.md)。
+Bot 以 NSSM Windows 服务运行于 PC（L2 推理在云端——无本地 LLM 进程）；PaperMC 服务端仍在树莓派（systemd）。见 [docs/deploy.md](docs/deploy.md)。
 
 ```powershell
 # Windows PC，管理员 PowerShell（前置：Node 24 LTS + NSSM，见 docs/deploy.md）
@@ -106,7 +106,7 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 
 ## 性能要点（低配 PC）
 
-部署目标为 8GB 内存的 Windows PC（v1.0.0 起 LLM 推理在云端——本地无 LLM 进程）：
+部署目标为 8GB 内存的 Windows PC（LLM 推理在云端——本地无 LLM 进程）：
 
 - Bot 常驻 ~200-400MB RSS，已设低进程优先级（NSSM `BELOW_NORMAL_PRIORITY_CLASS`），不抢其它程序的 CPU
 - 内存预算：系统 ~2G + Bot ~0.4G + 余量充足——重程序按需关闭
@@ -129,14 +129,14 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 | `chat.maxLength` | `250` | 聊天分片上限（服务端上限 256） |
 | `chat.commandCooldownMs` | `750` | op 命令冷却（防刷屏） |
 | `scheduleTimezone` | `Asia/Shanghai` | cron 调度时区 |
-| `notify.webhook` | `''` | 运维通知（U10）：任务终态/断线重连/死亡重生/fatal 停服推送企业微信或 Server酱（URL 自动识别；空=关闭；零依赖，失败静默） |
+| `notify.webhook` | `''` | 运维通知：任务终态/断线重连/死亡重生/fatal 停服推送企业微信或 Server酱（URL 自动识别；空=关闭；零依赖，失败静默） |
 | `l2` | `enabled: false` | LLM 层：单 Provider，预设 DeepSeek（`deepseek-v4-flash` + Anthropic 兼容端点 `api.deepseek.com/anthropic`，`thinking: disabled`/`effort: low`——disabled 时不传 reasoning_effort，DeepSeek 端点两者互斥 400）；密钥只走 `l2.cloudApiKeyEnv` 指定环境变量；残留旧键（provider/ollama 系）启动即报错（契约冻结） |
 
 环境变量示例：`MCBOT_USERNAME=bot2 MCBOT_OP_WHITELIST=steve,alex npm start`
 
 ## 依赖 pin 说明（重要）
 
-mineflayer 正式版只支持到 1.21.11（协议 774）；26.1.2（775）上游 PR（#3902/#1487）未合并。本项目（v1.0.0）：
+mineflayer 正式版只支持到 1.21.11（协议 774）；26.1.2（775）上游 PR（#3902/#1487）未合并。本项目：
 - **全部官方 npm 版**：`mineflayer 4.37.1` / `minecraft-protocol 1.66.2` / `minecraft-data 3.113.0`（已含 775）/ `prismarine-chunk 1.41.0` / `prismarine-physics 1.11.1`（已含 26.1）
 - **26.1.2 适配 = 本地补丁**：`patches/` 的 patch-package 补丁（postinstall 自动应用，`npm ci` 零手工步骤）——供应链 100% 干净（零 git 依赖、npm audit 正常）。共 4 个：`minecraft-protocol`（775 协议）/ `mineflayer`（lib/ 26.1 适配）/ `mineflayer-pathfinder`（爬升根治——执行器起跳保留 forward）/ `prismarine-physics`（爬升根治——半嵌挤回 + float32 贴墙余量）
 - 门禁：`npm run check:compat`（含 3.7 补丁哨兵——补丁缺失/未应用即 FAIL）；上游合并后删补丁 + 更新版本号回切（见 docs/upstream-migration.md）
