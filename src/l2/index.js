@@ -52,7 +52,7 @@ export function createL2 (cfg, ctx, deps = null) {
   // 经验记忆库（动作失败反思沉淀；失败降级为不反思）
   let experience = null
   try {
-    experience = deps?.experience ?? createExperienceStore({ logger })
+    experience = deps?.experience ?? createExperienceStore({ logger, capacity: cfg.l2?.experienceCapacity ?? 100 })
   } catch (err) {
     logger.warn({ err: err.message }, '经验库初始化失败，降级为不反思')
   }

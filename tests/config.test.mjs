@@ -298,12 +298,14 @@ test('v1.5.0: 技能学习三键——默认值/校验/ENV 数值化', () => {
   assert.equal(cfg.l2.skillEnabled, true, '技能学习默认开')
   assert.equal(cfg.l2.skillLearnCooldownMs, 300000, '学习冷却默认 5 分钟')
   assert.equal(cfg.l2.skillInjection, true, '技能注入默认开')
+  assert.equal(cfg.l2.experienceCapacity, 100, '经验库容量默认 100')
   const base = { ...cfg, l2: { ...cfg.l2, enabled: true } }
   // 非法值
   for (const [patch, kw] of [
     [{ skillEnabled: 'yes' }, 'l2.skillEnabled'],
     [{ skillInjection: 1 }, 'l2.skillInjection'],
-    [{ skillLearnCooldownMs: 500 }, 'l2.skillLearnCooldownMs']
+    [{ skillLearnCooldownMs: 500 }, 'l2.skillLearnCooldownMs'],
+    [{ experienceCapacity: 0 }, 'l2.experienceCapacity']
   ]) {
     const { ok, errors } = validateConfig({ ...base, l2: { ...base.l2, ...patch } })
     assert.equal(ok, false, JSON.stringify(patch))
@@ -313,11 +315,13 @@ test('v1.5.0: 技能学习三键——默认值/校验/ENV 数值化', () => {
   const envCfg = loadConfig({ argv: [], env: {
     MCBOT_L2_SKILL_ENABLED: 'false',
     MCBOT_L2_SKILL_LEARN_COOLDOWN_MS: '60000',
-    MCBOT_L2_SKILL_INJECTION: 'false'
+    MCBOT_L2_SKILL_INJECTION: 'false',
+    MCBOT_L2_EXPERIENCE_CAPACITY: '200'
   } }, { skipProdConfig: true })
   assert.equal(envCfg.l2.skillEnabled, false, '布尔 env 转布尔')
   assert.equal(envCfg.l2.skillLearnCooldownMs, 60000, 'ms env 数值化')
   assert.equal(envCfg.l2.skillInjection, false)
+  assert.equal(envCfg.l2.experienceCapacity, 200, 'experienceCapacity env 数值化（parseEnv 显式名单）')
 })
 
 test('MCBOT_TASKS_FILE 任务文件合并（内部键加载后删除）', () => {

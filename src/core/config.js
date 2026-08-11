@@ -83,7 +83,9 @@ const BUILTIN_DEFAULTS = {
     // 技能学习独立冷却（不共享 summarize 60s——完成时刻播报与学习并发不互饿）
     skillLearnCooldownMs: 300000,
     // 技能注入：活跃任务类型的过往成功实践（无匹配回退最近 1 条）
-    skillInjection: true
+    skillInjection: true,
+    // 经验库容量（失败教训 FIFO 上限；缺省 100）
+    experienceCapacity: 100
   },
   // 聊天安全层：服务端单条消息上限 256 字符，Bot 分片发送时留冗余
   chat: {
@@ -135,6 +137,7 @@ const ENV_MAP = {
   MCBOT_L2_SKILL_ENABLED: ['l2', 'skillEnabled'],
   MCBOT_L2_SKILL_LEARN_COOLDOWN_MS: ['l2', 'skillLearnCooldownMs'],
   MCBOT_L2_SKILL_INJECTION: ['l2', 'skillInjection'],
+  MCBOT_L2_EXPERIENCE_CAPACITY: ['l2', 'experienceCapacity'],
   MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
   MCBOT_CHAT_COMMAND_COOLDOWN_MS: ['chat', 'commandCooldownMs'],
   MCBOT_HTTP_ENABLED: ['http', 'enabled'],
@@ -210,7 +213,7 @@ function parseEnv (env) {
       value = raw === 'true'
     } else if (!Number.isNaN(Number(raw)) && /^-?\d+(\.\d+)?$/.test(raw) && pathArr[pathArr.length - 1].toLowerCase().includes('ms')) {
       value = Number(raw)
-    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && ['keepDays', 'port', 'maxSteps', 'maxLength', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall'].includes(pathArr[pathArr.length - 1])) {
+    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && ['keepDays', 'port', 'maxSteps', 'maxLength', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'experienceCapacity'].includes(pathArr[pathArr.length - 1])) {
       value = Number(raw)
     } else {
       value = raw
@@ -380,6 +383,9 @@ export function validateConfig (cfg) {
     if (!Number.isInteger(cfg.l2.skillLearnCooldownMs) || cfg.l2.skillLearnCooldownMs < 1000) {
       errors.push('l2.skillLearnCooldownMs 必须是 ≥1000 的整数（毫秒）')
     }
+    if (!Number.isInteger(cfg.l2.experienceCapacity) || cfg.l2.experienceCapacity < 1) {
+      errors.push('l2.experienceCapacity 必须是 ≥1 的整数')
+    }
     if (cfg.l2.thinking !== undefined && !['enabled', 'disabled'].includes(cfg.l2.thinking)) {
       errors.push(`l2.thinking 必须是 enabled 或 disabled，当前: ${cfg.l2.thinking}`)
     }
@@ -421,6 +427,7 @@ export function validateConfig (cfg) {
       'stateInjection', 'dangerInjection', 'thinking', 'effort', 'planEnabled', 'planCooldownMs',
       'roles', // v1.4.0 多角色数组（缺省 = 内置 primary+planner）
       'skillEnabled', 'skillLearnCooldownMs', 'skillInjection', // v1.5.0 技能学习
+      'experienceCapacity', // v1.5.0 经验库容量可配
       '_comment' // JSON 注释惯例（config.example.json 使用；与 mineflayerPlugins/顶层一致）
     ])
     for (const key of Object.keys(cfg.l2)) {

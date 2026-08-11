@@ -162,6 +162,7 @@
     "cloudMaxContextWindow": 65536,
     "maxActionsPerCall": 8,
     "envInjection": true,
+    "stateInjection": true,
     "cloudTimeoutMs": 60000,
     "maxTokens": 1024,
     "thinking": "disabled",
