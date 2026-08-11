@@ -15,7 +15,7 @@ minecraft-bot (Node.js ≥22, ESM)
 │   ├── feature-layer.js      功能层生命周期（每次 spawn 全量重建 tasks/commands/L2 + chat 监听）
 │   ├── chat.js               聊天安全层（256 字符分片发送）
 │   ├── signals.js            SIGINT/SIGTERM 优雅退出；热重载（配置监视/!reload，Linux 另支持 SIGHUP）
-│   ├── primitives.js         动作原语注册表（28 个原语——观察/移动/构建/战斗/交互/物品/流程/任务）
+│   ├── primitives.js         动作原语注册表（36 个原语——观察/移动/构建/战斗/交互/物品/流程/任务）
 │   ├── executor.js           动作执行器（LLM act 数组与任务脚本共用：权限/exclusive/校验/超时/审计）
 │   ├── audit.js              动作审计日志（logs/audit.log JSONL 按天轮转）
 │   ├── state.js              schemaVersion 2 + 迁移器（未来版本拒绝加载）

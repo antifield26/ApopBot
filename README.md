@@ -1,5 +1,7 @@
 # Minecraft Bot（PaperMC 26.1.2 / Windows PC + 树莓派服务端）
 
+[![CI](https://github.com/antifield26/ApopBot/actions/workflows/ci.yml/badge.svg)](https://github.com/antifield26/ApopBot/actions/workflows/ci.yml)
+
 Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC 26.1.2 服务端（协议 775）。基于 [mineflayer](https://github.com/PrismarineJS/mineflayer)（官方 npm 4.37.1 + 本地补丁承载 26.1.2 支持——见依赖 pin 说明），整合了 mindcraft / Voyager / baritone 的分析结论（见 [docs/architecture.md](docs/architecture.md)）。
 
 ## 功能
@@ -8,7 +10,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 - **连接守护**：断线原因分类（LoginGuard 思想）、指数退避重连（5s→300s）、10s 防抖防崩溃循环、spawn 超时兜底；名字冲突/白名单/版本不匹配/消息违规（illegal）算致命，其余退避重连
 - **重连自愈**：每次 spawn 全量重建功能层（任务/命令/LLM 重新绑定新 bot，一次重连后一切照常）
 - **任务系统**：8 种任务全部**脚本化**（动作原语脚本，与 LLM 共用执行层——挖矿、钓鱼、AFK 防踢、种植收割、伐木、战斗巡逻、养殖、螺旋探索）；BaseTask 状态机外壳保留（暂停/恢复/取消/调度/防重叠）；cron 调度（防重叠+时长上限）、热重载（SIGHUP/改配置/`!reload` 同一队列）
-- **L2 直接操作协议**：LLM 通过 **act 动作数组**（≤8 个动作/次）自由组合 28 个动作原语直接操控 Bot（观察/移动/挖掘/放置/采集/战斗/交互/任务）——彻底打破「提示词→固定技能」映射；行动-观察循环 + 失败反思经验跨会话注入；云端上下文预算裁剪
+- **L2 直接操作协议**：LLM 通过 **act 动作数组**（≤8 个动作/次）自由组合 36 个动作原语直接操控 Bot（观察/移动/挖掘/放置/采集/战斗/交互/任务）——彻底打破「提示词→固定技能」映射；行动-观察循环 + 失败反思经验跨会话注入；云端上下文预算裁剪
 - **聊天命令**：`!ping` `!status` `!task`（含 `!task new/remove` 临时任务）`!reload` `!say` `!pos` `!follow` `!find`（地表方块定位）`!agent`（chat/doctor/reset 全员可用，act 需 op），op 白名单 + 速率限制 + 256 字符自动分片（见下方指令列表）
 - **生产设施**：pino 结构化日志（按天轮转）、NSSM Windows 服务（自启+崩溃重启+fatal 停止等人工）、PowerShell 一键部署/一键更新（`scripts/deploy.ps1 -Update`）、兼容性门禁、冒烟测试、webhook 运维通知（企业微信/Server酱）、只读 HTTP 状态端点（/health /metrics，含坐标/等待原因）
 
@@ -106,7 +108,7 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 
 ## 性能要点（低配 PC）
 
-部署目标为 8GB 内存的 Windows PC（LLM 推理在云端——本地无 LLM 进程）：
+部署目标为 8GB 内存的 Windows PC：
 
 - Bot 常驻 ~200-400MB RSS，已设低进程优先级（NSSM `BELOW_NORMAL_PRIORITY_CLASS`），不抢其它程序的 CPU
 - 内存预算：系统 ~2G + Bot ~0.4G + 余量充足——重程序按需关闭
