@@ -77,7 +77,13 @@ const BUILTIN_DEFAULTS = {
     // 自主推进（规划器）：任务自然完成且无配置链时，LLM 评估目标并生成下一个任务
     planEnabled: true,
     // 规划调用独立冷却（与 summarize 60s 分开——带工具的规划调用成本高）
-    planCooldownMs: 120000
+    planCooldownMs: 120000,
+    // 技能学习（v1.5.0）：任务完成后 LLM 把成功实践提炼为 skill 注入后续对话
+    skillEnabled: true,
+    // 技能学习独立冷却（不共享 summarize 60s——完成时刻播报与学习并发不互饿）
+    skillLearnCooldownMs: 300000,
+    // 技能注入：活跃任务类型的过往成功实践（无匹配回退最近 1 条）
+    skillInjection: true
   },
   // 聊天安全层：服务端单条消息上限 256 字符，Bot 分片发送时留冗余
   chat: {
@@ -126,6 +132,9 @@ const ENV_MAP = {
   MCBOT_L2_DANGER_INJECTION: ['l2', 'dangerInjection'],
   MCBOT_L2_PLAN_ENABLED: ['l2', 'planEnabled'],
   MCBOT_L2_PLAN_COOLDOWN_MS: ['l2', 'planCooldownMs'],
+  MCBOT_L2_SKILL_ENABLED: ['l2', 'skillEnabled'],
+  MCBOT_L2_SKILL_LEARN_COOLDOWN_MS: ['l2', 'skillLearnCooldownMs'],
+  MCBOT_L2_SKILL_INJECTION: ['l2', 'skillInjection'],
   MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
   MCBOT_CHAT_COMMAND_COOLDOWN_MS: ['chat', 'commandCooldownMs'],
   MCBOT_HTTP_ENABLED: ['http', 'enabled'],
@@ -138,7 +147,7 @@ const ENV_MAP = {
 // 'true'/'false' 应保持字符串（如 MCBOT_L2_THINKING=false——thinking 的合法值是
 // 'enabled'/'disabled' 字符串，转布尔后校验报"当前: false"误导）
 const BOOLEAN_ENV_KEYS = new Set([
-  'log.pretty', 'l2.enabled', 'l2.envInjection', 'l2.stateInjection', 'l2.dangerInjection', 'l2.planEnabled', 'http.enabled'
+  'log.pretty', 'l2.enabled', 'l2.envInjection', 'l2.stateInjection', 'l2.dangerInjection', 'l2.planEnabled', 'l2.skillEnabled', 'l2.skillInjection', 'http.enabled'
 ])
 
 const CLI_KEYS = {
@@ -366,6 +375,11 @@ export function validateConfig (cfg) {
     if (!Number.isInteger(cfg.l2.planCooldownMs) || cfg.l2.planCooldownMs < 1000) {
       errors.push('l2.planCooldownMs 必须是 ≥1000 的整数（毫秒）')
     }
+    if (typeof cfg.l2.skillEnabled !== 'boolean') errors.push('l2.skillEnabled 必须是布尔值')
+    if (typeof cfg.l2.skillInjection !== 'boolean') errors.push('l2.skillInjection 必须是布尔值')
+    if (!Number.isInteger(cfg.l2.skillLearnCooldownMs) || cfg.l2.skillLearnCooldownMs < 1000) {
+      errors.push('l2.skillLearnCooldownMs 必须是 ≥1000 的整数（毫秒）')
+    }
     if (cfg.l2.thinking !== undefined && !['enabled', 'disabled'].includes(cfg.l2.thinking)) {
       errors.push(`l2.thinking 必须是 enabled 或 disabled，当前: ${cfg.l2.thinking}`)
     }
@@ -406,6 +420,7 @@ export function validateConfig (cfg) {
       'cloudTimeoutMs', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'envInjection',
       'stateInjection', 'dangerInjection', 'thinking', 'effort', 'planEnabled', 'planCooldownMs',
       'roles', // v1.4.0 多角色数组（缺省 = 内置 primary+planner）
+      'skillEnabled', 'skillLearnCooldownMs', 'skillInjection', // v1.5.0 技能学习
       '_comment' // JSON 注释惯例（config.example.json 使用；与 mineflayerPlugins/顶层一致）
     ])
     for (const key of Object.keys(cfg.l2)) {

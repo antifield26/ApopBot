@@ -48,12 +48,12 @@ function makeFakeProvider (script) {
 }
 
 /** 启用 l2 的 ctx + 注册表构造（注入 fake provider/executor）。 */
-function makeRegistry (ctx, script, l2Patch = {}) {
+function makeRegistry (ctx, script, l2Patch = {}, extra = {}) {
   const provider = makeFakeProvider(script)
   const executor = createActionExecutor(ctx, { audit: null })
   const l2 = { enabled: true, provider: 'cloud', model: 'x', cooldownMs: 0, maxSteps: 5, ...l2Patch }
   const cfg = { ...ctx.cfg, l2 }
-  const registry = createL2(cfg, ctx, { provider, executor, sessionStore: null, experience: null })
+  const registry = createL2(cfg, ctx, { provider, executor, sessionStore: null, experience: null, ...extra })
   return { registry, provider, executor }
 }
 
@@ -216,4 +216,54 @@ test('roles: sessionCount 按角色统计；roleStats 形状', async () => {
   assert.equal(stats.length, 2)
   assert.deepEqual(stats.map(s => s.name), ['primary', 'planner'])
   assert.ok(stats.every(s => typeof s.busy === 'boolean' && typeof s.sessions === 'number'))
+})
+
+// ---- 技能学习（v1.5.0：注册表并行触发 + 跨角色共享）----
+
+import { mkdtempSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { createSkillsStore } from '../src/l2/skills.js'
+
+function makeTmp () {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'skills-'))
+  return { dir, file: path.join(dir, 'skills.json') }
+}
+
+test('v1.5.0: 注册表 onTaskCompleted 并行触发学习——规划 + 学习互不阻塞', async () => {
+  const ctx = makeCtx({}, { ops: ['steve'] })
+  const { registry, provider } = makeRegistry(ctx, [
+    { text: '', toolCalls: [{ id: 't1', name: 'start_task', arguments: { type: 'chop', id: 'c1' } }] },
+    { text: '下一步已启动', toolCalls: [] }
+  ])
+  // 学习通道用 spy 验证挂接（fire-and-forget 与共享 provider script 竞争不可测时序）
+  let learned = false
+  registry.planner.learnFromTask = async () => { learned = true; return true }
+  registry.setGoal('steve', '砍树攒木头')
+  registry.planner._resetPlanCooldown()
+  const ok = await registry.onTaskCompleted({ entry: { id: 'm1', type: 'mine' }, task: { state: 'completed', counters: {} } })
+  assert.equal(ok, true, '规划通道正常返回')
+  assert.equal(learned, true, 'onTaskCompleted 并行触发学习')
+  assert.ok(provider.calls.length >= 2, '规划调用正常')
+})
+
+test('v1.5.0: 技能跨角色共享——planner 学的技能在 primary chat 注入可见', async () => {
+  const { dir, file } = makeTmp()
+  try {
+    const skills = createSkillsStore({ file, debounceMs: 100000 })
+    const ctx = makeCtx()
+    ctx.tasks = { getStatus: () => [{ id: 'm1', state: 'running', type: 'mine' }] }
+    const { registry, provider } = makeRegistry(ctx, [
+      { text: '{"name":"高效挖铁","summary":"先观察","steps":["observe_blocks"]}', toolCalls: [] },
+      { text: '主角色回复', toolCalls: [] }
+    ], {}, { skills })
+    // planner 学习（直接 await learnFromTask 委托）
+    const learned = await registry.learnFromTask({ entry: { id: 'm1', type: 'mine' }, task: { state: 'completed', counters: {} } })
+    assert.equal(learned, true)
+    // primary chat 的 system 注入该技能（同一 store 实例）
+    await registry.chat('steve', '你好')
+    assert.ok(provider.calls.at(-1).system.includes('\n技能:\n- [mine] 高效挖铁'), '技能跨角色共享注入')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

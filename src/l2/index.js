@@ -4,12 +4,13 @@ import { createProvider } from './provider.js'
 import { createActionExecutor } from '../core/executor.js'
 import { createSessionStore } from './sessions.js'
 import { createExperienceStore } from './experience.js'
+import { createSkillsStore } from './skills.js'
 
 /**
  * 构建单角色实例（角色级配置覆盖顶层 l2 配置）。
  * @param {Record<string, any>} l2 顶层 l2 配置（含 roles 数组）
  * @param {{ bot, cfg, logger, tasks, conn, plugins }} ctx
- * @param {{ provider: { chat: Function, diagnose?: Function, contextWindow?: Function }, executor: { executeBatch: Function, executeOne: Function, primitives: Map<string, { permission: string, exclusiveClass: string, description?: string, schema?: object }> }, sessionStore: { get(user: string): object|null, set(user: string, value: object): void, reset(user: string): void }|null, experience: { add(entry: object): void, recent(n?: number): Array<object>, match(ops: Array<string>, n?: number): Array<object> }|null }} shared 共享依赖
+ * @param {{ provider: { chat: Function, diagnose?: Function, contextWindow?: Function }, executor: { executeBatch: Function, executeOne: Function, primitives: Map<string, { permission: string, exclusiveClass: string, description?: string, schema?: object }> }, sessionStore: { get(user: string): object|null, set(user: string, value: object): void, reset(user: string): void }|null, experience: { add(entry: object): void, recent(n?: number): Array<object>, match(ops: Array<string>, n?: number): Array<object> }|null, skills: { add(entry: object): void, recent(n?: number): Array<object>, match(taskTypes: Array<string>, n?: number): Array<object> }|null }} shared 共享依赖
  * @param {string} name 角色名
  * @param {string|null} fallbackPrompt 缺省人设（planner 用规划器人设，其余 CORE）
  */
@@ -34,7 +35,7 @@ function buildRole (l2, ctx, shared, name, fallbackPrompt) {
  * 保留 !agent role planner 手动对话通道）+ l2.roles 配置的自定义角色。
  * 返回角色注册表对象：显式委托 primary 全部消费面（ctx.agent 兼容零改动），
  * onTaskCompleted 专门路由 planner 角色（任务完成 → 自主推进）。
- * @param {{ provider?: { chat: Function, diagnose?: Function, contextWindow?: Function }, executor?: { executeBatch: Function, executeOne: Function, primitives: Map<string, { permission: string, exclusiveClass: string, description?: string, schema?: object }> }, sessionStore?: { get(user: string): object|null, set(user: string, value: object): void, reset(user: string): void }|null, experience?: { add(entry: object): void, recent(n?: number): Array<object>, match(ops: Array<string>, n?: number): Array<object> }|null }|null} [deps] 依赖注入（测试用；生产不传——ConnectionManager._deps 同款先例）
+ * @param {{ provider?: { chat: Function, diagnose?: Function, contextWindow?: Function }, executor?: { executeBatch: Function, executeOne: Function, primitives: Map<string, { permission: string, exclusiveClass: string, description?: string, schema?: object }> }, sessionStore?: { get(user: string): object|null, set(user: string, value: object): void, reset(user: string): void }|null, experience?: { add(entry: object): void, recent(n?: number): Array<object>, match(ops: Array<string>, n?: number): Array<object> }|null, skills?: { add(entry: object): void, recent(n?: number): Array<object>, match(taskTypes: Array<string>, n?: number): Array<object> }|null }|null} [deps] 依赖注入（测试用；生产不传——ConnectionManager._deps 同款先例）
  */
 export function createL2 (cfg, ctx, deps = null) {
   if (!cfg.l2?.enabled) return null
@@ -55,7 +56,14 @@ export function createL2 (cfg, ctx, deps = null) {
   } catch (err) {
     logger.warn({ err: err.message }, '经验库初始化失败，降级为不反思')
   }
-  const shared = { provider, executor, sessionStore, experience }
+  // 技能库（成功任务实践沉淀——LLM 自主学习；失败降级为不学习/不注入）
+  let skills = null
+  try {
+    skills = deps?.skills ?? createSkillsStore({ logger })
+  } catch (err) {
+    logger.warn({ err: err.message }, '技能库初始化失败，降级为不学习')
+  }
+  const shared = { provider, executor, sessionStore, experience, skills }
   // 角色集合：恒有 primary + planner，用户自定义角色追加（enabled:false 跳过实例化）
   const names = ['primary', 'planner']
   for (const r of cfg.l2?.roles ?? []) {
@@ -101,7 +109,15 @@ export function createL2 (cfg, ctx, deps = null) {
     usage: primary.usage,
     cooldowns: primary.cooldowns,
     pendingEvents: primary.pendingEvents,
-    // ---- 任务通道专门路由 planner（任务完成 → 自主推进）----
-    onTaskCompleted: (rec) => (roles.get('planner')?.onTaskCompleted(rec) ?? Promise.resolve(false))
+    // ---- 任务通道：planner 自主推进 + 技能学习并行（独立冷却互不阻塞）----
+    onTaskCompleted: (rec) => {
+      const p = (roles.get('planner')?.onTaskCompleted(rec) ?? Promise.resolve(false))
+      // 技能学习 fire-and-forget（v1.5.0 自主学习循环）——失败静默，不阻塞规划通道
+      const learner = roles.get('planner') ?? primary
+      if (learner?.learnFromTask) void learner.learnFromTask(rec)
+      return p
+    },
+    /** 技能学习（!agent 无入口；测试直接 await 用）。 */
+    learnFromTask: (rec) => (roles.get('planner') ?? primary)?.learnFromTask(rec) ?? Promise.resolve(false)
   }
 }

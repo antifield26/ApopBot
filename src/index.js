@@ -218,8 +218,8 @@ const statusServer = createStatusServer(() => ctx.cfg, logger, () => ({
     inputTokens: ctx.agent.usage.inputTokens,
     outputTokens: ctx.agent.usage.outputTokens
   } : null,
-  // 记忆文件字节数（data/ 三件套——观测持久化面健康/膨胀）
-  memoryBytes: ['state.json', 'sessions.json', 'experience.json'].map(f => {
+  // 记忆文件字节数（data/ 四件套——观测持久化面健康/膨胀）
+  memoryBytes: ['state.json', 'sessions.json', 'experience.json', 'skills.json'].map(f => {
     const p = path.join(ROOT, 'data', f)
     try { return { file: f, bytes: fs.statSync(p).size } } catch { return { file: f, bytes: 0 } }
   }),
