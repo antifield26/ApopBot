@@ -3,6 +3,22 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 **版本单一来源 = package.json**（`node scripts/release.mjs [patch|minor|major]` bump，check:compat 交叉校验 package.json ↔ lockfile）。
 
+## [1.5.0] - 2026-08-12
+
+LLM 自主学习循环（skill 库）+ 评估-修复（独立提交——自主学习 / 配置修复）：
+
+- **自主学习档**：
+  - **skills.js（新）**：结构化技能库（data/skills.json v1，50 条 FIFO）——`{id, name, taskType, summary, steps[], pitfalls[], usage, ts, sourceTask}`；仿 experience.js 模板（原子写/防抖/exit flush/形状防御）；同 taskType+name 覆盖刷新 usage++（重复实践强化而非堆积）
+  - **learnFromTask（学习循环核心）**：任务自然完成 → LLM 把成功实践提炼为 skill（SKILL_SUMMARIZER_PROMPT 严格 JSON 输出，剥 markdown 围栏 + 形状校验三重防御，失败静默不重试）；独立 5 分钟冷却（不共享 summarize 60s——完成时刻播报与学习互不饿死）；taskType 以 rec.entry.type 强制覆盖（LLM 乱起类型名不污染检索键）；failed/stopped 双保险；fire-and-forget 绝不阻塞任务通知
+  - **触发**：注册表 onTaskCompleted 并行（planner 自主推进 + 学习），零 manager 改动；技能库各角色共享
+  - **skillLine 注入**：chat system 组装链"经验教训:"段后加"技能:"段——按活跃任务类型检索 ≤2 条（无匹配回退最近 1 条）≤300 字符；CORE_SYSTEM_PROMPT 第 11 条低权威声明（"参考提示不是规则——世界状态以观察为准"）；与经验教训互补（检索键 taskType vs op）
+  - **配置**：`l2.skillEnabled` / `l2.skillLearnCooldownMs`（300000）/ `l2.skillInjection` 三键 × 5 处契约（含 BOOLEAN_ENV_KEYS——漏则 env false 变字符串）；/metrics memoryBytes 四件套
+  - 测试 +16（567 全绿）：skills 存储 6 项 + 学习循环 6 项 + 注册表并行触发/跨角色共享 2 项
+- **评估-修复档**（主动评估发现）：
+  - **F1 经验库 capacity 硬编码 100** → `l2.experienceCapacity` 可配（契约 6 处含 parseEnv 数字名单——无 ms 后缀键需显式加入，这是与 F1 同类易漏点）
+  - **F3 example.json 缺 stateInjection**（v1.2.0 存量漂移——契约核对脚本抓到）
+  - F2/F4 判定：flaky 3 连跑全绿；experience 无 _reset 钩子非问题（tmp 隔离已够）
+
 ## [1.4.0] - 2026-08-11
 
 ChatGPT 评估剩余两项（语义聚合 P2 + 多Agent P3，独立提交——语义聚合完整闭环 / 单 bot 多角色）：
