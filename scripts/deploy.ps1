@@ -149,6 +149,23 @@ if (-not (Test-Path 'config\config.json')) {
 }
 New-Item -ItemType Directory -Force -Path 'logs' | Out-Null
 
+# ---- 数据备份（记忆文件无 git 版本控制：sessions/experience/state）----
+# 每次部署前快照 data/ → data-backup/<时间戳>/，保留最近 7 份（删除更早）。
+# data 文件均为 tmp+rename 原子写，复制不会拿到半写文件；服务可能仍在运行，
+# 快照一致性对灾难恢复足够（备份是附加层，失败不阻断部署）。
+if (Test-Path 'data') {
+  $backupDir = Join-Path $root "data-backup\$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+  New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+  Copy-Item -Path 'data\*' -Destination $backupDir -Recurse -Force
+  Write-Host "已备份 data/ → $backupDir"
+  Get-ChildItem (Join-Path $root 'data-backup') -Directory |
+    Sort-Object Name -Descending |
+    Select-Object -Skip 7 |
+    Remove-Item -Recurse -Force
+} else {
+  Write-Host '无 data/ 目录（首次部署？），跳过备份'
+}
+
 # ---- 依赖安装（lock 哈希门控）----
 Write-Host '=== [3/5] 依赖安装 ==='
 $hashInput = @('package-lock.json', 'package.json', '.npmrc') | Where-Object { Test-Path $_ }

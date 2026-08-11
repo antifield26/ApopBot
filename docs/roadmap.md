@@ -24,7 +24,7 @@
 
 **修复（C1/C2/C3）**：follow 前方岩浆防御（停 forward 切寻路）；durationMinutes 条目级数值校验；observe_blocks 三选一互斥；parser 未闭合引号文案如实化；SIGHUP 与 shutdown 交错守卫；notify fetch body 消费；auditCommand 耗时记录；reconnect 协议兜底关键词精确化；entities null 距离过滤；start_task init 完成轮询（异步 init 500ms）；connection 手动断开期迟到 error/kicked 守卫；移动卡住诊断日志（周围 3×3 方块/手持/落地态——issue #1 现场数据）；LLM 文案进 webhook（死亡/任务终态）
 
-**验证**：全量测试 467 → **470 项全绿**；check:compat 通过。B1 仓库/B4 新作物/B5 睡觉等真实服务器交互项待部署机验收。
+**验证**：全量测试 467 → **470 项全绿**；check:compat 通过。B1 仓库/B4 新作物/B5 睡觉等真实服务器交互项待部署机验收（**验收跟踪统一在 [docs/acceptance.md](acceptance.md)**——release 前核对无未验收功能项；issue #1 的现场数据采集同样经 acceptance.md 指引）。
 
 ## 第十一轮已完成（2026-08-11，4 Explore 审查 + 全档实施）
 

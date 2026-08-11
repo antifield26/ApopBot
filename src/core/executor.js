@@ -26,12 +26,16 @@ export function createActionExecutor (ctx, deps = {}) {
   const maxActionsPerCall = ctx.cfg?.l2?.maxActionsPerCall ?? 8
   // follow_player 的"跟随我"指代消解（executor 注入 user——经 ctx._caller 交给 handler）
   let execUser = null
+  // per-op 调用计数（/metrics 观测——LLM/脚本/命令三源合计；audit 有全量日志可作源）
+  const actionCounts = new Map()
+  const actionStats = () => Object.fromEntries(actionCounts)
 
   /**
    * 单动作执行管线（每动作独立 try/catch，永不外抛）。
    * @returns {Promise<{op, args, ok, result, durationMs}>}
    */
   async function runAction (op, args, { user, source, taskId, signal, bypassExclusive }) {
+    actionCounts.set(op, (actionCounts.get(op) ?? 0) + 1)
     const t0 = Date.now()
     const entry = { op, args: args ?? {}, ok: false, result: null, durationMs: 0 }
     const finish = async () => {
@@ -154,7 +158,7 @@ export function createActionExecutor (ctx, deps = {}) {
     return r.results[0]
   }
 
-  return { executeBatch, executeOne, primitives, setExecUser: (u) => { execUser = u }, audit }
+  return { executeBatch, executeOne, primitives, setExecUser: (u) => { execUser = u }, audit, actionStats }
 }
 
 /** 极简 JSONSchema 校验（type + required + min/max）。 */

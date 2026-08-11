@@ -74,6 +74,33 @@ test('/metrics：200 且含 tasks/l2 形状', async (t) => {
   assert.ok(Array.isArray(r.body.tasks))
 })
 
+test('/metrics：含 memory/actions/notify（持久化面健康与动作计数观测）', async (t) => {
+  const server = makeServer(makeState({
+    memoryBytes: [
+      { file: 'state.json', bytes: 133 },
+      { file: 'sessions.json', bytes: 4221 }
+    ],
+    actionCounts: { observe_status: 3, dig: 1 },
+    notifyStats: { sent: 5, failed: 0 }
+  }))
+  t.after(() => server.stop())
+  const port = await waitForPort(server)
+  const r = await fetchJson(port, '/metrics')
+  assert.equal(r.status, 200)
+  assert.equal(r.body.memory['state.json'], 133)
+  assert.equal(r.body.actions.observe_status, 3)
+  assert.equal(r.body.actions.dig, 1)
+  assert.deepEqual(r.body.notify, { sent: 5, failed: 0 })
+  // 缺省（旧 getState 快照）→ null 而非报错
+  const server2 = makeServer()
+  t.after(() => server2.stop())
+  const port2 = await waitForPort(server2)
+  const r3 = await fetchJson(port2, '/metrics')
+  assert.equal(r3.body.memory, null)
+  assert.equal(r3.body.actions, null)
+  assert.equal(r3.body.notify, null)
+})
+
 test('U12: /metrics 含 bot 坐标/血量/饱食度与等待原因（运维判断"卡在哪"）', async (t) => {
   const state = makeState({
     bot: {

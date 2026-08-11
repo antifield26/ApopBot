@@ -117,6 +117,12 @@ function metricsPayload (s) {
       anchors: disc.anchors ?? 0,
       resources: disc.resources ?? 0,
       covered: disc.covered ?? '无'
-    } : null
+    } : null,
+    // 记忆文件字节数（data/ 三件套——持久化面健康/膨胀）
+    memory: Array.isArray(s.memoryBytes) ? Object.fromEntries(s.memoryBytes.map(m => [m.file, m.bytes])) : null,
+    // 动作原语调用计数（LLM/脚本/命令三源合计）
+    actions: s.actionCounts ?? null,
+    // webhook 推送计数（发送成功/失败）
+    notify: s.notifyStats ?? null
   }
 }

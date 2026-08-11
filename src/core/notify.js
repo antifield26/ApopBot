@@ -12,16 +12,19 @@
 /**
  * @param {Record<string, any>} cfg 顶层配置（读 cfg.notify.webhook）
  * @param {import('pino').Logger} logger
- * @returns {{ enabled: boolean, send: (event: string, title: string, body?: string) => Promise<void> }}
+ * @returns {{ enabled: boolean, send: (event: string, title: string, body?: string) => Promise<void>, stats: () => { sent: number, failed: number } }}
  */
 export function createNotifier (cfg, logger) {
   const url = cfg?.notify?.webhook
   const log = logger?.child?.({ module: 'notify' }) ?? logger
   if (!url || typeof url !== 'string') {
-    return { enabled: false, send: async () => {} }
+    return { enabled: false, send: async () => {}, stats: () => ({ sent: 0, failed: 0 }) }
   }
+  let sent = 0
+  let failed = 0
   return {
     enabled: true,
+    stats: () => ({ sent, failed }),
     async send (event, title, body = '') {
       const isWecom = url.includes('qyapi.weixin.qq.com')
       const text = `[${event}] ${title}${body ? `\n${body}` : ''}`
@@ -37,8 +40,10 @@ export function createNotifier (cfg, logger) {
         const res = await fetch(url, init)
         // 消费响应体：不读 body 时 undici 连接池中该连接无法干净复用
         await res.text().catch(() => {})
-        if (!res.ok) log.warn({ event, status: res.status }, 'webhook 推送失败（HTTP 非 2xx）')
+        if (!res.ok) { failed++; log.warn({ event, status: res.status }, 'webhook 推送失败（HTTP 非 2xx）') }
+        else sent++
       } catch (err) {
+        failed++
         log.warn({ event, err: err.message }, 'webhook 推送失败（静默，不影响主流程）')
       }
     }

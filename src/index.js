@@ -215,7 +215,15 @@ const statusServer = createStatusServer(() => ctx.cfg, logger, () => ({
   lastLlmUsage: ctx.agent?.usage ? {
     inputTokens: ctx.agent.usage.inputTokens,
     outputTokens: ctx.agent.usage.outputTokens
-  } : null
+  } : null,
+  // 记忆文件字节数（data/ 三件套——观测持久化面健康/膨胀）
+  memoryBytes: ['state.json', 'sessions.json', 'experience.json'].map(f => {
+    const p = path.join(ROOT, 'data', f)
+    try { return { file: f, bytes: fs.statSync(p).size } } catch { return { file: f, bytes: 0 } }
+  }),
+  // 动作原语调用计数（LLM/脚本/命令三源合计——executor 实例经 agent 可达）
+  actionCounts: ctx.agent?.executor?.actionStats?.() ?? null,
+  notifyStats: ctx.notifier?.stats?.() ?? null
 }))
 statusServer.start()
 
