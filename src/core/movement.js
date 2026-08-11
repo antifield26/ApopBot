@@ -19,6 +19,7 @@
 //   error        其他异常（位置不可用等）
 
 import pathfinderPkg from 'mineflayer-pathfinder' // CJS 包：default 导入后解构（ESM named 互操作不可靠）
+import { Vec3 } from 'vec3'
 const { goals } = pathfinderPkg
 
 // approachEntity：目标位移超过此距离视为"目标跑了"→ interrupted 让调用方重扫
@@ -166,6 +167,26 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
     let stuckRetries = 0
     while (result.stuck && stuckRetries < STUCK_RETRY_LIMIT && !isInterrupted?.()) {
       stuckRetries++
+      // 卡住诊断（issue 排查用）：记录周围 3×3 方块/手持/落地态——离线不可复现的
+      // 完全静止（疑似树叶碰撞数据不一致/半嵌过深）依赖现场数据定位
+      try {
+        const p = bot.entity?.position
+        if (p) {
+          const px = Math.floor(p.x); const py = Math.floor(p.y); const pz = Math.floor(p.z)
+          const around = []
+          for (const [dx, dz] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+            const b = bot.blockAt(new Vec3(px + dx, py, pz + dz))
+            around.push(`${dx},${dz}:${b?.name ?? 'null'}`)
+          }
+          log?.warn({
+            retry: stuckRetries,
+            pos: [px, py, pz],
+            around: around.join(' '),
+            held: bot.heldItem?.name ?? null,
+            onGround: bot.entity.onGround
+          }, '移动卡住诊断（周围方块/手持/落地态）')
+        }
+      } catch { /* 诊断失败不影响自愈 */ }
       log?.warn({ retry: stuckRetries }, '移动卡住，横移/跳跃试探后重新寻路')
       // 1) 横移 2 格：离开局部贴墙位置（侧向有空地时有效）
       await sidestep(bot, goal, sidestepTimeoutMs)

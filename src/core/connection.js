@@ -150,11 +150,15 @@ export class ConnectionManager {
 
     bot.on('kicked', (reason) => {
       if (seq !== this._connectSeq) return
+      // 手动断开期间（优雅退出）socket 上的迟到 kicked/error 不算重连——
+      // 否则遥测污染 + 误导日志（end 的 _manuallyDisconnecting 守卫同款）
+      if (this._manuallyDisconnecting) return
       this._handleDisconnect(reason, 'kicked')
     })
 
     bot.on('error', (err) => {
       if (seq !== this._connectSeq) return
+      if (this._manuallyDisconnecting) return
       this._handleDisconnect(err, 'error')
     })
 

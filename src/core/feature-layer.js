@@ -181,7 +181,13 @@ export function createFeatureLayerManager (ctx, logger) {
       // LLM 一句话播报（附加层——任何失败回退模板，不得阻塞重生）
       if (ctx.agent?.summarize) {
         ctx.agent.summarize(`Bot 在 Minecraft 服务器死亡（坐标 ${loc}）。用一句话向服务器玩家播报（如可能的死因），简洁。`)
-          .then((s) => { if (s) sendChat(bot, `§c[bot] ${s}`).catch(() => {}) })
+          .then((s) => {
+            if (s) {
+              sendChat(bot, `§c[bot] ${s}`).catch(() => {})
+              // LLM 文案进 webhook（无人值守时唯一感知通道；固定模板推送已有）
+              notifier().send('death', `Bot 死亡（${loc}）`, `LLM 死因播报: ${s}`)
+            }
+          })
           .catch(() => {})
       }
       try { bot.respawn() } catch { /* 重生通道未就绪 */ }
@@ -213,6 +219,32 @@ export function createFeatureLayerManager (ctx, logger) {
     bot.on('blockUpdate', (oldBlock) => {
       const p = oldBlock?.position
       if (p) discovery.removeResourceAt(p.x, p.y, p.z)
+    })
+
+    // 世界事件被动感知：事件写入 agent.pendingEvents，玩家下次对话时 LLM 注入
+    // 感知（不做主动唤醒——busy 门/玩家冷却/权限语义约束）。监听挂 bot 实例随
+    // 重建释放；高频事件由 notifyEvent 按类型去重合并只保最新状态
+    bot.on('health', () => {
+      const hp = bot.health
+      const food = bot.food
+      if (typeof hp === 'number' && hp > 0 && hp < 10) {
+        ctx.agent?.notifyEvent?.('low', `血量低 ${Math.round(hp)}`)
+      } else if (typeof food === 'number' && food > 0 && food < 6) {
+        ctx.agent?.notifyEvent?.('low', `饥饿 ${Math.round(food)}`)
+      }
+    })
+    bot.on('entityHurt', (entity, source) => {
+      if (entity !== bot.entity) return
+      const who = source?.username ?? source?.name ?? source?.type ?? 'unknown'
+      ctx.agent?.notifyEvent?.('attacked', `被 ${who} 攻击`)
+    })
+    // 重要资源收集（钻石/绿宝石/远古残骸/铁/金/红石/青金石——高频杂物不记）
+    bot.on('playerCollect', (collector, collected) => {
+      if (collector !== bot.entity) return
+      const name = collected?.name ?? collected?.type ?? ''
+      if (/diamond|emerald|ancient_debris|iron|gold|redstone|lapis/.test(name)) {
+        ctx.agent?.notifyEvent?.('collect', `获得 ${name}`)
+      }
     })
 
     bot.on('respawn', async () => {

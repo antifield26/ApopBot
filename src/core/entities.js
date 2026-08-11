@@ -57,6 +57,9 @@ export function nearbyEntities (bot, { name, kind, maxDistance = 64, limit = 10 
         // 原始位置（observe_entities 的结构化坐标用——pos 是格式化字符串）
         position: e.position
       }))
+      // 位置未就绪（login 中/实体瞬态）的 dist 为 null——保留会参与 NaN 比较
+      // 使排序顺序不定
+      .filter(x => x.dist !== null)
       .sort((a, b) => a.dist - b.dist)
       .slice(0, limit)
   } catch {

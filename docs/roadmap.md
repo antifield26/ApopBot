@@ -1,6 +1,30 @@
-# 项目路线图（第二轮..第十一轮）
+# 项目路线图（第二轮..第十三轮）
 
-第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施；L2 进化（环境感知 + 自由探索）2026-08-07 实施；第五轮（L2 深度控制与易用性，10 项全部 CONFIRMED）2026-08-07 实施；第六轮（工程治理六领域，12 commit）2026-08-09 实施；**第七轮（v1.0.0 革命性重构，12 commit）2026-08-09 实施**；**第八轮（全面审查，约 24 项确认修复）2026-08-09 实施**；**第九轮（爬升卡住彻底根治 + 时间映射修复，cf3834c..511a170）2026-08-10 实施**；**第十轮（地形记忆失效三管齐下，67857a5）2026-08-10 实施**；**第十一轮（全面评估 + 5 HIGH 修复 + 20 MEDIUM 完善 + 工程补强 + 重构 + 4 扩展主题）2026-08-11 实施**。本文档记录已完成项、缓做项与明确不做项。
+第二轮评估（3 Explore + 1 Plan + 逐项复核）的三档路线图 2026-08-06 全部实施；第三轮（26 条发现逐条 verdict）2026-08-07 全部实施；第三轮善后（combat 断线根因）与第四轮（9 项发现全部 CONFIRMED + 1 个代际竞态）2026-08-07 实施；L2 进化（环境感知 + 自由探索）2026-08-07 实施；第五轮（L2 深度控制与易用性，10 项全部 CONFIRMED）2026-08-07 实施；第六轮（工程治理六领域，12 commit）2026-08-09 实施；**第七轮（v1.0.0 革命性重构，12 commit）2026-08-09 实施**；**第八轮（全面审查，约 24 项确认修复）2026-08-09 实施**；**第九轮（爬升卡住彻底根治 + 时间映射修复，cf3834c..511a170）2026-08-10 实施**；**第十轮（地形记忆失效三管齐下，67857a5）2026-08-10 实施**；**第十一轮（全面评估 + 5 HIGH 修复 + 20 MEDIUM 完善 + 工程补强 + 重构 + 4 扩展主题）2026-08-11 实施**；**第十二轮（注释与文档规范化）2026-08-11 实施**；**第十三轮（Bot 功能扩展 + LLM 能力深化，全档）2026-08-11 实施**。本文档记录已完成项、缓做项与明确不做项。
+
+## 第十三轮已完成（2026-08-11，2 Explore + 1 Plan 设计 + 用户决策全选）
+
+用户需求：除修复问题外，重点设计 Bot 功能扩展与 LLM 能力深化。探索确认 L2 层 15 个能力空白点（无长期目标/无事件感知/无检索式经验/无任务状态视角/无世界状态缓存/无对话摘要等）与 Bot 层 14 个空白点（无仓库/无工具耐久/无家概念/farm 作物窄/combat 无护甲/无睡觉等）。
+
+**LLM 深化（A1-A7）**：
+- **A1 目标记忆**：sessions.json v2——会话加 `goal {text, plan[], setBy, updatedAt}` 跨会话持久化；`!agent goal`（查看全员/set/clear op 门）；`set_goal` 原语（LLM 自主更新，同 text 去重）；system 注入"当前目标"行
+- **A3 对话滚动摘要**：历史超限被丢轮 → fire-and-forget summarize 压缩写回 `summary`（复用 60s 冷却天然节流）；注入 `[历史摘要（非精确）]` 行
+- **A2 检索式经验**：注入改按上一轮失败 op 匹配（≤3 条 ≤200 字符，`[×N]` 计数前缀——Reflexion 时序：失败发生在轮内、注入发生在轮前）；`add` 去重合并（同 op+lesson 合并计数）；experience.json v2
+- **A5 世界状态缓存注入**：`degenerateLine`——低血/饥饿/背包满/工具将坏每工具轮自动注入（正常零成本）；`l2.stateInjection` 开关
+- **A6 任务状态感知**：`observe_tasks` 原语（readonly 观察族——注册即进工具集，零改动 buildTools）
+- **A4 世界事件被动感知**：health/entityHurt/playerCollect/背包事件 → `notifyEvent` 挂起（≤3 条去重合并）→ 下次对话注入；不做主动唤醒（busy 门/权限语义约束）
+- **A7 命名地点**：discovery places（32 上限带维度）+ `!home set/list/remove` + `set_place/remove_place` 原语 + query_map place 分支
+
+**Bot 扩展（B1/B2/B4/B5+B6）**：
+- **B1 仓库管理**：`storage.chests` 配置（校验+example）；`store_items`/`fetch_items` 原语；autoDeposit 优先配置仓库
+- **B2 工具耐久**：`ensureMiningTool`——collect 前自动换该类最优工具（材料等级排序 + 将坏替换，只升不降）；combat init 护甲自动装备（armorManager）
+- **B4 farm 作物扩展**：+5 作物（甘蔗高度型/南瓜西瓜果实型/甜浆果可可 age 型）；`observe_crops` 三型成熟判定；`plant_crops` 四种植模式（farmland/waterside/soil；可可只收不种）；crops.js 单一来源（CROP_MATURITY/CROP_BY_BLOCK/SEED_BY_CROP/CROP_PLANT_MODE）
+- **B5 睡觉**：`sleep` 原语（昼夜判定内部化 + 找床 + wake 事件等待 + listener 配对）；farm/combat `sleepAtNight` 选项
+- **B6 动物产物**：`harvest_animals`（sheep 剪羊毛 + chicken 捡掉落物）
+
+**修复（C1/C2/C3）**：follow 前方岩浆防御（停 forward 切寻路）；durationMinutes 条目级数值校验；observe_blocks 三选一互斥；parser 未闭合引号文案如实化；SIGHUP 与 shutdown 交错守卫；notify fetch body 消费；auditCommand 耗时记录；reconnect 协议兜底关键词精确化；entities null 距离过滤；start_task init 完成轮询（异步 init 500ms）；connection 手动断开期迟到 error/kicked 守卫；移动卡住诊断日志（周围 3×3 方块/手持/落地态——issue #1 现场数据）；LLM 文案进 webhook（死亡/任务终态）
+
+**验证**：全量测试 467 → **470 项全绿**；check:compat 通过。B1 仓库/B4 新作物/B5 睡觉等真实服务器交互项待部署机验收。
 
 ## 第十一轮已完成（2026-08-11，4 Explore 审查 + 全档实施）
 

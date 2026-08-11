@@ -69,7 +69,9 @@ const BUILTIN_DEFAULTS = {
     // 单次 act 动作数组上限（LLM 每轮动作预算 = maxSteps × maxActionsPerCall）
     maxActionsPerCall: 8,
     // 环境感知自动注入：每次对话 system 尾部追加 ≤150 字符环境行
-    envInjection: true
+    envInjection: true,
+    // 退化状态自动注入：低血/饥饿/背包满/工具将坏（正常时零成本空串）
+    stateInjection: true
   },
   // 聊天安全层：服务端单条消息上限 256 字符，Bot 分片发送时留冗余
   chat: {
@@ -81,7 +83,10 @@ const BUILTIN_DEFAULTS = {
     enabled: false,
     port: 8123
   },
-  scheduleTimezone: 'Asia/Shanghai'
+  scheduleTimezone: 'Asia/Shanghai',
+  // 仓库（storage）：背包满自动存入/卸货的固定箱子坐标（collect_blocks 的
+  // autoDeposit 优先使用；store_items/fetch_items 原语默认目标）
+  storage: { chests: [] }
 }
 
 // 环境变量映射：MCBOT_<KEY>，下划线命名 → 嵌套路径
@@ -111,6 +116,7 @@ const ENV_MAP = {
   MCBOT_L2_THINKING: ['l2', 'thinking'],
   MCBOT_L2_EFFORT: ['l2', 'effort'],
   MCBOT_L2_ENV_INJECTION: ['l2', 'envInjection'],
+  MCBOT_L2_STATE_INJECTION: ['l2', 'stateInjection'],
   MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
   MCBOT_CHAT_COMMAND_COOLDOWN_MS: ['chat', 'commandCooldownMs'],
   MCBOT_HTTP_ENABLED: ['http', 'enabled'],
@@ -123,7 +129,7 @@ const ENV_MAP = {
 // 'true'/'false' 应保持字符串（如 MCBOT_L2_THINKING=false——thinking 的合法值是
 // 'enabled'/'disabled' 字符串，转布尔后校验报"当前: false"误导）
 const BOOLEAN_ENV_KEYS = new Set([
-  'log.pretty', 'l2.enabled', 'l2.envInjection', 'http.enabled'
+  'log.pretty', 'l2.enabled', 'l2.envInjection', 'l2.stateInjection', 'http.enabled'
 ])
 
 const CLI_KEYS = {
@@ -357,7 +363,7 @@ export function validateConfig (cfg) {
     const L2_KNOWN_KEYS = new Set([
       'enabled', 'model', 'cloudBaseUrl', 'cloudApiKeyEnv', 'maxSteps', 'cooldownMs',
       'cloudTimeoutMs', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'envInjection',
-      'thinking', 'effort',
+      'stateInjection', 'thinking', 'effort',
       '_comment' // JSON 注释惯例（config.example.json 使用；与 mineflayerPlugins/顶层一致）
     ])
     for (const key of Object.keys(cfg.l2)) {
@@ -381,6 +387,16 @@ export function validateConfig (cfg) {
   if (cfg.notify && typeof cfg.notify.webhook !== 'string') {
     errors.push('notify.webhook 必须是字符串（webhook URL 或空字符串关闭）')
   }
+  // 仓库坐标校验（storage.chests：{x,y,z} 整数三元组数组）
+  if (cfg.storage && !Array.isArray(cfg.storage.chests)) {
+    errors.push('storage.chests 必须是数组')
+  } else {
+    for (const [i, ch] of (cfg.storage?.chests ?? []).entries()) {
+      for (const k of ['x', 'y', 'z']) {
+        if (!Number.isInteger(ch?.[k])) errors.push(`storage.chests[${i}].${k} 必须是整数`)
+      }
+    }
+  }
   if (!Array.isArray(cfg.tasks)) errors.push('tasks 必须是数组')
 
   // 任务条目校验：id 非空且唯一、类型已知、scheduled 完成语义、options 形状
@@ -397,6 +413,11 @@ export function validateConfig (cfg) {
     }
     if (t.schedule && !NATURAL_COMPLETION_TYPES.includes(t.type) && !t.options?.durationMinutes) {
       errors.push(`${label} 类型 ${t.type} 无自然完成，scheduled 时必须配 options.durationMinutes`)
+    }
+    // 条目级 durationMinutes 数值校验——负数/零此前只查存在性，触发时立即强制停止
+    if (t.durationMinutes !== undefined &&
+        (typeof t.durationMinutes !== 'number' || !Number.isFinite(t.durationMinutes) || t.durationMinutes <= 0)) {
+      errors.push(`${label} durationMinutes 必须是正数（当前: ${t.durationMinutes}）`)
     }
     // 非法 cron 表达式启动即报错——避免任务注册但永不触发、只留一条 error 日志
     //（与 scheduleTimezone 同款"静默永不调度"失败模式）
@@ -449,6 +470,7 @@ export function validateConfig (cfg) {
     'mcVersion', 'host', 'port', 'username', 'auth', 'spawnTimeoutMs',
     'reconnect', 'ops', 'log', 'tasks', 'mineflayerPlugins', 'l2', 'chat', 'http', 'scheduleTimezone',
     'notify', // webhook 运维通知
+    'storage', // 仓库坐标（autoDeposit/store_items 默认目标）
     '_comment' // JSON 注释惯例（config.example.json 顶层使用；复制为 config.json 必须放行）
   ])
   for (const k of Object.keys(cfg)) {

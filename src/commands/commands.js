@@ -10,9 +10,9 @@ import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
 let findBusy = false
 
 /** 命令层动作审计（!find/!follow 走 executor 的审计通道——L2 关闭时静默）。 */
-function auditCommand (c, op, args, ok, result) {
+function auditCommand (c, op, args, ok, result, durationMs = 0) {
   try {
-    c.agent?.executor?.audit?.append({ op, args, ok, result, durationMs: 0, source: 'command' })
+    c.agent?.executor?.audit?.append({ op, args, ok, result, durationMs, source: 'command' })
   } catch { /* 审计失败静默 */ }
 }
 
@@ -250,6 +250,45 @@ export function registerBuiltinCommands (registry, ctx) {
   })
 
   registry.register({
+    name: 'home',
+    usage: '!home set <name> | !home remove <name> | !home list',
+    description: '命名地点（家/矿场/基地；set/remove 需 op，list 全员）——LLM 经 query_map place 查询',
+    permission: 'all', // set/remove 在 handler 内 op 门（与 !agent 同款混合权限）
+    handler: async (c, args, sender) => {
+      const { setPlace, removePlace, listPlaces } = await import('../core/discovery.js')
+      const [action, name] = args
+      if (action === 'set') {
+        if (!isOp(sender, c.cfg)) {
+          await sendChat(c.bot, '§c权限不足：!home set 需要 op', c.cfg.chat?.maxLength)
+          return
+        }
+        const p = c.bot?.entity?.position
+        if (!name || !p) {
+          await sendChat(c.bot, '§c用法: !home set <name>（当前位置命名）', c.cfg.chat?.maxLength)
+          return
+        }
+        const dim = c.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
+        setPlace(name, p, dim)
+        await sendChat(c.bot, `§a地点 ${name} 已记录（${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}${dim ? ` ${dim}` : ''}）`, c.cfg.chat?.maxLength)
+        return
+      }
+      if (action === 'remove') {
+        if (!isOp(sender, c.cfg)) {
+          await sendChat(c.bot, '§c权限不足：!home remove 需要 op', c.cfg.chat?.maxLength)
+          return
+        }
+        if (!name) { await sendChat(c.bot, '§c用法: !home remove <name>', c.cfg.chat?.maxLength); return }
+        await sendChat(c.bot, removePlace(name) ? `§a地点 ${name} 已删除` : `§c地点 ${name} 不存在`, c.cfg.chat?.maxLength)
+        return
+      }
+      const places = listPlaces()
+      await sendChat(c.bot, places.length
+        ? `§a命名地点: ${places.map(p => `${p.name}(${p.x},${p.y},${p.z}${p.dimension ? ` ${p.dimension}` : ''})`).join('; ')}`
+        : '§e暂无命名地点（!home set <name> 登记）', c.cfg.chat?.maxLength)
+    }
+  })
+
+  registry.register({
     name: 'find',
     usage: '!find <方块名> [maxDistance]',
     description: '找到指定方块的地表暴露位置（上方 2 格为天空）并走过去（3 格内）',
@@ -307,10 +346,10 @@ export function registerBuiltinCommands (registry, ctx) {
           // 汇报实际到达点：GoalCompositeAny 在最近候选不可达时会到达更远候选，
           // 报"最近候选"坐标与实际位置不符（误导玩家）
           const p = c.bot.entity.position
-          auditCommand(c, 'find_block', { blockName, maxDistance }, true, `已到达 ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`)
+          auditCommand(c, 'find_block', { blockName, maxDistance }, true, `已到达 ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`, Date.now() - t0)
           await sendChat(c.bot, `§a找到 ${blockName}，已到达 ${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}（水平距离 ${dist}m，耗时 ${el}s）`, c.cfg.chat?.maxLength)
         } else {
-          auditCommand(c, 'find_block', { blockName, maxDistance }, false, REASON_TEXT[r.reason] ?? '移动失败')
+          auditCommand(c, 'find_block', { blockName, maxDistance }, false, REASON_TEXT[r.reason] ?? '移动失败', Date.now() - t0)
           await sendChat(c.bot, `§e找到 ${blockName} 但${REASON_TEXT[r.reason] ?? '移动失败'}：最近候选 ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}（水平距离 ${dist}m）`, c.cfg.chat?.maxLength)
         }
       } finally {
@@ -341,6 +380,33 @@ export function registerBuiltinCommands (registry, ctx) {
         // 清空调用者会话记忆（多轮上下文误入歧途时重置）
         c.agent.reset(sender)
         await sendChat(c.bot, '§a已清空会话记忆', c.cfg.chat?.maxLength)
+      } else if (action === 'goal') {
+        // 长期目标记忆（!agent goal 查看全员 / set/clear 需 op——目标会注入 LLM
+        // 提示词并驱动其行为，非 op 玩家不得设置）
+        if (rest[0] === 'set') {
+          if (!isOp(sender, c.cfg)) {
+            await sendChat(c.bot, '§c权限不足：!agent goal set 需要 op', c.cfg.chat?.maxLength)
+            return
+          }
+          const text = rest.slice(1).join(' ').trim()
+          if (!text) { await sendChat(c.bot, '§c用法: !agent goal set <目标文本>', c.cfg.chat?.maxLength); return }
+          c.agent.setGoal(sender, text)
+          await sendChat(c.bot, `§a长期目标已设置: ${text.slice(0, 80)}`, c.cfg.chat?.maxLength)
+          return
+        }
+        if (rest[0] === 'clear') {
+          if (!isOp(sender, c.cfg)) {
+            await sendChat(c.bot, '§c权限不足：!agent goal clear 需要 op', c.cfg.chat?.maxLength)
+            return
+          }
+          c.agent.clearGoal(sender)
+          await sendChat(c.bot, '§a长期目标已清除', c.cfg.chat?.maxLength)
+          return
+        }
+        const g = c.agent.getGoal(sender)
+        await sendChat(c.bot, g
+          ? `§a当前目标: ${g.text}${g.plan?.length ? `（计划: ${g.plan.join('→')}）` : ''}（由 ${g.setBy} 设置）`
+          : '§e暂无长期目标（!agent goal set <文本> 设置）', c.cfg.chat?.maxLength)
       } else if (action === 'doctor') {
         // provider 连通性诊断（只读，全员可用）
         try {

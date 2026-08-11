@@ -27,9 +27,10 @@ test('add→flush 原子落盘（无 .tmp 残留）+ 内容完整', () => {
     assert.ok(existsSync(file))
     assert.ok(!existsSync(file + '.tmp'))
     const disk = JSON.parse(readFileSync(file, 'utf8'))
-    assert.equal(disk.schemaVersion, 1)
+    assert.equal(disk.schemaVersion, 2)
     assert.equal(disk.items[0].lesson, '先观察地形再规划路径')
     assert.equal(disk.items[0].op, 'goto')
+    assert.equal(disk.items[0].count, 1, '新条目 count 初始 1')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -149,7 +150,7 @@ test('反思：确定性错误（权限/参数）不反思', async () => {
   }
 })
 
-test('经验注入：system 含经验教训（最近 8 条）', async () => {
+test('经验注入：system 含检索式经验（无失败 op 时回退最近 2 条）', async () => {
   const { dir, file } = makeTmp()
   try {
     const experience = createExperienceStore({ file, debounceMs: 100000 })
@@ -159,8 +160,26 @@ test('经验注入：system 含经验教训（最近 8 条）', async () => {
     const executor = createActionExecutor(ctx, { audit: null })
     const agent = new AgentInterface(ctx, { provider, executor, experience, config: { enabled: true, cooldownMs: 0, maxSteps: 5 } })
     await agent.chat('op1', 'hi')
-    assert.ok(provider.calls[0].system.includes('经验教训（最近）'), 'system 应含经验注入')
+    assert.ok(provider.calls[0].system.includes('经验教训:'), 'system 应含经验注入')
     assert.ok(provider.calls[0].system.includes('移动失败先观察地形'), provider.calls[0].system)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('经验检索：match 按 op 精确匹配；add 去重合并 count', () => {
+  const { dir, file } = makeTmp()
+  try {
+    const s = createExperienceStore({ file, debounceMs: 100000 })
+    s.add({ op: 'goto', error: 'e1', lesson: '教训A', ts: 1 })
+    s.add({ op: 'dig', error: 'e2', lesson: '教训B', ts: 2 })
+    s.add({ op: 'goto', error: 'e1', lesson: '教训A', ts: 3 }) // 重复 → 合并
+    assert.equal(s.size(), 2, '同 op+lesson 合并不追加')
+    const hit = s.match(['goto'], 3)
+    assert.equal(hit.length, 1)
+    assert.equal(hit[0].lesson, '教训A')
+    assert.equal(hit[0].count, 2, '重复教训计数累计')
+    assert.equal(s.match(['unknown'], 3).length, 0, '无匹配返回空（回退最近）')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

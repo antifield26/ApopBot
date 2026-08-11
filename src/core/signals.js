@@ -48,6 +48,9 @@ export function setupSignals (deps) {
   process.on('SIGBREAK', () => gracefulShutdown('SIGBREAK'))
 
   process.on('SIGHUP', async () => {
+    // 优雅退出进行中忽略（shutdown 与 reload 两条链并发操作同一批任务——
+    // stopAll 与任务 diff 重载交错会让退出挂起/误重启）
+    if (shuttingDown) return
     // 热重载会重建 logger——日志一律走当前实例（ctx.logger），否则 SIGHUP 日志
     // 仍写旧 transport
     const log = deps.ctx?.logger ?? deps.logger

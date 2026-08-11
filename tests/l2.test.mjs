@@ -338,6 +338,7 @@ test('U6: summarize 单次 LLM 调用，不污染会话', async () => {
   const ctx = makeCtx()
   const { agent, provider } = makeAgent(ctx, [{ text: '被僵尸击杀', toolCalls: [] }])
   agent.reset('memx')
+  _resetSummarizeCooldown() // 隔离：前置对话测试可能触发滚动摘要（复用同一冷却）
   const s = await agent.summarize('死亡播报')
   assert.equal(s, '被僵尸击杀')
   assert.equal(provider.calls.length, 1, '应为单次调用')

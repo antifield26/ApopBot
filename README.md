@@ -33,6 +33,8 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 | `!agent act <op> [json]` | op | 直调动作原语（不经 LLM），如 `!agent act observe_status {}`、`!agent act goto {"x":10,"y":64,"z":10}` |
 | `!agent doctor` | all | 云端连通性诊断 + 生效模式/最近延迟（只读） |
 | `!agent reset` | all | 清空调用者会话记忆 |
+| `!agent goal` / `set <text>` / `clear` | all / set,clear 需 op | 长期目标记忆（跨会话注入 LLM 提示词——Bot 持续朝目标推进）；set 文本 ≤200 字符 |
+| `!home set <name>` / `remove <name>` / `list` | all / set,remove 需 op | 命名地点（家/矿场/基地，带维度）；LLM 经 `query_map place:<name>` 查询 |
 
 聊天安全层：回复消息自动 ≤256 字符分片（`chat.maxLength`）；op 命令冷却（`chat.commandCooldownMs`）防刷屏；**发送时统一剥离 `§` 颜色码**（Paper 26.1.2 实测含颜色码的消息会被踢出，见下文兼容性说明；所有出口——含命令反馈/重连广播/任务通知——都走 sendChat 剥离）。
 
@@ -57,6 +59,8 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 - 仅 farm/chop 强制 area（mine 可选、combat/breed 可省略=无区域约束；afk/fish 无区域）；farm/chop/combat/breed/explore 为 exclusive（互斥，避免争抢寻路/采集）；mine 非 exclusive——exclusive 任务运行期间其采集动作软失败自动重试
 - 遥测：`counters`（mined/caught/planted/chopped/kills/breedings…）显示于 `!task list`
 - **维度感知**（v1.1 第 11 轮）：探索记忆按维度存储——下界/末地坐标独立，`query_map` 只返回当前维度的记录（旧主世界数据兼容）；`observe_blocks` 观察到的资源自动记入探索记忆（LLM 探索即积累）；任务长 idle（等待原因持续 10 分钟）经 LLM 一句话播报原因
+- **LLM 能力深化**（第 13 轮）：长期目标记忆（`!agent goal` + `set_goal` 原语——目标+计划跨会话注入）；对话滚动摘要（历史超限 LLM 压缩，"继续"不断片）；检索式经验（按失败动作匹配注入 + 重复教训合并计数）；退化状态自动注入（低血/饥饿/背包满/工具将坏，零工具调用成本）；`observe_tasks` 任务状态感知；世界事件被动感知（被攻击/低血/背包满/稀有收集——下次对话 LLM 知道发生了什么）；命名地点（`!home` + `set_place`——家/矿场语义坐标，`query_map place:` 查询）
+- **Bot 功能扩展**（第 13 轮）：仓库管理（`storage.chests` 配置 + `store_items`/`fetch_items`——背包满自动存配置仓库，替代临时找箱）；工具耐久管理（挖掘自动换最优工具 + 护甲自动装备）；farm 扩展 5 作物（甘蔗/南瓜/西瓜/甜浆果/可可——三种成熟判定四种种植模式）；`sleep` 睡觉（天黑过夜，farm/combat `sleepAtNight` 可选）；`harvest_animals` 剪羊毛/捡掉落物
 
 ## 快速开始（开发机）
 

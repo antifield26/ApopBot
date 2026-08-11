@@ -55,8 +55,10 @@ export function classifyDisconnect (reason, { minecraftVersion } = {}) {
       return { type, isFatal: fatal, detail }
     }
   }
-  // 版本相关错误也可能是数字形式（协议号）
-  if (minecraftVersion && (lower.includes('protocol') || lower.includes('unsupported'))) {
+  // 版本相关错误也可能是数字形式（协议号）——只用明确组合：裸 'protocol'/
+  // 'unsupported'（如插件消息 "unsupported client plugin"）覆盖面太宽
+  if (minecraftVersion && lower.includes('protocol') &&
+      (lower.includes('version') || lower.includes('unsupported') || lower.includes('client'))) {
     return { type: 'version_mismatch', isFatal: true, detail }
   }
   // 未知/空原因：非 fatal（退避重连，交给服务管理器的重启语义做最终兜底）

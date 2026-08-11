@@ -34,6 +34,8 @@ export function createNotifier (cfg, logger) {
           init.body = new URLSearchParams({ title: title.slice(0, 100), desp: text.slice(0, 3000) })
         }
         const res = await fetch(url, init)
+        // 消费响应体：不读 body 时 undici 连接池中该连接无法干净复用
+        await res.text().catch(() => {})
         if (!res.ok) log.warn({ event, status: res.status }, 'webhook 推送失败（HTTP 非 2xx）')
       } catch (err) {
         log.warn({ event, err: err.message }, 'webhook 推送失败（静默，不影响主流程）')

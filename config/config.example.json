@@ -144,6 +144,10 @@
     "_comment": "只读状态端点（/health /metrics，curl 即可）：只绑 127.0.0.1 默认关；暴露到局域网需自行加防火墙/反代"
   },
   "scheduleTimezone": "Asia/Shanghai",
+  "storage": {
+    "chests": [],
+    "_comment": "仓库坐标（autoDeposit/store_items 默认目标）：背包满自动存入/卸货的固定箱子 [{x,y,z}, ...]；留空则附近 32 格搜索"
+  },
   "notify": {
     "webhook": "",
     "_comment": "U10 运维通知：任务终态/断线重连/死亡重生/fatal 停服推送。企业微信机器人 URL（qyapi.weixin.qq.com）或 Server酱（sctapi.ftqq.com）自动识别；空字符串关闭。零依赖，失败静默不影响主流程"

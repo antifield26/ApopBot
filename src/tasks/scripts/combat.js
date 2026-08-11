@@ -45,10 +45,20 @@ export default {
       const sword = task.bot.inventory?.items?.()?.find(it => /sword$/.test(it.name))
       task.options.weaponName = sword?.name ?? null
     }
+    // 护甲自动装备（armorManager 插件——防御式调用：插件未装/装备失败静默，
+    // 有护甲大幅降低近战掉血，任务可连续作战更久）
+    try {
+      await task.bot.armorManager?.equipAll?.()
+    } catch { /* 插件未启用/装备失败——不阻塞任务 */ }
   },
   script: {
     steps: [
       { ctrl: 'loop', max: 'infinite', body: [
+        // 天黑睡觉（sleepAtNight 默认 false——黑夜巡逻危险，睡过夜晚更安全；
+        // 昼夜判定在 sleep 原语内部）
+        { ctrl: 'if', cond: { type: 'config', key: 'sleepAtNight', equals: true }, then: [
+          { op: 'sleep', args: {} }
+        ] },
         // 低血优先处理：进食或等待
         { op: 'observe_status', args: {}, as: 'st' },
         { ctrl: 'if', cond: { type: 'result', ref: 'st', field: 'health', gte: '${minHealth}' }, then: [], else: [

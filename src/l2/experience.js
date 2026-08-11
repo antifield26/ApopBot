@@ -13,7 +13,8 @@ import { createDebouncedFileStore } from '../util/debounced-file-store.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const DEFAULT_FILE = path.join(ROOT, 'data', 'experience.json')
-const EXPERIENCE_SCHEMA_VERSION = 1
+// v2：条目加 count（同 op+lesson 重复教训合并计数——v1 文件无 count 按 1 防御读）
+const EXPERIENCE_SCHEMA_VERSION = 2
 
 /** 加载经验（不存在/损坏 → 空；形状防御）。 */
 export function loadExperience (file = DEFAULT_FILE) {
@@ -27,7 +28,9 @@ export function loadExperience (file = DEFAULT_FILE) {
     throw new Error(`experience.json schemaVersion=${data.schemaVersion} 高于 Bot 支持的 ${EXPERIENCE_SCHEMA_VERSION}——请升级 Bot 后再启动`)
   }
   const items = Array.isArray(data?.items)
-    ? data.items.filter(i => i && typeof i === 'object' && typeof i.lesson === 'string')
+    ? data.items
+        .filter(i => i && typeof i === 'object' && typeof i.lesson === 'string')
+        .map(i => ({ ...i, count: Number.isInteger(i.count) && i.count > 0 ? i.count : 1 }))
     : []
   return { schemaVersion: EXPERIENCE_SCHEMA_VERSION, items }
 }
@@ -54,19 +57,30 @@ export function createExperienceStore ({ file = DEFAULT_FILE, debounceMs = 2000,
   })
 
   return {
-    /** 追加经验（{op, error, lesson, ts?}）。 */
+    /** 追加经验（{op, error, lesson, ts?}）。同 op+同 lesson 视为同一教训——
+     * 合并计数刷新 ts（重复失败反复沉淀会刷屏 prompt 且挤占 FIFO 容量）。 */
     add (entry) {
-      last.items.push({
-        op: String(entry?.op ?? 'unknown').slice(0, 30),
-        error: String(entry?.error ?? '').slice(0, 200),
-        lesson: String(entry?.lesson ?? '').slice(0, 200),
-        ts: entry?.ts ?? Date.now()
-      })
+      const op = String(entry?.op ?? 'unknown').slice(0, 30)
+      const error = String(entry?.error ?? '').slice(0, 200)
+      const lesson = String(entry?.lesson ?? '').slice(0, 200)
+      const existing = last.items.find(i => i.op === op && i.lesson === lesson)
+      if (existing) {
+        existing.count = (existing.count ?? 1) + 1
+        existing.ts = Date.now()
+      } else {
+        last.items.push({ op, error, lesson, ts: entry?.ts ?? Date.now(), count: 1 })
+      }
       store.schedule()
     },
     /** 最近 n 条（新→旧排序）。 */
     recent (n = 8) {
       return [...last.items].reverse().slice(0, n)
+    },
+    /** 按失败 op 检索（检索式经验注入）——op 精确匹配；无匹配返回空（调用方回退最近）。 */
+    match (ops, n = 3) {
+      const opSet = new Set((ops ?? []).map(String))
+      const hit = last.items.filter(i => opSet.has(i.op))
+      return hit.length ? [...hit].reverse().slice(0, n) : []
     },
     /** 立即落盘（测试/优雅退出）。 */
     flush () {

@@ -108,3 +108,26 @@ export function environmentLine (bot, playerLimit = 3) {
   if (players.length) parts.push(`玩家:${players.map(x => x.name).join(',')}`)
   return parts.length ? `环境: ${parts.join(' ')}` : ''
 }
+
+/**
+ * 退化状态行（L2 每工具轮自动注入；正常时返回空串——零成本）。
+ * 数据源 26.1：bot.health/bot.food（update_health 包）、背包占用行数、
+ * 手持物品 durability（nbt 耐久）。让 LLM 零工具调用成本感知生存危机。
+ */
+export function degenerateLine (bot) {
+  const parts = []
+  try {
+    const hp = bot?.health
+    if (typeof hp === 'number' && hp > 0 && hp < 10) parts.push(`血${Math.round(hp)}`) // 满血 20，<10 低
+    const food = bot?.food
+    if (typeof food === 'number' && food > 0 && food < 6) parts.push(`饥${Math.round(food)}`)
+    const slots = bot?.inventory?.items?.()?.length ?? 0
+    if (slots >= 34) parts.push('背包满') // 与任务 slotsUsed ≥34 判满同口径
+    const held = bot?.heldItem
+    const maxDura = held?.durability
+    if (held && typeof maxDura === 'number' && maxDura > 0 && held.durabilityUsed / maxDura > 0.8) {
+      parts.push(`${held.name ?? '工具'}将坏`)
+    }
+  } catch { /* 数据源异常——跳过退化行 */ }
+  return parts.length ? `状态: ${parts.join(' ')}` : ''
+}

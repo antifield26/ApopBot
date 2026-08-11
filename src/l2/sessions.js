@@ -14,7 +14,9 @@ import { createDebouncedFileStore } from '../util/debounced-file-store.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const DEFAULT_FILE = path.join(ROOT, 'data', 'sessions.json')
-const SESSION_SCHEMA_VERSION = 1
+// v2：会话值加 goal（长期目标+计划）与 summary（对话滚动摘要）——v1 文件缺省
+// null 兼容读
+const SESSION_SCHEMA_VERSION = 2
 const DEFAULT_MAX_SESSIONS = 32
 
 /** 加载会话（不存在/损坏 → 空；形状防御：history/calls 非数组按空）。 */
@@ -33,7 +35,12 @@ export function loadSessions (file = DEFAULT_FILE) {
     if (!v || typeof v !== 'object') continue
     sessions[user] = {
       history: Array.isArray(v.history) ? v.history.slice(-20) : [],
-      calls: Array.isArray(v.calls) ? v.calls.slice(-50) : []
+      calls: Array.isArray(v.calls) ? v.calls.slice(-50) : [],
+      // v2：goal/summary 形状防御（v1 文件/手改损坏按 null）
+      goal: v.goal && typeof v.goal === 'object' && typeof v.goal.text === 'string' && v.goal.text
+        ? { text: String(v.goal.text).slice(0, 200), plan: Array.isArray(v.goal.plan) ? v.goal.plan.slice(0, 5).map(String) : [], setBy: String(v.goal.setBy ?? '').slice(0, 32), updatedAt: Number(v.goal.updatedAt) || 0 }
+        : null,
+      summary: typeof v.summary === 'string' && v.summary ? v.summary.slice(0, 500) : null
     }
   }
   return { schemaVersion: SESSION_SCHEMA_VERSION, sessions }
@@ -69,7 +76,7 @@ export function createSessionStore ({ file = DEFAULT_FILE, debounceMs = 2000, lo
       if (v === undefined) return null
       delete last.sessions[user]
       last.sessions[user] = v
-      return { history: [...v.history], calls: [...v.calls] }
+      return { history: [...v.history], calls: [...v.calls], goal: v.goal ?? null, summary: v.summary ?? null }
     },
     /** 写入会话（内存为主存储；调度落盘）。 */
     set (user, value) {
@@ -78,7 +85,12 @@ export function createSessionStore ({ file = DEFAULT_FILE, debounceMs = 2000, lo
       delete last.sessions[user]
       last.sessions[user] = {
         history: Array.isArray(value?.history) ? value.history.slice(-20) : [],
-        calls: Array.isArray(value?.calls) ? value.calls.slice(-50) : []
+        calls: Array.isArray(value?.calls) ? value.calls.slice(-50) : [],
+        // v2：goal/summary 保留（不显式构造会落盘即丢）
+        goal: value?.goal && typeof value.goal === 'object' && value.goal.text
+          ? { text: String(value.goal.text).slice(0, 200), plan: Array.isArray(value.goal.plan) ? value.goal.plan.slice(0, 5).map(String) : [], setBy: String(value.goal.setBy ?? '').slice(0, 32), updatedAt: Number(value.goal.updatedAt) || 0 }
+          : null,
+        summary: typeof value?.summary === 'string' && value.summary ? value.summary.slice(0, 500) : null
       }
       store.schedule()
     },

@@ -22,9 +22,11 @@ test('set→flush 原子落盘（无 .tmp 残留）+ 内容完整', () => {
     assert.ok(existsSync(file), '落盘存在')
     assert.ok(!existsSync(file + '.tmp'), '无 tmp 残留')
     const disk = JSON.parse(readFileSync(file, 'utf8'))
-    assert.equal(disk.schemaVersion, 1)
+    assert.equal(disk.schemaVersion, 2)
     assert.equal(disk.sessions.steve.history[0].content, 'hi')
     assert.equal(disk.sessions.steve.calls[0].result, 'ok')
+    assert.equal(disk.sessions.steve.goal, null, 'v2 会话含 goal 字段')
+    assert.equal(disk.sessions.steve.summary, null, 'v2 会话含 summary 字段')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -83,7 +85,7 @@ test('形状防御：history/calls 非数组按空；reset 删除', () => {
     writeFileSync(file, JSON.stringify({ schemaVersion: 1, sessions: { bad: { history: 'x', calls: null }, good: { history: [{ role: 'user', content: 'ok' }], calls: [] } } }))
     const s = createSessionStore({ file, debounceMs: 100000 })
     const bad = s.get('bad')
-    assert.deepEqual(bad, { history: [], calls: [] }, '坏形状按空')
+    assert.deepEqual(bad, { history: [], calls: [], goal: null, summary: null }, '坏形状按空')
     assert.equal(s.get('good').history[0].content, 'ok')
     s.reset('good')
     s.flush()

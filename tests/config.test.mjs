@@ -15,6 +15,8 @@ test('内置默认值：生产基线', () => {
   // v1.0.0 C2：单 provider（云端）——l2 不再有 provider 键，残留旧键校验期报错
   assert.equal('provider' in cfg.l2, false, 'BUILTIN 默认 l2 不应含 provider 键（v1.0.0 移除本地 provider）')
   assert.equal(cfg.l2.maxActionsPerCall, 8, 'v1.0.0 C3：单次 act 动作数组上限默认 8')
+  assert.equal(cfg.l2.stateInjection, true, '退化状态注入默认开')
+  assert.equal(cfg.l2.envInjection, true, '环境注入默认开')
   // 预设 DeepSeek：模型/端点/思考模式/推理强度
   assert.equal(cfg.l2.model, 'deepseek-v4-flash', '预设模型 deepseek-v4-flash')
   assert.equal(cfg.l2.cloudBaseUrl, 'https://api.deepseek.com/anthropic', '预设 DeepSeek Anthropic 兼容端点')

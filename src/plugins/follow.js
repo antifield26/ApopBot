@@ -124,9 +124,20 @@ export function followPlugin (bot) {
       // 直接控制：前进 + 前方方块检测跳跃（GoalFollow 不跳会导致丢失跟随；跳跃
       // 触发按移动方向前方的方块，而非目标高度差——目标平地上有 1 格台阶时 y 差
       // 判定不跳被挡住停下，目标远处高处又持续无效跳跃）
-      bot.setControlState('forward', true)
       const dx = (tp.x - p.x) / dist
       const dz = (tp.z - p.z) / dist
+      // 前方 1 格是岩浆 → 停 forward 切寻路（直接控制不避障且不跳岩浆——
+      // pathfinder 的 blocksToAvoid 含 lava 会绕行；否则直接步入岩浆烧死）
+      let ahead1 = null
+      try { ahead1 = bot.blockAt(p.offset(Math.sign(dx), 0, Math.sign(dz))) } catch { ahead1 = null }
+      if (ahead1?.name === 'lava') {
+        stopMoving()
+        pathing = true
+        lastGoalPos = null
+        jumpHeld = false
+        return
+      }
+      bot.setControlState('forward', true)
       updateJump(p, dx, dz)
       // 前方 2 格是虚空/未加载（直走会掉落）→ 切寻路（无条件，跳跃中也防跳崖）；
       // 同 sign 偏移：余弦偏移 floor 会落在脚下格

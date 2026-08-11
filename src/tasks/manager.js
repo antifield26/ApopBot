@@ -375,6 +375,8 @@ export class TaskManager {
       if (s) {
         sendChat(this.ctx.bot, `[任务 ${rec.entry.id}] ${s}`, this.cfg.chat?.maxLength)
           .catch(() => {})
+        // LLM 文案进 webhook（无人值守时唯一感知通道；固定模板推送已有）
+        this._notifier?.send('task', `任务 ${rec.entry.id} ${state}`, `LLM 总结: ${s}`)
       }
     }).catch(() => { /* 附加层：失败静默，模板已发 */ })
   }

@@ -48,8 +48,8 @@ export class CommandRegistry {
     const def = this.commands.get(name)
     if (!def) return false
     if (error) {
-      // 未闭合引号：明确提示而非静默吞掉消息尾部
-      await sendChat(ctx.bot, `§c${error}（消息尾部被忽略）`, ctx.cfg.chat?.maxLength)
+      // 未闭合引号：命令实际整条未执行（解析失败不分发 handler）——文案如实
+      await sendChat(ctx.bot, `§c${error}，命令未执行`, ctx.cfg.chat?.maxLength)
       return true
     }
 

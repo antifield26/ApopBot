@@ -13,10 +13,12 @@
 const MAX_RESOURCES_PER_NAME = 16
 const MAX_RESOURCES_TOTAL = 512
 const MAX_ANCHORS = 256
+const MAX_PLACES = 32 // 命名地点上限（!home set / set_place）
 
 const state = {
   anchors: [], // [{x, y, z, ts}] 按插入序（旧在前），环形淘汰
   resources: {}, // blockName → [{x, y, z, ts}]（按插入序，新在后）
+  places: [], // [{name, x, y, z, dimension, ts}] 命名地点（家/矿场/基地——LRU 淘汰最旧）
   store: null // stateStore（attachStore 注入）
 }
 
@@ -49,7 +51,12 @@ function now () {
 
 /** 快照（持久化用）。 */
 export function snapshot () {
-  return { version: 1, anchors: state.anchors.slice(0, MAX_ANCHORS), resources: JSON.parse(JSON.stringify(state.resources)) }
+  return {
+    version: 2, // v2：+places（命名地点）
+    anchors: state.anchors.slice(0, MAX_ANCHORS),
+    resources: JSON.parse(JSON.stringify(state.resources)),
+    places: state.places.slice(0, MAX_PLACES)
+  }
 }
 
 /** 从快照回灌（feature-layer 重建时；容量/形状防御与 record 路径一致）。 */
@@ -59,6 +66,14 @@ export function importSnapshot (memory) {
     state.anchors = memory.anchors
       .filter(a => a && Number.isInteger(a.x) && Number.isInteger(a.y) && Number.isInteger(a.z))
       .slice(-MAX_ANCHORS)
+  }
+  // v2：命名地点回灌（旧快照无 places 按空；形状防御）
+  if (Array.isArray(memory.places)) {
+    state.places = memory.places
+      .filter(p => p && typeof p.name === 'string' && p.name && Number.isInteger(p.x) && Number.isInteger(p.y) && Number.isInteger(p.z))
+      .slice(-MAX_PLACES)
+  } else {
+    state.places = []
   }
   if (memory.resources && typeof memory.resources === 'object' && !Array.isArray(memory.resources)) {
     const res = {}
@@ -208,6 +223,45 @@ export function query (name, pos, maxCount = 5, dimension = null) {
     .slice(0, maxCount)
 }
 
+/**
+ * 登记命名地点（!home set / set_place）。同名覆盖（带维度——下界/主世界基地不混淆）；
+ * 超上限淘汰最旧。名字规范化：trim + 小写（query_map 匹配同口径）。
+ * @returns {boolean} 是否新登记（覆盖旧名 = true）
+ */
+export function setPlace (name, pos, dimension = null) {
+  const key = String(name ?? '').trim().toLowerCase()
+  if (!key || !pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) return false
+  const idx = state.places.findIndex(p => p.name === key)
+  if (idx !== -1) {
+    state.places[idx] = { name: key, x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z), dimension: dimension ?? null, ts: now() }
+  } else {
+    state.places.push({ name: key, x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z), dimension: dimension ?? null, ts: now() })
+    if (state.places.length > MAX_PLACES) state.places.shift()
+  }
+  persist()
+  return true
+}
+
+/** 删除命名地点。@returns {boolean} 是否存在并删除 */
+export function removePlace (name) {
+  const key = String(name ?? '').trim().toLowerCase()
+  const before = state.places.length
+  state.places = state.places.filter(p => p.name !== key)
+  if (state.places.length !== before) { persist(); return true }
+  return false
+}
+
+/** 查询命名地点（query_map place 分支用；大小写不敏感）。 */
+export function getPlace (name) {
+  const key = String(name ?? '').trim().toLowerCase()
+  return state.places.find(p => p.name === key) ?? null
+}
+
+/** 全部命名地点（!home list / map_status）。 */
+export function listPlaces () {
+  return state.places.map(p => ({ ...p }))
+}
+
 /** 地图统计（map_status 技能与 /metrics 用）。 */
 export function stats () {
   const total = Object.values(state.resources).reduce((s, l) => s + l.length, 0)
@@ -236,6 +290,7 @@ export function stats () {
   return {
     anchors: state.anchors.length,
     resources: total,
+    places: state.places.length, // 命名地点数
     covered,
     topResources: names,
     dimensions: dimCounts
@@ -246,6 +301,7 @@ export function stats () {
 export function _reset () {
   state.anchors = []
   state.resources = {}
+  state.places = []
   byCoord.clear()
 }
 

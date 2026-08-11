@@ -11,7 +11,7 @@
 // 错误永不向上抛——以友好回复返回（配合 logger.error 留痕）。
 
 import { isOp } from '../commands/permissions.js'
-import { environmentLine } from '../core/environment.js'
+import { environmentLine, degenerateLine } from '../core/environment.js'
 import { withTimeout } from '../util/promise-timeout.js'
 
 // 确定性错误不反思（权限/参数/未知动作是模型无法从教训中获益的——它们是规则
@@ -20,14 +20,19 @@ import { withTimeout } from '../util/promise-timeout.js'
 // 这些确定性规则错误若被送进 LLM 反思会浪费 token（系统提示本就写明规则）
 const DETERMINISTIC_ERROR = /权限不足|缺少参数|必须是|未知动作|未知技能|冷却中|不在 ops|运行中|插件未启用|不能大于|不能小于/
 
-/** 经验教训注入（buildSystem 之后拼接——最近 8 条 ≤600 字符）。 */
-function experienceInjection (experience) {
+/**
+ * 经验教训注入（检索式）：按上一工具轮失败 op 匹配注入（≤3 条 ≤200 字符，
+ * [×N] 前缀提示反复犯的教训）；无匹配回退最近 2 条通用。比无条件注入最近
+ * 8 条更小更相关（失败发生在轮内、注入发生在轮前——Reflexion 语义时序）。
+ */
+function experienceInjection (experience, ops = null) {
   if (!experience) return ''
-  const items = experience.recent(8)
+  let items = ops?.length ? experience.match(ops, 3) : null
+  if (!items?.length) items = experience.recent(2)
   if (items.length === 0) return ''
-  let text = items.map(i => `- ${i.lesson}`).join('\n')
-  if (text.length > 600) text = text.slice(0, 600) + '…'
-  return `\n\n经验教训（最近）:\n${text}`
+  let text = items.map(i => `- ${i.count > 1 ? `[×${i.count}] ` : ''}${i.lesson}`).join('\n')
+  if (text.length > 200) text = text.slice(0, 200) + '…'
+  return `\n\n经验教训:\n${text}`
 }
 
 // 文本长度上限（低配 4B 模型上下文与聊天消息长度双重约束）
@@ -219,7 +224,7 @@ const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手
 
 【行动协议】
 1. 用 act 工具执行动作数组 {actions:[{op,args},...]}，一次最多 8 个、按序执行；每个动作的结果按序返回，必须读取。动作原语（op）：
-   观察：observe_status（连接/位置/血量/饥饿）、observe_inventory（背包）、observe_environment（时间/天气/维度/群系/朝向/附近）、observe_entities（附近实体）、observe_blocks（找方块位置）、observe_block（单方块详情）、observe_crops（作物成熟度）、query_map（探索记忆中的资源坐标——verified:false 表示该区块未加载无法核对，可能已被挖走/改变，行动前用 observe_block 确认）、map_status（探索统计）
+   观察：observe_status（连接/位置/血量/饥饿）、observe_inventory（背包）、observe_environment（时间/天气/维度/群系/朝向/附近）、observe_entities（附近实体）、observe_blocks（找方块位置）、observe_block（单方块详情）、observe_crops（作物成熟度）、observe_tasks（任务列表/状态/等待原因）、query_map（探索记忆中的资源坐标——verified:false 表示该区块未加载无法核对，可能已被挖走/改变，行动前用 observe_block 确认）、map_status（探索统计）
    移动：goto{x,y,z,range?,timeoutMs?} 寻路移动；explore_step{direction?,maxDistance?} 单步探索
    建造：dig{x,y,z} 挖方块（不捡掉落物）；place{x,y,z,face?} 放手持物品；collect_blocks{blockNames|positions,area?,maxBlocks?,chestLocations?} 批量采集（自动捡掉落）；plant_crops{area,cropTypes?} 种作物
    战斗：attack{filter,maxHits?} 攻击实体（自动接近连击）
@@ -309,6 +314,20 @@ export class AgentInterface {
     this._abort = null
     // LLM 计量：本次对话累计 tokens + 最近一次请求耗时（/metrics 用）
     this.usage = { inputTokens: 0, outputTokens: 0, latencyMs: null }
+    // 世界事件挂起（被动感知）：feature-layer 事件监听写入，下次对话注入——
+    // 不做主动唤醒（busy 门/玩家冷却/权限语义约束）；≤3 条 × 80 字符
+    this.pendingEvents = []
+  }
+
+  /**
+   * 世界事件通知（feature-layer 监听调用；被攻击/低血/背包满等）。
+   * 按类型去重合并（高频事件只保最新状态），仅保留最近 3 条。
+   */
+  notifyEvent (type, text) {
+    const entry = `${type}:${String(text).slice(0, 60)}`
+    this.pendingEvents = this.pendingEvents.filter(e => !e.startsWith(`${type}:`))
+    this.pendingEvents.push(entry)
+    if (this.pendingEvents.length > 3) this.pendingEvents.shift()
   }
 
   static isAvailable () {
@@ -358,12 +377,24 @@ export class AgentInterface {
       // 注入"最近工具操作"→ 跨对话上下文自相矛盾
       const toolCalls = (session?.calls ?? []).slice()
       const userMsg = String(text).slice(0, INPUT_MAX_CHARS)
-      const messages = [...history, { role: 'user', content: userMsg }]
+      // 历史摘要行（v2）：被裁剪掉的旧轮压缩摘要作为首条 user 消息（低权威声明
+      // 非精确——对话仍以 user 开头满足协议角色交替约束）
+      const summaryLine = session?.summary
+        ? `[历史摘要（非精确）] ${session.summary.slice(0, 120)}`
+        : null
+      const messages = [
+        ...(summaryLine ? [{ role: 'user', content: summaryLine }] : []),
+        ...history,
+        { role: 'user', content: userMsg }
+      ]
       const maxSteps = this.cfg.maxSteps ?? 5
       let finished = false
       let reply = '（无回复）'
       // 本轮运行时失败动作收集（反思触发源）
       const failures = []
+      // 上一工具轮失败 op（检索式经验注入用）——失败发生在轮内、注入发生在
+      // 轮前（本轮 system 用上轮的失败集），Reflexion 语义的正确时序
+      let prevRoundOps = []
       for (let step = 0; step < maxSteps && !finished; step++) {
         // 固定工具集 = act + 观察/回复（从原语注册表生成）
         const tools = buildTools(this.executor, this.cfg.maxActionsPerCall ?? 8)
@@ -376,10 +407,16 @@ export class AgentInterface {
           toolLog = `\n最近工具操作: ${toolCalls.slice(-3).map(c => `${c.name}${c.result ? `→${c.result}` : ''}`).join('；')}`
         }
         // 单 provider（云端）——恒拼接完整提示词
-        // 经验教训注入（最近 8 条 ≤600 字符——跨会话自主能力进化）
+        // 经验教训注入（按上轮失败 op 检索 ≤3 条；无匹配回退最近 2 条）
         const system = buildSystem(user, this.ctx.cfg) +
-          experienceInjection(this.experience) +
-          (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`) + toolLog
+          experienceInjection(this.experience, prevRoundOps) +
+          // 长期目标注入（v2）：当前目标+计划（≤120 字符；无目标跳过）
+          (session?.goal?.text ? `\n当前目标: ${session.goal.text.slice(0, 80)}${session.goal.plan?.length ? `（计划: ${session.goal.plan.join('→').slice(0, 40)}）` : ''}${session.goal.setBy ? `，由 ${session.goal.setBy} 设置` : ''}` : '') +
+          (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`) +
+          // 退化状态注入（低血/饥饿/背包满/工具将坏——正常时空串零成本）
+          (this.cfg.stateInjection === false ? '' : `\n${degenerateLine(this.ctx.bot)}`) +
+          // 世界事件注入（仅事件存在时输出——上次对话后发生了什么）
+          (this.pendingEvents.length ? `\n事件: ${this.pendingEvents.join('|')}` : '') + toolLog
         // 上下文预算裁剪（provider 有窗口时）——fixed = system + 工具定义；
         // 超预算按序裁剪历史/工具结果/用户消息。窗口 null（云端/测试）→ 不裁剪
         const window = this.provider.contextWindow?.()
@@ -419,6 +456,7 @@ export class AgentInterface {
         for (const tc of allCalls.slice(MAX_TOOL_CALLS_PER_ROUND)) {
           results.push({ id: tc.id, name: tc.name, output: `未执行（单轮工具调用上限 ${MAX_TOOL_CALLS_PER_ROUND}，请减少本轮动作）` })
         }
+        const roundOps = [] // 本工具轮失败 op（供下一轮检索式经验注入）
         for (const tc of calls) {
           let r
           // signal 贯通：stop()/断线中止不只断 provider fetch——进行中的动作
@@ -444,10 +482,12 @@ export class AgentInterface {
             for (const entry of r.results ?? []) {
               if (!entry.ok && !DETERMINISTIC_ERROR.test(entry.result ?? '')) {
                 failures.push({ op: entry.op, result: String(entry.result ?? '').slice(0, 120) })
+                roundOps.push(entry.op)
               }
             }
           } else if (!r.ok && !DETERMINISTIC_ERROR.test(String(r.result ?? ''))) {
             failures.push({ op: tc.name, result: String(r.result ?? '').slice(0, 120) })
+            roundOps.push(tc.name)
           }
           // 跨对话工具操作记录（摘要 ≤120 字符；失败也记录——LLM 下次知道上次错在哪）
           const failed = tc.name === 'act' ? r.rejected : !r.ok
@@ -461,6 +501,7 @@ export class AgentInterface {
         }
         messages.push({ role: 'assistant', content: res.text ?? '', toolCalls: calls })
         messages.push({ role: 'user', content: '', toolResults: results })
+        prevRoundOps = roundOps // 本轮失败供下一轮 system 注入
       }
       if (!finished) {
         // maxSteps 耗尽：返回显式文案提示重试（占位"（无回复）"会写入会话污染下一轮）
@@ -472,10 +513,33 @@ export class AgentInterface {
       // 回写会话：本轮 user 轮 + 最终 assistant 轮（纯文本，裁剪到上限）+ 工具操作记录
       history.push({ role: 'user', content: userMsg })
       history.push({ role: 'assistant', content: reply.slice(0, REPLY_MAX_CHARS) })
-      const sessionValue = { history: history.slice(-MAX_HISTORY_MESSAGES), calls: toolCalls.slice(-20) }
+      // v2：goal 保留（会话的长期目标与计划跨对话持续）；summary 保留
+      const sessionValue = {
+        history: history.slice(-MAX_HISTORY_MESSAGES),
+        calls: toolCalls.slice(-20),
+        goal: session?.goal ?? null,
+        summary: session?.summary ?? null
+      }
       setSession(user, sessionValue)
       // 落盘（2s 防抖 + exit flush）——重启/重连后多轮上下文不丢
       this.sessionStore?.set(user, sessionValue)
+      // 对话滚动摘要（v2）：被 slice 丢掉的旧轮非空且尚无摘要 → fire-and-forget
+      // LLM 压缩（复用 summarize 60s 冷却天然节流；成功晚于本轮落盘——补写）
+      const dropped = history.slice(0, -MAX_HISTORY_MESSAGES)
+      if (dropped.length > 0 && !sessionValue.summary && this.summarize) {
+        const droppedText = dropped
+          .map(m => `${m.role}: ${String(m.content ?? '').slice(0, 150)}`)
+          .join('\n')
+          .slice(0, 500)
+        this.summarize(`把以下对话历史压缩为一句中文摘要（保留玩家的要求、约定与关键事实）：\n${droppedText}`, 200)
+          .then((s) => {
+            if (!s) return
+            const v = { ...sessionValue, summary: s }
+            setSession(user, v)
+            this.sessionStore?.set(user, v)
+          })
+          .catch(() => {})
+      }
       return { reply: reply.slice(0, REPLY_MAX_CHARS) }
     } catch (err) {
       if (err.name === 'AbortError') return { reply: '请求已中止' }
@@ -536,7 +600,7 @@ export class AgentInterface {
    * @param {string} prompt
    * @returns {Promise<string|null>}
    */
-  async summarize (prompt) {
+  async summarize (prompt, maxLen = 120) {
     if (!this.provider?.chat) return null
     // 全局冷却（60s）——死亡与任务终态并发时只发一条 LLM 请求
     const now = Date.now()
@@ -546,12 +610,12 @@ export class AgentInterface {
       const res = await this.provider.chat(
         [{ role: 'user', content: String(prompt).slice(0, 500) }],
         {
-          system: '你是 Minecraft 服务器上的 Bot 播报员。用一句话（≤100 字符）概括，不要 Markdown，不要角色扮演。',
+          system: `你是 Minecraft 服务器上的 Bot 播报员。用一句话（≤${Math.min(maxLen, 200)} 字符）概括，不要 Markdown，不要角色扮演。`,
           signal: AbortSignal.timeout(10000)
         }
       )
       const text = (res?.text ?? '').trim()
-      return text ? text.slice(0, 120) : null
+      return text ? text.slice(0, maxLen) : null
     } catch {
       return null
     }
@@ -575,6 +639,38 @@ export class AgentInterface {
   reset (user) {
     SESSIONS.delete(user)
     this.sessionStore?.reset(user)
+  }
+
+  /** 读取指定玩家的长期目标（!agent goal 查看）。 */
+  getGoal (user) {
+    const session = getSession(user)
+    return session?.goal ?? null
+  }
+
+  /** 设置长期目标（!agent goal set / set_goal 原语；同 text 重复 set 不更新）。 */
+  setGoal (user, text, plan = []) {
+    const session = getSession(user) ?? { history: [], calls: [], goal: null, summary: null }
+    const goal = {
+      text: String(text).slice(0, 200),
+      plan: (plan ?? []).slice(0, 5).map(String),
+      setBy: String(user).slice(0, 32),
+      updatedAt: Date.now()
+    }
+    if (session.goal?.text === goal.text && session.goal?.setBy === user) return session.goal
+    session.goal = goal
+    setSession(user, session)
+    this.sessionStore?.set(user, session)
+    return goal
+  }
+
+  /** 清除长期目标（!agent goal clear / set_goal 原语传空）。 */
+  clearGoal (user) {
+    const session = getSession(user)
+    if (!session?.goal) return false
+    session.goal = null
+    setSession(user, session)
+    this.sessionStore?.set(user, session)
+    return true
   }
 
   /** 当前会话数（/metrics 用）。 */

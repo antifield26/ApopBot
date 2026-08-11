@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+- **第 13 轮：Bot 功能扩展 + LLM 能力深化（全档实施，见 docs/roadmap.md）**：
+  - **LLM 深化（A1-A7）**：目标记忆（sessions v2：goal+plan 跨会话持久化，`!agent goal` 查看/设置/清除 + set_goal 原语）；对话滚动摘要（历史超限 LLM 压缩替代硬丢——"继续"不再断片）；检索式经验（按失败 op 匹配注入 ≤3 条 + 同教训去重合并计数）；退化状态自动注入（低血/饥饿/背包满/工具将坏，正常零成本）；observe_tasks 任务状态感知原语（注册即进工具集）；世界事件被动感知（被攻击/低血/背包满/稀有收集 → 下次对话注入）；命名地点（!home set/list/remove + set_place/remove_place 原语 + query_map place 分支，带维度）
+  - **Bot 扩展（B1/B2/B4/B5+B6）**：仓库管理（`storage.chests` 配置 + store_items/fetch_items 原语 + autoDeposit 优先配置仓库）；工具耐久管理（挖掘前自动换最优工具——材料等级排序 + 将坏替换）+ combat 护甲自动装备（armorManager）；farm 作物扩展（甘蔗/南瓜/西瓜/甜浆果/可可——三种成熟判定：age/高度/果实块，四种种植模式）；sleep 原语（天黑找床睡觉，sleepAtNight 可选）+ harvest_animals（剪羊毛/捡掉落物）
+  - **修复**：follow 前方岩浆防御；durationMinutes 条目级校验；observe_blocks 三选一互斥；未闭合引号文案修正；SIGHUP 与 shutdown 交错守卫；webhook fetch body 消费；auditCommand 耗时记录；reconnect 关键词精确化；entities null 距离过滤；start_task init 完成信号（轮询）；connection 手动断开期迟到错误守卫；移动卡住诊断日志（周围方块/手持/落地态——issue #1 排查数据）；LLM 文案进 webhook（死亡/任务终态）
 - **注释与文档规范化（第 12 轮）**：代码注释统一为"当前代码的意图/契约/边界"（现在时态）——清除全部轮次标记（`（第 N 轮）`/`（C\d+）`/`（U\d+）` 等 262 处）与历史修复叙事；历史变更统一由 CHANGELOG/roadmap 承载。规范约定写入 docs/architecture.md「注释与文档约定」节
 - **第 11 轮全面评估（5 HIGH + 20 MEDIUM + 重构 + 4 扩展主题，见 docs/roadmap.md）**：
   - **5 个确认缺陷修复**：combat 冻结 options 写 weaponName 抛 TypeError（config 装载的 combat 永不运行——BaseTask 浅复制根治 + 防未来脚本再犯）；combat maxTargets 默认 0 失效首杀即完成（evalCond config 型回退 defaultOptions）；config.example.json 过不了自身校验（l2._comment 豁免 + config.test 防漂移断言）；spawn 先于插件装载时 ctx.plugins 陈旧（onPluginsReady 补发回调）；notifier 按值捕获 reload 后 webhook 变更失效（事件时实时取值）

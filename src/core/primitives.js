@@ -27,7 +27,7 @@ import { attackEntity, useEntityOn } from './entity-actions.js'
 import { hasExclusiveActive, getExclusiveOwner } from './arbiter.js'
 import { validateTaskOptions } from './task-schemas.js'
 import { TASK_TYPES } from '../tasks/types.js'
-import { CROP_MATURITY, SEED_BY_CROP } from './crops.js'
+import { CROP_MATURITY, CROP_BY_BLOCK, SEED_BY_CROP, CROP_PLANT_MODE } from './crops.js'
 
 // 动作冷却（dig/place/attack 防刷；equip/use_item 等不拦）。判定在 handler 内
 // "只对实际执行生效"（业务性校验失败——距离/占用等——不占冷却，与原技能层一致）；
@@ -43,6 +43,60 @@ function checkActionCooldown (name) {
   lastActionAt.set(name, now)
 }
 
+// 工具材料等级（升序——netherite 最优）
+const TOOL_MATERIAL_RANK = ['wooden', 'stone', 'iron', 'diamond', 'netherite']
+
+/** 方块 → 工具类（矿石/石头 → 镐；原木/木板 → 斧；沙/土 → 锹；无 → null 空手）。 */
+function toolClassFor (blockName) {
+  const n = String(blockName ?? '')
+  if (/_ore$|stone|diorite|andesite|granite|deepslate|netherrack|obsidian|tuff$/.test(n)) return 'pickaxe'
+  if (/_log$|_wood$|_planks$/.test(n)) return 'axe'
+  if (/^sand|gravel|dirt|grass_block|clay|mud/.test(n)) return 'shovel'
+  return null
+}
+
+/** 工具材料等级（非工具/未知 = -1）。 */
+function toolRank (name) {
+  const m = String(name ?? '').match(/^(wooden|stone|iron|diamond|netherite)_(\w+)$/)
+  return m ? TOOL_MATERIAL_RANK.indexOf(m[1]) : -1
+}
+
+/** 工具耐久将坏判定（durability = 最大耐久；durabilityUsed 已用）。 */
+function toolWorn (item) {
+  return typeof item?.durability === 'number' && item.durability > 0 &&
+    (item.durabilityUsed ?? 0) / item.durability > 0.8
+}
+
+/**
+ * 挖掘前工具保障（工具耐久管理）：目标方块有对应工具类时——手持空/非该类工具/
+ * 将坏 → 从背包换该类最高材料等级且耐用的工具（只升不降，减少无谓切换）。
+ * 失败静默（空手也能挖，仅速度慢——不阻塞收集流程）。
+ * @returns {Promise<string|null>} 换上的工具名（未换 null）
+ */
+async function ensureMiningTool (bot, blockName, logger) {
+  const cls = toolClassFor(blockName)
+  if (!cls || !bot?.equip || !bot?.inventory) return null
+  const held = bot.heldItem
+  const heldIsTool = held?.name?.endsWith(`_${cls}`)
+  const heldOk = heldIsTool && !toolWorn(held)
+  if (heldOk) return null // 当前工具可用
+  const items = bot.inventory.items?.() ?? []
+  let best = null
+  for (const it of items) {
+    if (!it.name?.endsWith(`_${cls}`)) continue
+    if (toolWorn(it)) continue
+    if (!best || toolRank(it.name) > toolRank(best.name)) best = it
+  }
+  if (!best) return null
+  // 手持已是同类但材料更低且背包装得下更高材料 → 升；手持非同类 → 直接换
+  if (heldIsTool && toolRank(best.name) <= toolRank(held.name)) return null
+  try {
+    await withTimeout(bot.equip(best, 'hand'), 10000, 'equip timeout')
+    logger?.debug?.({ tool: best.name }, '挖掘工具已更换')
+    return best.name
+  } catch { return null }
+}
+
 /**
  * 自动存储：背包满（NoChests）时附近找箱子/木桶存入物品——避免 mine/chop/farm
  * 脚本在背包满时干等。规则：
@@ -52,11 +106,15 @@ function checkActionCooldown (name) {
  * 失败任何一步静默（autonomy 的附加层——绝不阻塞/抛错）。
  * @returns {Promise<{ stored: number, found: Vec3[] }>}
  */
-async function autoDeposit (bot, logger) {
+async function autoDeposit (bot, logger, cfg = null) {
   if (!bot?.openContainer || !bot?.findBlocks) return { stored: 0, found: [] }
   let found = []
   try {
-    found = bot.findBlocks({ matching: (b) => b.name === 'chest' || b.name === 'barrel', maxDistance: 32, count: 8 })
+    // 配置仓库优先（storage.chests 固定坐标）；未配置才附近搜索 32 格内箱子
+    const configured = (cfg?.storage?.chests ?? []).map(c => new Vec3(c.x, c.y, c.z))
+    found = configured.length > 0
+      ? configured
+      : bot.findBlocks({ matching: (b) => b.name === 'chest' || b.name === 'barrel', maxDistance: 32, count: 8 })
   } catch { return { stored: 0, found: [] } }
   if (found.length === 0) return { stored: 0, found: [] }
   const isTool = (n) => /_sword$|_pickaxe$|_axe$|_shovel$|_hoe$/.test(n ?? '')
@@ -211,7 +269,11 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '',
     timeoutMs: 5000,
     handler: async (c, { blockNames, blockName, regex, maxDistance, area }) => {
-      // 与 !find/find_block 同款 findSurfaceBlocks（不移动、无副作用）——多名字批量
+      // 与 !find/find_block 同款 findSurfaceBlocks（不移动、无副作用）——多名字批量。
+      // 三选一互斥：同传时 regex 静默优先会与直觉不符（LLM 双传难归因）——显式报错
+      if (regex && (blockNames || blockName)) {
+        throw new Error('observe_blocks 的 regex 与 blockNames/blockName 互斥，只能给一种')
+      }
       const names = blockNames ?? (blockName ? [blockName] : null)
       const registry = c.bot?.registry
       let ids = null
@@ -331,7 +393,9 @@ export function createPrimitiveRegistry (ctx) {
       try {
         found = c.bot.findBlocks({ matching: (b) => b.type !== 0, maxDistance, count: 10000 })
       } catch { return { mature: [], immature: [], farmland: [] } }
-      const crops = cropTypes?.length ? cropTypes : Object.keys(CROP_MATURITY)
+      // 作物白名单：age 型 + 高度/果实型（crops.js 单一来源）
+      const allCrops = [...Object.keys(CROP_MATURITY), ...Object.values(CROP_BY_BLOCK)]
+      const crops = cropTypes?.length ? cropTypes : allCrops
       const mature = []
       const immature = []
       const farmland = []
@@ -344,6 +408,25 @@ export function createPrimitiveRegistry (ctx) {
           const m = CROP_MATURITY[block.name]
           if (typeof age === 'number' && age >= m && crops.includes(block.name)) mature.push([p.x, p.y, p.z])
           else if (crops.includes(block.name)) immature.push([p.x, p.y, p.z])
+        } else if (block.name in CROP_BY_BLOCK) {
+          const crop = CROP_BY_BLOCK[block.name]
+          if (!crops.includes(crop)) continue
+          if (block.name === 'sugar_cane') {
+            // 高度型：只判根部（下方无甘蔗）——≥2 格高收集顶部块（dig 顶部保留
+            // 根部继续长）；单根 immature
+            const below = c.bot.blockAt(new Vec3(p.x, p.y - 1, p.z))
+            if (below?.name === 'sugar_cane') continue // 非根部跳过
+            let topY = p.y
+            for (let y = p.y + 1; y <= p.y + 2; y++) {
+              const b = c.bot.blockAt(new Vec3(p.x, y, p.z))
+              if (b?.name === 'sugar_cane') topY = y
+              else break
+            }
+            if (topY > p.y) mature.push([p.x, topY, p.z])
+            else immature.push([p.x, p.y, p.z])
+          } else {
+            mature.push([p.x, p.y, p.z]) // 南瓜/西瓜：果实块存在即成熟
+          }
         } else if (block.name === 'farmland') {
           farmland.push([p.x, p.y, p.z])
         }
@@ -353,12 +436,12 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   register('query_map', {
-    description: '查询探索记忆中已知的资源坐标（不重新扫描；已加载区块逐条验证，失效记录自动清除）',
+    description: '查询探索记忆中已知的资源坐标或命名地点（不重新扫描；已加载区块逐条验证，失效记录自动清除）',
     schema: {
       type: 'object',
-      required: ['blockName'],
       properties: {
-        blockName: { type: 'string', description: '方块名（如 iron_ore/diamond_ore/bamboo）' },
+        blockName: { type: 'string', description: '方块名（如 iron_ore/diamond_ore/bamboo；与 place 二选一）' },
+        place: { type: 'string', description: '命名地点名（如 home/矿场——!home set 登记的语义坐标；与 blockName 二选一）' },
         maxCount: { type: 'integer', min: 1, max: 20, description: '最多返回条数，默认 5' }
       }
     },
@@ -366,10 +449,17 @@ export function createPrimitiveRegistry (ctx) {
     exclusiveClass: 'readonly',
     guardText: '',
     timeoutMs: 5000,
-    handler: async (c, { blockName, maxCount }) => {
+    handler: async (c, { blockName, place, maxCount }) => {
+      // 命名地点分支（!home set / set_place 登记的语义坐标——家/矿场/基地）
+      if (place) {
+        const p = discovery.getPlace(place)
+        if (!p) return { place: String(place), found: false, hint: '地点不存在（!home set <name> 或 set_place 登记）' }
+        return { place: p.name, found: true, x: p.x, y: p.y, z: p.z, dimension: p.dimension ?? 'overworld' }
+      }
+      if (!blockName) throw new Error('query_map 需要 blockName 或 place')
       // 大小写归一——记忆 key 是 explore 记录的小写名（iron_ore），LLM 传 Iron_Ore
       // 会查空且无提示（误导 LLM 去重新探索）
-      const name = String(blockName ?? '').toLowerCase()
+      const name = String(blockName).toLowerCase()
       const me = c.bot?.entity?.position
       // 维度过滤——只返回当前维度的记录（下界/末地坐标 8:1 映射
       // 混存会误导；返回带 dimension 供 LLM 判断）
@@ -403,6 +493,30 @@ export function createPrimitiveRegistry (ctx) {
     guardText: '',
     timeoutMs: 5000,
     handler: async () => discovery.stats()
+  })
+
+  register('observe_tasks', {
+    description: '查看当前任务列表（状态/等待原因/排队/剩余时长/计数——readonly）',
+    schema: { type: 'object', properties: {} },
+    permission: 'all',
+    exclusiveClass: 'readonly',
+    guardText: '',
+    timeoutMs: 5000,
+    handler: async (c) => {
+      // 行式渲染与 !task list 同款（readonly 观察族——注册即进工具集）
+      const status = c.tasks?.getStatus?.() ?? []
+      if (status.length === 0) return { tasks: [] }
+      const list = status.slice(0, 10).map(t => {
+        const parts = [`${t.id}:${t.state}`]
+        if (t.waitingReason) parts.push(`(${t.waitingReason})`)
+        if (t.lastError) parts.push(`(err:${String(t.lastError).slice(0, 40)})`)
+        if (t.queuePosition) parts.push(`[排队#${t.queuePosition}]`)
+        if (t.remainingMinutes !== undefined) parts.push(`[余${t.remainingMinutes}m]`)
+        if (Object.keys(t.counters).length) parts.push(`[${JSON.stringify(t.counters).slice(0, 80)}]`)
+        return parts.join('')
+      })
+      return { tasks: list, total: status.length, truncated: status.length > 10 }
+    }
   })
 
   // ============ 移动（op / movement / 60s，exclusive 拒绝） ============
@@ -583,6 +697,10 @@ export function createPrimitiveRegistry (ctx) {
       for (let i = 0; i < cap; i += 4) {
         if (runtime?.signal?.aborted) return { collected, stopped: true }
         const batch = targets.slice(i, i + 4)
+        // 挖掘前工具保障（工具耐久管理）：空手/无对应工具/手持将坏 → 换背包
+        // 里该类最优工具（只升不降）；失败不阻塞（collectblock 空手也能挖，仅慢）
+        const firstBlock = batch[0] ? c.bot.blockAt(batch[0].position) : null
+        if (firstBlock) await ensureMiningTool(c.bot, firstBlock.name, c.logger)
         try {
           await withTimeout(c.bot.collectBlock.collect(batch, { chestLocations: chests }), 120000, 'collect timeout')
           collected += batch.length
@@ -596,7 +714,7 @@ export function createPrimitiveRegistry (ctx) {
             // 脚本背包满空转；存成功重试同一批，失败回退 inventoryFull 语义
             // 由脚本处理）
             if (runtime?.signal?.aborted) return { collected, stopped: true }
-            const { stored, found } = await autoDeposit(c.bot, c.logger)
+            const { stored, found } = await autoDeposit(c.bot, c.logger, c.cfg)
             if (stored > 0) {
               // 新箱子并入 chestLocations（后续批次优先使用）
               for (const p of found) {
@@ -659,29 +777,59 @@ export function createPrimitiveRegistry (ctx) {
       try {
         found = c.bot.findBlocks({ matching: (b) => b.type !== 0, maxDistance, count: 10000 })
       } catch { return { planted: 0 } }
-      const farmland = []
+      // 种植目标按模式分类：farmland（耕地——wheat 类+南瓜/西瓜种子）、
+      // soil（土/草——甜浆果）、waterside（水旁沙/土——甘蔗）
+      const farmlandSpots = []
+      const soilSpots = []
       for (const p of found) {
         if (p.x < area.x1 || p.x > area.x2 || p.y < area.y1 || p.y > area.y2 || p.z < area.z1 || p.z > area.z2) continue
         const block = c.bot.blockAt(p)
-        if (block?.name === 'farmland') farmland.push(p)
+        if (!block) continue
+        if (block.name === 'farmland') farmlandSpots.push(p)
+        else if (/^(grass_block|dirt|coarse_dirt|podzol)$/.test(block.name)) soilSpots.push(p)
+      }
+      // 水旁位置（甘蔗：水块四邻的沙/土/草）
+      const watersideSpots = []
+      for (const p of found) {
+        if (p.x < area.x1 || p.x > area.x2 || p.y < area.y1 || p.y > area.y2 || p.z < area.z1 || p.z > area.z2) continue
+        const block = c.bot.blockAt(p)
+        if (!block || !/^(water)$/.test(block.name)) continue
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nb = c.bot.blockAt(new Vec3(p.x + dx, p.y, p.z + dz))
+          if (nb && /^(sand|grass_block|dirt|coarse_dirt|mud)$/.test(nb.name) &&
+              !watersideSpots.some(s => s.x === nb.position.x && s.z === nb.position.z)) {
+            watersideSpots.push(nb.position)
+          }
+        }
+      }
+      // 按种植模式分组作物（crops.js CROP_PLANT_MODE 单一来源）
+      const modes = new Map()
+      for (const crop of wantedCrops) {
+        const mode = CROP_PLANT_MODE[crop] ?? 'farmland'
+        if (!modes.has(mode)) modes.set(mode, [])
+        modes.get(mode).push(crop)
       }
       let planted = 0
-      const cap = Math.min(max ?? 8, farmland.length)
-      for (let i = 0; i < cap; i++) {
-        if (runtime?.signal?.aborted) break
-        const soil = c.bot.blockAt(farmland[i])
-        const above = soil ? c.bot.blockAt(soil.position.offset(0, 1, 0)) : null
-        if (above && above.boundingBox !== 'empty') continue // 已占用
-        // 只在 wantedSeeds（cropTypes 对应种子）内选取——不取背包第一颗任意种子
-        const seeds = c.bot.inventory?.items()?.find(it => wantedSeeds.has(it.name))
-        if (!seeds) return { planted, noSeeds: true }
-        try {
-          await withTimeout(c.bot.equip(seeds, 'hand'), 10000, 'equip timeout')
-          await withTimeout(c.bot.placeBlock(soil, { x: 0, y: 1, z: 0 }), 30000, 'place timeout') // 种在耕地上方
-          planted++
-        } catch (err) {
-          c.logger.warn({ err: err.message }, '种植失败（可能没有种子或位置不可用）')
-          break
+      for (const [mode, crops] of modes) {
+        const spots = mode === 'waterside' ? watersideSpots : mode === 'soil' ? soilSpots : farmlandSpots
+        const seedsByMode = new Set(crops.map(c => seedByCrop[c]).filter(Boolean))
+        const cap = Math.min(max ?? 8, spots.length)
+        for (let i = 0; i < cap; i++) {
+          if (runtime?.signal?.aborted) return { planted }
+          const soil = c.bot.blockAt(spots[i])
+          const above = soil ? c.bot.blockAt(soil.position.offset(0, 1, 0)) : null
+          if (above && above.boundingBox !== 'empty') continue // 已占用
+          // 只在对应模式作物种子内选取——不取背包第一颗任意种子
+          const seeds = c.bot.inventory?.items()?.find(it => seedsByMode.has(it.name))
+          if (!seeds) return { planted, noSeeds: true }
+          try {
+            await withTimeout(c.bot.equip(seeds, 'hand'), 10000, 'equip timeout')
+            await withTimeout(c.bot.placeBlock(soil, { x: 0, y: 1, z: 0 }), 30000, 'place timeout') // 种在方块上方
+            planted++
+          } catch (err) {
+            c.logger.warn({ err: err.message }, '种植失败（可能没有种子或位置不可用）')
+            break
+          }
         }
       }
       return { planted }
@@ -824,6 +972,109 @@ export function createPrimitiveRegistry (ctx) {
       if (!item) return `背包里没有 ${itemName}（observe_inventory 查看）`
       await withTimeout(c.bot.equip(item, 'hand'), 10000, 'equip timeout') // 断线保护
       return `已装备 ${itemName}`
+    }
+  })
+
+  register('store_items', {
+    schema: {
+      type: 'object',
+      properties: {
+        chestLocations: { type: 'array', description: '目标箱子坐标（缺省 = storage.chests 配置仓库，再退附近搜索）' },
+        keepTools: { type: 'boolean', description: '保留工具（默认 true——不存工具/食物）' }
+      }
+    },
+    permission: 'op',
+    exclusiveClass: 'item',
+    guardText: '卸货',
+    timeoutMs: 60000,
+    handler: async (c, { chestLocations, keepTools }) => {
+      if (!c.bot?.openContainer) throw new Error('卸货能力不可用（插件缺失）')
+      // 目标箱子：显式 chestLocations → storage.chests 配置仓库 → 附近 32 格搜索
+      let targets = []
+      if (Array.isArray(chestLocations) && chestLocations.length) {
+        targets = chestLocations.filter(p => Number.isFinite(p?.x) && Number.isFinite(p?.y) && Number.isFinite(p?.z))
+      } else {
+        const configured = (c.cfg?.storage?.chests ?? []).map(p => ({ x: p.x, y: p.y, z: p.z }))
+        if (configured.length) targets = configured
+        else {
+          try {
+            targets = c.bot.findBlocks({ matching: (b) => b.name === 'chest' || b.name === 'barrel', maxDistance: 32, count: 4 })
+          } catch { targets = [] }
+        }
+      }
+      if (targets.length === 0) throw new Error('没有可用箱子（配置 storage.chests 或提供 chestLocations）')
+      const isTool = (n) => /_sword$|_pickaxe$|_axe$|_shovel$|_hoe$/.test(n ?? '')
+      const isFood = (n) => (c.bot.registry?.itemsByName?.[n]?.foodPoints ?? 0) > 0
+      let stored = 0
+      let boxes = 0
+      for (const t of targets.slice(0, 3)) {
+        let container = null
+        try {
+          const block = c.bot.blockAt(new Vec3(t.x, t.y, t.z))
+          if (!block) continue
+          container = await withTimeout(c.bot.openContainer(block), 8000, 'open chest timeout')
+          boxes++
+          for (const it of c.bot.inventory?.items?.() ?? []) {
+            const name = it?.name ?? ''
+            if (keepTools !== false && (isTool(name) || isFood(name))) continue
+            try {
+              const ok = await withTimeout(container.deposit(it.type, it.metadata ?? null, it.count), 8000, 'deposit timeout')
+              if (ok) stored++
+            } catch { /* 该物品存入失败跳过 */ }
+          }
+        } catch (err) {
+          c.logger.warn({ err: err.message }, '卸货失败（跳过该箱）')
+        } finally {
+          try { container?.close() } catch { /* 容器可能已关闭 */ }
+        }
+      }
+      return { stored, boxes }
+    }
+  })
+
+  register('fetch_items', {
+    schema: {
+      type: 'object',
+      required: ['itemName'],
+      properties: {
+        itemName: { type: 'string', description: '取回的物品名' },
+        count: { type: 'integer', min: 1, max: 64, description: '数量（缺省 = 全部）' },
+        chestLocations: { type: 'array', description: '目标箱子坐标（缺省 = storage.chests 配置仓库）' }
+      }
+    },
+    permission: 'op',
+    exclusiveClass: 'item',
+    guardText: '取货',
+    timeoutMs: 60000,
+    handler: async (c, { itemName, count, chestLocations }) => {
+      if (!c.bot?.openContainer) throw new Error('取货能力不可用（插件缺失）')
+      let targets = []
+      if (Array.isArray(chestLocations) && chestLocations.length) {
+        targets = chestLocations.filter(p => Number.isFinite(p?.x) && Number.isFinite(p?.y) && Number.isFinite(p?.z))
+      } else {
+        targets = (c.cfg?.storage?.chests ?? []).map(p => ({ x: p.x, y: p.y, z: p.z }))
+      }
+      if (targets.length === 0) throw new Error('没有可用箱子（配置 storage.chests 或提供 chestLocations）')
+      let fetched = 0
+      for (const t of targets.slice(0, 3)) {
+        let container = null
+        try {
+          const block = c.bot.blockAt(new Vec3(t.x, t.y, t.z))
+          if (!block) continue
+          container = await withTimeout(c.bot.openContainer(block), 8000, 'open chest timeout')
+          const item = container.items()?.find(it => it.name === itemName)
+          if (!item) continue
+          const take = Math.min(count ?? item.count, item.count)
+          const ok = await withTimeout(container.withdraw(item.type, item.metadata ?? null, take), 8000, 'withdraw timeout')
+          if (ok) fetched += take
+          if (fetched >= (count ?? Infinity)) break
+        } catch (err) {
+          c.logger.warn({ err: err.message }, '取货失败（跳过该箱）')
+        } finally {
+          try { container?.close() } catch { /* 容器可能已关闭 */ }
+        }
+      }
+      return fetched > 0 ? { fetched } : `仓库里没有 ${itemName}`
     }
   })
 
@@ -1032,8 +1283,16 @@ export function createPrimitiveRegistry (ctx) {
       const v = validateTaskOptions(type, options)
       if (!v.ok) throw new Error(`参数校验失败: ${v.error}`)
       c.tasks.addTask({ id, type, options: options ?? {}, notifyChat: true })
-      await new Promise(r => setImmediate(r)) // 等一个事件循环轮（init 抛错微任务内置 failed）
-      const st = c.tasks.getStatus().find(t => t.id === id)
+      // 等 init 完成：同步 init 在一个事件循环轮内 settle；异步 init 轮询至多
+      // 500ms——状态离开 created/init 即知结果（failed/completed/running/排队）
+      let st = null
+      const deadline = Date.now() + 500
+      while (Date.now() < deadline) {
+        st = c.tasks.getStatus().find(t => t.id === id)
+        if (st && !['created', 'init'].includes(st.state)) break
+        await new Promise(r => setTimeout(r, 25))
+      }
+      st = st ?? c.tasks.getStatus().find(t => t.id === id)
       if (!st) return `任务 ${id} 创建失败`
       if (st.state === 'failed') return `任务 ${id} (${type}) 启动失败: ${st.lastError ?? '未知原因'}`
       if (st.state === 'completed') return `任务 ${id} (${type}) 已自然完成（无事可做）`
@@ -1061,6 +1320,163 @@ export function createPrimitiveRegistry (ctx) {
   })
 
   // ============ 跟随（op / movement，exclusive 拒绝） ============
+
+  register('sleep', {
+    schema: {
+      type: 'object',
+      properties: {
+        timeoutMs: { type: 'integer', min: 30000, max: 600000, description: '等天亮超时（默认 5 分钟）' }
+      }
+    },
+    permission: 'op',
+    exclusiveClass: 'movement', // 走动+交互——与移动/任务互斥
+    guardText: '睡觉',
+    timeoutMs: 305000,
+    handler: async (c, { timeoutMs }, runtime) => {
+      if (!c.bot?.sleep) throw new Error('sleep 能力不可用（插件缺失）')
+      // 白天不睡（sleepAtNight 语义——脚本只管调，昼夜判定在此）
+      if (c.bot.time?.isDay) return { slept: false, reason: '白天不需要睡觉' }
+      // 找附近床（32 格内；_bed 后缀覆盖全部颜色变体）
+      let beds = []
+      try {
+        beds = c.bot.findBlocks({ matching: (b) => /_bed$/.test(b.name), maxDistance: 32, count: 4 })
+      } catch { beds = [] }
+      if (beds.length === 0) return { slept: false, reason: '附近没有床' }
+      const bed = c.bot.blockAt(beds[0])
+      if (!bed) return { slept: false, reason: '床位置不可用' }
+      const move = await createMovement(c.bot, c.logger).gotoPoint(beds[0], { range: 2, timeoutMs: 30000 })
+      if (!move.ok) return { slept: false, reason: `到床边失败: ${REASON_TEXT[move.reason] ?? move.err?.message}` }
+      let onWake = null
+      try {
+        await withTimeout(c.bot.sleep(bed), 15000, 'sleep timeout')
+        // 等天亮（wake 事件——白天自动唤醒/被吵醒提前返回）；listener 配对移除
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(() => { if (onWake) c.bot.removeListener('wake', onWake); resolve() }, timeoutMs ?? 300000)
+          onWake = () => { clearTimeout(t); resolve() }
+          c.bot.once('wake', onWake)
+          if (runtime?.signal?.aborted) {
+            clearTimeout(t); c.bot.removeListener('wake', onWake); reject(new Error('等待被中断'))
+          }
+          runtime?.signal?.addEventListener('abort', () => {
+            clearTimeout(t); c.bot.removeListener('wake', onWake); reject(new Error('等待被中断'))
+          }, { once: true })
+        })
+        return { slept: true }
+      } catch (err) {
+        if (err?.message?.includes('中断')) throw err
+        return { slept: false, reason: err.message }
+      }
+    }
+  })
+
+  register('harvest_animals', {
+    schema: {
+      type: 'object',
+      required: ['filter'],
+      properties: {
+        filter: { type: 'string', description: '动物名/类型（sheep 剪羊毛；chicken 捡蛋）' },
+        max: { type: 'integer', min: 1, max: 10, description: '最多处理数（默认 3）' }
+      }
+    },
+    permission: 'op',
+    exclusiveClass: 'interact',
+    guardText: '动物收获',
+    timeoutMs: 30000,
+    handler: async (c, { filter, max }) => {
+      const lower = String(filter ?? '').toLowerCase()
+      const count = max ?? 3
+      const out = []
+      if (lower.includes('sheep')) {
+        // 剪羊毛：equip shears → 走近 → 右键（useEntityOn 原始包）
+        const shears = c.bot.inventory?.items()?.find(it => it.name === 'shears')
+        if (!shears) return { sheared: 0, reason: '没有剪刀（shears）' }
+        const sheep = nearbyEntities(c.bot, { name: 'sheep', maxDistance: 24, limit: count })
+        let sheared = 0
+        for (const e of sheep) {
+          if (!e?.position) continue
+          const move = await createMovement(c.bot, c.logger).approachEntity(e, { range: 3, timeoutMs: 15000 })
+          if (!move.ok) continue
+          try {
+            await withTimeout(c.bot.equip(shears, 'hand'), 10000, 'equip timeout')
+            useEntityOn(c.bot, e)
+            sheared++
+          } catch { /* 剪毛失败跳过该只 */ }
+        }
+        out.push(`剪毛 ${sheared} 只`)
+      }
+      if (lower.includes('chicken')) {
+        // 收鸡蛋：走近 item 实体（蛋/羽毛掉落物——实体碰撞自动拾取）
+        const items = nearbyEntities(c.bot, { kind: 'item', maxDistance: 24, limit: count })
+        let collected = 0
+        for (const e of items) {
+          if (!e?.position) continue
+          const move = await createMovement(c.bot, c.logger).approachEntity(e, { range: 2, timeoutMs: 15000 })
+          if (move.ok) collected++
+        }
+        out.push(`拾取掉落物 ${collected} 个`)
+      }
+      return out.length ? { done: out.join('；') } : { done: '没有匹配的动物/掉落物' }
+    }
+  })
+
+  register('set_place', {
+    schema: {
+      type: 'object',
+      required: ['name'],
+      properties: { name: { type: 'string', description: '地点名（如 home/矿场/基地）——记录当前位置' } }
+    },
+    permission: 'op',
+    exclusiveClass: 'flow',
+    guardText: '',
+    timeoutMs: 5000,
+    handler: async (c, { name }) => {
+      const p = c.bot?.entity?.position
+      if (!p) throw new Error('当前位置不可用')
+      const dim = c.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
+      discovery.setPlace(name, p, dim)
+      return `地点 ${name} 已记录（${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}${dim ? ` ${dim}` : ''}）`
+    }
+  })
+
+  register('remove_place', {
+    schema: {
+      type: 'object',
+      required: ['name'],
+      properties: { name: { type: 'string' } }
+    },
+    permission: 'op',
+    exclusiveClass: 'flow',
+    guardText: '',
+    timeoutMs: 5000,
+    handler: async (c, { name }) => {
+      return discovery.removePlace(name) ? `地点 ${name} 已删除` : `地点 ${name} 不存在`
+    }
+  })
+
+  register('set_goal', {
+    schema: {
+      type: 'object',
+      required: ['text'],
+      properties: {
+        text: { type: 'string', description: '长期目标（玩家交代的任务），空文本 = 清除' },
+        plan: { type: 'array', items: { type: 'string' }, description: '计划步骤（≤5 条，可选）' }
+      }
+    },
+    permission: 'op',
+    exclusiveClass: 'flow',
+    guardText: '',
+    timeoutMs: 5000,
+    handler: async (c, { text, plan }, runtime) => {
+      const user = runtime?.user ?? c._caller ?? null
+      if (!user || !c.agent?.setGoal) throw new Error('目标记忆不可用（L2 未启用或会话缺失）')
+      if (!text || !String(text).trim()) {
+        c.agent.clearGoal(user)
+        return '长期目标已清除'
+      }
+      c.agent.setGoal(user, String(text).trim(), plan)
+      return `长期目标已设置: ${String(text).trim().slice(0, 80)}`
+    }
+  })
 
   register('follow_player', {
     schema: {

@@ -1,4 +1,5 @@
 import { isArea } from '../util.js'
+import { CROP_MATURITY, CROP_BY_BLOCK } from '../../core/crops.js'
 // 农场任务脚本：区域内 种植 → 等待成熟 → 收割 → 补种 的循环。
 // 语义说明：
 // - init 校验（area 六坐标/cropTypes 非空/未知作物与方块/插件）
@@ -26,10 +27,9 @@ export default {
     if (!task.bot.collectBlock || !task.bot.pathfinder) {
       throw new Error('farm 任务需要 collectBlock/pathfinder 插件')
     }
-    const CROP_MATURITY = { wheat: 7, carrots: 7, potatoes: 7, beetroots: 3, nether_wart: 3 }
     for (const crop of o.cropTypes) {
-      if (!(crop in CROP_MATURITY)) {
-        throw new Error(`未知作物: ${crop}（已知: ${Object.keys(CROP_MATURITY).join(', ')}）`)
+      if (!(crop in CROP_MATURITY) && !Object.values(CROP_BY_BLOCK).includes(crop)) {
+        throw new Error(`未知作物: ${crop}（已知: ${[...Object.keys(CROP_MATURITY), ...Object.values(CROP_BY_BLOCK)].join(', ')}）`)
       }
       const block = task.bot.registry?.blocksByName?.[crop]
       if (!block) throw new Error(`未知方块类型: ${crop}`)
@@ -38,6 +38,11 @@ export default {
   script: {
     steps: [
       { ctrl: 'loop', max: '${maxCycles}', body: [
+        // 天黑睡觉（sleepAtNight 默认 false；true 时天黑找床睡过夜晚——昼夜判定
+        // 在 sleep 原语内部，白天直接返回不阻塞）
+        { ctrl: 'if', cond: { type: 'config', key: 'sleepAtNight', equals: true }, then: [
+          { op: 'sleep', args: {} }
+        ] },
         // 区域扫描：成熟/未成熟/耕地分类（observe_crops 原语）
         { op: 'observe_crops', args: { area: '${area}', cropTypes: '${cropTypes}' }, as: 'crops' },
         // 有成熟作物 → 收割（分批 4 + NoChests 清空等待由原语/条件处理）

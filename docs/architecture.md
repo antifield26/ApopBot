@@ -83,6 +83,15 @@ minecraft-bot (Node.js ≥22, ESM)
 - `.npmrc`：`legacy-peer-deps=true`（补丁不改版本号，peer 校验解析依赖官方版本即可，保留以维持单一副本解析）；无 git 依赖 → 无 `allow-git`
 - 门禁：`npm run check:compat`（含 3.7 补丁哨兵门禁——4 个补丁缺失/未应用即 FAIL；每次部署预检）；上游合并后迁移 = 删 patches + 删 postinstall（见 scripts/upstream-lib.mjs 头注释）
 
+## 功能扩展语义（第 13 轮）
+
+- **仓库管理**：`storage.chests` 配置仓库坐标——collect_blocks 背包满（NoChests）时 autoDeposit 优先存入配置仓库，未配置才附近搜索；`store_items`/`fetch_items` 原语（卸货/取货，工具与食物豁免）
+- **工具耐久管理**：collect_blocks 挖掘前 `ensureMiningTool`——空手/手持将坏时从背包换该类最高材料等级工具（镐/斧/锹按方块推断，只升不降）；combat init 护甲自动装备（armorManager.equipAll 防御式）
+- **farm 作物扩展**：crops.js 单一来源四元组（CROP_MATURITY age 型 / CROP_BY_BLOCK 高度+果实型 / SEED_BY_CROP / CROP_PLANT_MODE 种植模式）——甘蔗（高度型，收顶部保留根部）、南瓜/西瓜（果实块）、甜浆果/可可（age 型）；可可只收不种（玩家预种）
+- **睡觉**：`sleep` 原语昼夜判定内部化（白天直接返回不阻塞）——找床 → 走到 → 睡 → wake 事件等待（listener 配对移除）；farm/combat `sleepAtNight: true` 可选
+- **命名地点**：discovery places（32 上限带维度）——`!home`/`set_place` 登记，query_map place 分支查询（LLM 语义导航）
+- **移动卡住诊断**：goto stuck 重试时记录周围 3×3 方块/手持/落地态（issue #1 现场数据——离线不可复现依赖此日志定位）
+
 ## 注释与文档约定（第 12 轮规范化）
 
 - **代码注释只解释当前代码**的意图/契约/边界（现在时态）：为什么这样设计、何时触发、什么条件下跳过、与哪里的契约对应

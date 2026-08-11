@@ -51,9 +51,10 @@ test('B1: 快照往返——attachStore 后 setMemory 持久化 + importSnapshot
   discovery.recordAnchor({ x: 0, y: 64, z: 0 })
   assert.ok(saved.length >= 1, '修改应触发 setMemory')
   const snap = saved.at(-1)
-  assert.equal(snap.version, 1)
+  assert.equal(snap.version, 2, 'v2 快照（含 places）')
   assert.equal(snap.resources.diamond_ore.length, 1)
   assert.equal(snap.anchors.length, 1)
+  assert.ok(Array.isArray(snap.places), 'v2 快照含 places 数组')
   // 清空后回灌
   discovery._reset()
   discovery.importSnapshot(snap)
@@ -136,4 +137,27 @@ test('G1: 维度感知——快照往返保留维度，stats 统计维度分布'
   discovery.importSnapshot(snap)
   assert.equal(discovery.query('nether_gold_ore', null, 5, 'nether').length, 1, '快照往返后维度保留')
   assert.equal(discovery.stats().dimensions.nether, 1, '维度分布统计')
+})
+
+// 命名地点（A7）：!home set / set_place 登记的语义坐标
+test('A7: setPlace/removePlace/getPlace——同名覆盖 + 名字规范化 + 容量上限', () => {
+  discovery.setPlace('Home', { x: 10, y: 64, z: 20 }, 'overworld')
+  assert.equal(discovery.getPlace('home').x, 10, '名字小写化匹配')
+  discovery.setPlace('home', { x: 11, y: 64, z: 20 }, 'overworld') // 同名覆盖
+  assert.equal(discovery.getPlace('home').x, 11, '同名覆盖更新坐标')
+  discovery.setPlace('mine', { x: 100, y: 30, z: 100 }, 'nether')
+  assert.equal(discovery.getPlace('MINE').dimension, 'nether', '维度保留（下界基地独立）')
+  assert.equal(discovery.removePlace('HOME'), true, '删除命中')
+  assert.equal(discovery.getPlace('home'), null, '删除后查空')
+  assert.equal(discovery.removePlace('home'), false, '重复删除 false')
+})
+
+test('A7: 快照往返保留 places（version 2）', () => {
+  discovery.setPlace('base', { x: 1, y: 2, z: 3 }, 'overworld')
+  const snap = discovery.snapshot()
+  assert.equal(snap.version, 2)
+  assert.equal(snap.places[0].name, 'base')
+  discovery._reset()
+  discovery.importSnapshot(snap)
+  assert.equal(discovery.getPlace('base').z, 3, '回灌后地点保留')
 })
