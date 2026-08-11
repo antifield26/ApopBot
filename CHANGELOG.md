@@ -3,7 +3,7 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 **版本单一来源 = package.json**（`node scripts/release.mjs [patch|minor|major]` bump，check:compat 交叉校验 package.json ↔ lockfile）。
 
-## [Unreleased]
+## [1.1.0] - 2026-08-11
 
 - **第 13 轮：Bot 功能扩展 + LLM 能力深化（全档实施，见 docs/roadmap.md）**：
   - **LLM 深化（A1-A7）**：目标记忆（sessions v2：goal+plan 跨会话持久化，`!agent goal` 查看/设置/清除 + set_goal 原语）；对话滚动摘要（历史超限 LLM 压缩替代硬丢——"继续"不再断片）；检索式经验（按失败 op 匹配注入 ≤3 条 + 同教训去重合并计数）；退化状态自动注入（低血/饥饿/背包满/工具将坏，正常零成本）；observe_tasks 任务状态感知原语（注册即进工具集）；世界事件被动感知（被攻击/低血/背包满/稀有收集 → 下次对话注入）；命名地点（!home set/list/remove + set_place/remove_place 原语 + query_map place 分支，带维度）
