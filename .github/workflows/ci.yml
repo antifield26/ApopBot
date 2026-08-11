@@ -1,6 +1,6 @@
 # CI：测试 + 兼容性门禁（第六轮 C12 新建——此前零 CI，靠部署机手工触发）。
 # 覆盖：ubuntu（debian 系）与 windows 双端 × Node 24（LTS）/ 26（部署机版本）。
-# engines >=22 但 CI 面向实际运行环境：部署机 = Windows + Node 26，LTS = 24。
+# engines >=24 与 CI 矩阵一致：部署机 = Windows + Node 26，LTS = 24。
 # 测试全离线（mock 完善，无真实网络调用）；check:compat 无 --probe（不依赖服务器）。
 # v1.0.0（C1）：依赖全为官方 npm 版 + patch-package 本地补丁（26.1.2 适配），
 # 无 git 依赖 → 不再需要 git+ssh→https rewrite hack。

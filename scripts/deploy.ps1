@@ -13,7 +13,7 @@
 #                                     自动触发 npm ci + check:compat + 测试）→ 重启服务
 #
 # 前置要求:
-#   - Node.js >= 22 LTS   winget install --id OpenJS.NodeJS.LTS
+#   - Node.js >= 24 LTS   winget install --id OpenJS.NodeJS.LTS
 #   - NSSM                winget install --id NSSM.NSSM --accept-package-agreements --accept-source-agreements
 #   - git（仅部署仓库拉取用；依赖已零 git 引用——npm ci 不再需要 insteadOf 重写，第 11 轮清理）
 #   - 私密配置放 config/service.env（gitignore；KEY=VALUE 行，# 开头为注释）
@@ -133,8 +133,8 @@ if ($nodePath -match 'WindowsApps') {
   exit 1
 }
 $nodeVer = (& node -v).Trim()
-if ([int](($nodeVer -replace '^v(\d+)\..*', '$1')) -lt 22) {
-  Write-Error "需要 Node.js >= 22，当前: $nodeVer"
+if ([int](($nodeVer -replace '^v(\d+)\..*', '$1')) -lt 24) {
+  Write-Error "需要 Node.js >= 24，当前: $nodeVer"
   exit 1
 }
 Write-Host "node $nodeVer @ $nodePath"

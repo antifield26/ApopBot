@@ -5,7 +5,7 @@
   "version": "1.4.0",
   "description": "Production Minecraft bot for PaperMC 26.1.2",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "start": "node src/index.js",

@@ -20,14 +20,14 @@ winget install --id NSSM.NSSM --accept-package-agreements --accept-source-agreem
 winget install --id Git.Git                                                                     # git（部署拉取用；依赖已无 git 引用，npm ci 不再需要）
 ```
 
-重开 shell 后验证：`node -v`（≥22）、`nssm version`。
+重开 shell 后验证：`node -v`（≥24）、`nssm version`。
 
 > 依赖全部为官方 npm 版，26.1.2 协议适配由 `patches/` 的 patch-package
 > 补丁承担（`npm install`/`npm ci` 的 postinstall 自动应用，无需任何手工步骤）。
 > 升级 mineflayer/minecraft-protocol 版本时补丁会因 context 冲突报错——先删补丁重装
 > 再按 docs/upstream-migration.md 重新生成。
 
-重开 shell 后验证：`node -v`（≥22）、`nssm version`。
+重开 shell 后验证：`node -v`（≥24）、`nssm version`。
 
 ## 目录布局
 
@@ -61,7 +61,7 @@ powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Restart # 仅重启
 powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Update  # U11 一键更新：git pull → 完整部署流程 → 重启（消除手动 git pull + 重跑两步）
 ```
 
-deploy.ps1 流程：预检（node ≥22、非 Store 存根、nssm 存在）→ 补 config.json → 依赖哈希门控 `npm ci --omit=dev` → `check:compat` + `npm test` → 服务不存在则 `nssm install` → **重跑全部 `nssm set`（幂等，参数变更即生效）** → 启动/重启。`nssm set` 不自动提权，故变更操作必须在管理员 shell 中执行。
+deploy.ps1 流程：预检（node ≥24、非 Store 存根、nssm 存在）→ 补 config.json → 依赖哈希门控 `npm ci --omit=dev` → `check:compat` + `npm test` → 服务不存在则 `nssm install` → **重跑全部 `nssm set`（幂等，参数变更即生效）** → 启动/重启。`nssm set` 不自动提权，故变更操作必须在管理员 shell 中执行。
 
 ## NSSM 服务语义（systemd → NSSM 映射）
 

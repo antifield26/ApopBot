@@ -115,14 +115,18 @@ test('roles: 会话隔离——primary:steve 与 planner:steve 独立', async ()
   const ctx = makeCtx()
   const { registry, provider } = makeRegistry(ctx, [
     { text: '主角色回复', toolCalls: [] },
-    { text: '规划器回复', toolCalls: [] }
+    { text: '规划器回复', toolCalls: [] },
+    { text: '规划器回复2', toolCalls: [] }
   ])
   await registry.chat('steve', '你好')
   await registry.planner.chat('steve', '你是什么角色？')
-  assert.equal(provider.calls.length, 2)
-  // 两个调用是不同会话（消息序列独立）——planner 会话没有 primary 的历史
-  const plannerMsgs = provider.calls[1].messages
-  assert.ok(plannerMsgs.some(m => m.content === '规划器回复'), 'planner 会话独立历史')
+  await registry.planner.chat('steve', '再说一次')
+  assert.equal(provider.calls.length, 3)
+  // planner 第二次调用的历史 = 上次 user+assistant 轮（含 '规划器回复'）
+  const plannerMsgs = provider.calls[2].messages
+  assert.ok(plannerMsgs.some(m => m.content === '规划器回复'), 'planner 会话保留自己的历史')
+  // 且不含 primary 的消息（隔离——primary 的历史不泄漏进 planner 会话）
+  assert.ok(!plannerMsgs.some(m => m.content === '你好'), 'planner 会话无 primary 历史')
 })
 
 test('roles: 会话跨实例继承——role 前缀 key 在新实例可见（模拟 rebuild）', async () => {
