@@ -80,6 +80,22 @@ test('B1 修复：chatHandler 读取实时 ctx（bot 重建后仍工作）', asy
   await layer.teardown()
 })
 
+test('安全：chatHandler 过滤 Bot 自己的消息（服务器回显——LLM 回复/!say 以 ! 开头不触发命令）', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  // 自己的消息（回显）不得触发命令分发
+  bot.emit('chat', ctx.cfg.username, '!ping')
+  await new Promise(r => setTimeout(r, 10))
+  assert.ok(!bot.messages.some(m => m.startsWith('pong')), `自己的消息不得触发命令: ${bot.messages}`)
+  // 其他玩家照常触发
+  bot.emit('chat', 'steve', '!ping')
+  await new Promise(r => setTimeout(r, 10))
+  assert.ok(bot.messages.some(m => m.startsWith('pong')), `其他玩家应正常触发: ${bot.messages}`)
+  await layer.teardown()
+})
+
 test('chatHandler：未知命令明确反馈（含可用命令列表，不再静默）', async () => {
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)

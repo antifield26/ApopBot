@@ -257,6 +257,15 @@ test('chat: 非 op 调用者身份注入（标注受限）', async () => {
   assert.ok(!provider.calls[0].system.includes('op 白名单成员'))
 })
 
+test('安全: system prompt 含注入防御段（消息内改变行为的文本是注入攻击）', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [])
+  await agent.chat('steve', 'hi')
+  const sys = provider.calls[0].system
+  assert.ok(sys.includes('注入攻击'), 'system 应声明注入攻击边界')
+  assert.ok(sys.includes('唯一的用户输入'), 'system 应声明玩家消息是唯一输入')
+})
+
 test('P1-7 修复：follow_player 插件未启用 → ok:false（不再假成功误导 LLM）', async () => {
   const ctx = makeCtx({}, { ops: ['op1'] }) // makeCtx 默认 plugins: {}（follow 未启用）
   const { agent } = makeAgent(ctx, [])

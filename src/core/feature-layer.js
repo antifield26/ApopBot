@@ -140,7 +140,10 @@ export function createFeatureLayerManager (ctx, logger) {
     ctx.agent = createL2(ctx.cfg, ctx)
 
     // chat 监听挂在当前 bot 上；旧 bot 的监听随旧对象消亡
+    // 服务器会回显 Bot 自己的消息——不自过滤会把 LLM 回复/!say 内容里
+    // 以 ! 开头的文本当命令解析（非 op 玩家可借 LLM 触发 op 命令）
     ctx.chatHandler = async (sender, msg) => {
+      if (sender === ctx.cfg.username) return
       if (!msg || !msg.startsWith('!')) return
       const hit = await ctx.commands?.dispatch(msg, { sender, ctx }).catch((err) => {
         log().error({ err: err.message }, 'dispatch error')
