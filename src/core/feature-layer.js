@@ -6,6 +6,9 @@
 // 重绑定成本高且不可测），而是每次 spawn 全量重建，天然无状态泄漏。
 //
 // 重建经内部 promise 链串行化：重叠的 spawn/reload 不会并发初始化。
+//
+// 职责拆分：事件监听类（聊天/玩家/死亡/世界感知/idle 播报）在 fl-*.js /
+// idle-watcher.js，本文件只保留装配编排（生命周期 + 组装 + 恢复）。
 
 import { TaskManager } from '../tasks/manager.js'
 import { createCommandRegistry } from '../commands/commands.js'
@@ -13,59 +16,15 @@ import { createL2 } from '../l2/index.js'
 import { sendChat } from './chat.js'
 import { createNotifier } from './notify.js'
 import * as discovery from './discovery.js'
+import { installChatListener } from './fl-chat.js'
+import { installDeathHandling } from './fl-death.js'
+import { installPlayerTracking } from './fl-players.js'
+import { installMemoryInvalidation, installWorldSensing } from './fl-world.js'
+import { bindIdleWatcher } from './idle-watcher.js'
 
-// 玩家上线问候——模块级已知玩家 Set 与按玩家冷却。
-// 模块级而非 doRebuild 闭包：player_info 首包会把登录时已在线的玩家全部触发
-// playerJoined（重连后闭包重建会把在线玩家当新人问候全服）；跨重建保留。
-// 只做上线问候且只走固定模板（LLM 不参与）：下线告别对离场玩家不可见，
-// 模板成本为零且永不阻塞/刷屏；knownPlayers 在 playerLeft 时删除，
-// 使"离开后重新加入"的玩家能再次被问候
-const knownPlayers = new Set()
-const lastGreetAt = new Map()
-const GREET_COOLDOWN_MS = 60000
-
-/** 测试钩子：重置上线问候状态（模块级 knownPlayers/冷却跨用例共享）。 */
-export function _resetGreetState () {
-  knownPlayers.clear()
-  lastGreetAt.clear()
-}
-
-// 任务长 idle LLM 播报——waitingReason 持续超过
-// IDLE_THRESHOLD_MS 时经 LLM 一句话解释（玩家/运维感知"卡在哪"）。模块级
-// interval（跨重建保留——doRebuild 每重建新建 interval 会累积泄漏），重建时
-// 只更新引用；已播报按 `任务id:原因` 去重 + 冷却。summarize 自带 60s 全局冷却。
-const IDLE_POLL_MS = 60000 // 每分钟检查一次
-const IDLE_THRESHOLD_MS = 10 * 60000 // waitingReason 持续 10 分钟才播报
-const IDLE_REANNOUNCE_MS = 60 * 60000 // 同一任务同原因至少 1 小时才再播报
-const idleWatcher = { bot: null, ctx: null, announced: new Map() }
-setInterval(() => {
-  const { bot, ctx } = idleWatcher
-  if (!bot || !ctx?.tasks || !ctx.agent?.summarize) return
-  const now = Date.now()
-  for (const t of ctx.tasks.getStatus()) {
-    if (t.state !== 'running' || !t.waitingReason || !t.waitingSince) continue
-    const key = `${t.id}:${t.waitingReason}`
-    const last = idleWatcher.announced.get(key) ?? 0
-    if (now - t.waitingSince > IDLE_THRESHOLD_MS && now - last > IDLE_REANNOUNCE_MS) {
-      idleWatcher.announced.set(key, now)
-      // 上限 64：防 announced 无限增长（长期运行的等待组合有限）
-      if (idleWatcher.announced.size > 64) {
-        idleWatcher.announced.delete(idleWatcher.announced.keys().next().value)
-      }
-      const mins = Math.round((now - t.waitingSince) / 60000)
-      ctx.agent.summarize(`任务 ${t.id}（${t.type}）已等待 ${mins} 分钟（原因：${t.waitingReason}）。用一句话向服务器玩家播报任务当前状态。`)
-        .then((s) => { if (s) sendChat(bot, `§e[任务 ${t.id}] ${s}`).catch(() => {}) })
-        .catch(() => {})
-    }
-  }
-}, IDLE_POLL_MS).unref?.()
-
-/** 测试钩子：清空 idle 播报去重表（跨用例共享）。 */
-export function _resetIdleWatcher () {
-  idleWatcher.bot = null
-  idleWatcher.ctx = null
-  idleWatcher.announced.clear()
-}
+// 测试钩子 re-export（动态 import 路径不变——测试零改动）
+export { _resetGreetState } from './fl-players.js'
+export { _resetIdleWatcher } from './idle-watcher.js'
 
 export function createFeatureLayerManager (ctx, logger) {
   let pending = Promise.resolve()
@@ -139,130 +98,14 @@ export function createFeatureLayerManager (ctx, logger) {
 
     ctx.agent = createL2(ctx.cfg, ctx)
 
-    // chat 监听挂在当前 bot 上；旧 bot 的监听随旧对象消亡
-    // 服务器会回显 Bot 自己的消息——不自过滤会把 LLM 回复/!say 内容里
-    // 以 ! 开头的文本当命令解析（非 op 玩家可借 LLM 触发 op 命令）
-    ctx.chatHandler = async (sender, msg) => {
-      if (sender === ctx.cfg.username) return
-      if (!msg || !msg.startsWith('!')) return
-      const hit = await ctx.commands?.dispatch(msg, { sender, ctx }).catch((err) => {
-        log().error({ err: err.message }, 'dispatch error')
-        return true // 出错不算未知命令
-      })
-      // 未知命令静默是"指令无效"体验的一部分——明确反馈（含可用命令提示）。
-      // 统一走 sendChat：剥 § 颜色码 + 分片（服务端对含 § 消息直接踢出 → fatal 停服，
-      // 裸 bot.chat 发 § 前缀会触发）
-      if (hit === false) {
-        const names = (ctx.commands?.list() ?? []).map(c => `!${c.name}`).join(' ')
-        try { await sendChat(bot, `§c未知命令（可用: ${names}）`, ctx.cfg.chat?.maxLength) } catch { /* 聊天通道可能未就绪 */ }
-      }
-    }
-    bot.on('chat', ctx.chatHandler)
-
-    // 死亡处理：createBot 显式 respawn:false → 死亡后 bot 停在死亡界面，
-    // 重生时序完全可控：任务在死尸上空转前先暂停。
-    // 死亡 → 通知 + 暂停全部任务 + 停止跟随 + 请求重生。
-    // L2 可用时经 LLM 一句话播报死因；重生后自动恢复暂停的任务 + 播报重生位置。
-    // deathPaused 是 promise：respawn 侧 await 保证"先暂停完、再恢复"——
-    // 快速重生服 respawn 可能先于 pauseAll 完成到达，同步读取会漏掉暂停名单
-    let deathPaused = Promise.resolve([]) // 本次死亡暂停任务 id 的 promise（重生时恢复）
-    bot.on('death', () => {
-      const p = ctx.tasks?.pauseAll() ?? Promise.resolve([])
-      deathPaused = p.then((ids) => {
-        if (ids.length) log().info({ tasks: ids }, 'death: tasks paused')
-        return ids
-      }).catch((err) => {
-        log().warn({ err: err.message }, 'death: pause tasks failed')
-        return []
-      })
-      ctx.plugins?.follow?.stop?.()
-      const pos = bot.entity?.position
-      const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
-      sendChat(bot, `§c[bot] 已死亡（${loc}）——任务已暂停，自动重生中`).catch(() => { /* 聊天通道未就绪 */ })
-      // 死亡推送（webhook 独立于游戏聊天——无人值守时玩家可能不在线）
-      notifier().send('death', `Bot 死亡（${loc}）`, '任务已暂停，自动重生中')
-      // LLM 一句话播报（附加层——任何失败回退模板，不得阻塞重生）
-      if (ctx.agent?.summarize) {
-        ctx.agent.summarize(`Bot 在 Minecraft 服务器死亡（坐标 ${loc}）。用一句话向服务器玩家播报（如可能的死因），简洁。`)
-          .then((s) => {
-            if (s) {
-              sendChat(bot, `§c[bot] ${s}`).catch(() => {})
-              // LLM 文案进 webhook（无人值守时唯一感知通道；固定模板推送已有）
-              notifier().send('death', `Bot 死亡（${loc}）`, `LLM 死因播报: ${s}`)
-            }
-          })
-          .catch(() => {})
-      }
-      try { bot.respawn() } catch { /* 重生通道未就绪 */ }
-    })
-    // 玩家上线问候（entities.js 发射 playerJoined/playerLeft 事件驱动）。
-    // 只问候不告别（下线告别对离场玩家不可见）、只走固定模板（LLM 不参与）、
-    // 独立 60s 按玩家冷却防刷屏——问候永不阻塞/不刷屏，也不占 summarize 全局冷却
-    bot.on('playerJoined', (p) => {
-      const name = p?.username
-      if (!name || name === ctx.cfg.username) return
-      if (knownPlayers.has(name)) return // 首包洪峰去重：在线玩家不算新人
-      knownPlayers.add(name)
-      const now = Date.now()
-      if (now - (lastGreetAt.get(name) ?? 0) < GREET_COOLDOWN_MS) return
-      lastGreetAt.set(name, now)
-      sendChat(bot, `§a[bot] 欢迎回来，${name}`).catch(() => {})
-    })
-    // 只做记账：离开玩家移出已知集合——重新加入时才会再次触发问候
-    bot.on('playerLeft', (p) => {
-      const name = p?.username
-      if (!name || name === ctx.cfg.username) return
-      knownPlayers.delete(name)
-    })
-
-    // 地形记忆失效：方块变化（被挖/被放/火烧/水冲等）→ 该坐标的探索记忆删除——
-    // 记忆只增不减会让 query_map 长期返回过期坐标。只覆盖已加载区块
-    //（mineflayer blockUpdate 的感知范围）——远处记忆变化由 query_map 查询验证兜底。
-    // 事件挂在 bot 实例上随重建/断线自然释放，无需 teardown 清理。
-    bot.on('blockUpdate', (oldBlock) => {
-      const p = oldBlock?.position
-      if (p) discovery.removeResourceAt(p.x, p.y, p.z)
-    })
-
-    // 世界事件被动感知：事件写入 agent.pendingEvents，玩家下次对话时 LLM 注入
-    // 感知（不做主动唤醒——busy 门/玩家冷却/权限语义约束）。监听挂 bot 实例随
-    // 重建释放；高频事件由 notifyEvent 按类型去重合并只保最新状态
-    bot.on('health', () => {
-      const hp = bot.health
-      const food = bot.food
-      if (typeof hp === 'number' && hp > 0 && hp < 10) {
-        ctx.agent?.notifyEvent?.('low', `血量低 ${Math.round(hp)}`)
-      } else if (typeof food === 'number' && food > 0 && food < 6) {
-        ctx.agent?.notifyEvent?.('low', `饥饿 ${Math.round(food)}`)
-      }
-    })
-    bot.on('entityHurt', (entity, source) => {
-      if (entity !== bot.entity) return
-      const who = source?.username ?? source?.name ?? source?.type ?? 'unknown'
-      ctx.agent?.notifyEvent?.('attacked', `被 ${who} 攻击`)
-    })
-    // 重要资源收集（钻石/绿宝石/远古残骸/铁/金/红石/青金石——高频杂物不记）
-    bot.on('playerCollect', (collector, collected) => {
-      if (collector !== bot.entity) return
-      const name = collected?.name ?? collected?.type ?? ''
-      if (/diamond|emerald|ancient_debris|iron|gold|redstone|lapis/.test(name)) {
-        ctx.agent?.notifyEvent?.('collect', `获得 ${name}`)
-      }
-    })
-
-    bot.on('respawn', async () => {
-      // 恢复本次死亡暂停的任务（手动暂停的保持暂停）；await 暂停 promise 确保
-      // pauseAll 完成后再恢复（快速重生服 respawn 先到的竞态）
-      const ids = await deathPaused
-      deathPaused = Promise.resolve([])
-      for (const id of ids) {
-        ctx.tasks?.resumeTask(id).catch(() => { /* 任务可能已结束 */ })
-      }
-      const pos = bot.entity?.position
-      const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
-      sendChat(bot, `§a[bot] 已重生（${loc}），任务已恢复`).catch(() => { /* 聊天通道未就绪 */ })
-      notifier().send('respawn', `Bot 已重生（${loc}）`, '任务已恢复')
-    })
+    // 事件监听挂当前 bot 实例上（随重建/断线自然释放，无需 teardown 清理）。
+    // 依赖序：commands 先于 chat（handler 分发读 ctx.commands）；
+    // agent 先于 world（health 回调用 ctx.agent.notifyEvent）
+    installChatListener(ctx, bot, log)
+    installDeathHandling(ctx, bot, log, notifier)
+    installPlayerTracking(ctx, bot)
+    installMemoryInvalidation(ctx, bot)
+    installWorldSensing(ctx, bot)
 
     log().info({ bot: ctx.cfg.username }, 'feature layer ready')
 
@@ -279,8 +122,7 @@ export function createFeatureLayerManager (ctx, logger) {
       }
     }
     // idle 播报 watcher 引用随重建更新（模块级 interval 跨重建保留）
-    idleWatcher.bot = bot
-    idleWatcher.ctx = ctx
+    bindIdleWatcher(ctx, bot)
   }
 
   /**
