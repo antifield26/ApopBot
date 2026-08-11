@@ -314,3 +314,41 @@ test('第 10 轮方案 B：blockUpdate 方块变化 → 探索记忆删除（接
   await layer.teardown()
   _reset()
 })
+
+test('P1: 被攻击（entityHurt 怪物源）→ 危险区域记录（被动写路径）', async () => {
+  const discovery = await import('../src/core/discovery.js')
+  discovery._reset()
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  bot.entity = { position: { x: 10, y: 64, z: 10 } }
+  bot.game = { dimension: 'minecraft:overworld' }
+  await layer.rebuild(bot)
+  bot.emit('entityHurt', bot.entity, { name: 'zombie', type: 'hostile' })
+  await new Promise(r => setImmediate(r))
+  const zones = discovery.listDangerZones()
+  assert.equal(zones.length, 1, '怪物攻击应记录危险区域')
+  assert.deepEqual(zones[0].hostileNames, ['zombie'])
+  assert.equal(zones[0].x, 10)
+  await layer.teardown()
+  discovery._reset()
+})
+
+test('P1: 被攻击（玩家/自伤源）→ 不记录', async () => {
+  const discovery = await import('../src/core/discovery.js')
+  discovery._reset()
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  bot.entity = { position: { x: 10, y: 64, z: 10 } }
+  await layer.rebuild(bot)
+  // 玩家攻击（username 存在）
+  bot.emit('entityHurt', bot.entity, { username: 'steve', name: 'player' })
+  // 自伤/环境（source 是 bot 自己或 undefined）
+  bot.emit('entityHurt', bot.entity, bot.entity)
+  bot.emit('entityHurt', bot.entity, undefined)
+  await new Promise(r => setImmediate(r))
+  assert.equal(discovery.listDangerZones().length, 0, '玩家/自伤不记录')
+  await layer.teardown()
+  discovery._reset()
+})

@@ -61,16 +61,23 @@ export function sampleResources (bot) {
 }
 
 /** 实体扫描（半径 64；返回分类计数与敌对名单——26.1 entity.type 是唯一可靠分类，
- * e.kind 是数据表大写 category（'Hostile mobs'），不可用于分类）。 */
+ * e.kind 是数据表大写 category（'Hostile mobs'），不可用于分类）。
+ * hostile 是显示串（`zombie(12m)`）；hostileNames 是纯名字（落危险区域记忆用——
+ * 双字段同一次遍历生成，消费方按需取用）。 */
 export function scanEntities (bot) {
   const hostile = []
+  const hostileNames = []
   const counts = { hostile: 0, passive: 0, neutral: 0, player: 0, other: 0 }
   for (const e of nearbyEntities(bot, { maxDistance: 64, limit: 50 })) {
     const type = e.type
-    if (type === 'hostile') { counts.hostile++; hostile.push(`${e.name}(${e.dist}m)`) } else if (counts[type] !== undefined) counts[type]++
+    if (type === 'hostile') {
+      counts.hostile++
+      hostile.push(`${e.name}(${e.dist}m)`)
+      if (e.name && !hostileNames.includes(e.name)) hostileNames.push(e.name)
+    } else if (counts[type] !== undefined) counts[type]++
     else counts.other++
   }
-  return { counts, hostile: hostile.slice(0, 8) }
+  return { counts, hostile: hostile.slice(0, 8), hostileNames: hostileNames.slice(0, 8) }
 }
 
 /** 方向解析（8 向 + random；返回 {dx, dz} 单位向量）。 */
@@ -138,6 +145,10 @@ export async function exploreStep (bot, log, { maxDistance = EXPLORE_STEP, direc
   const end = bot.entity?.position
   // 锚点带维度（下界探索不污染主世界覆盖统计）
   if (end) discovery.recordAnchor(end, bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null)
+  // 危险区域落记忆：站点有 hostile → 记录目击位置（chunk 去重 + 新鲜窗口限增长）
+  if (entities.hostileNames.length && end) {
+    discovery.recordDangerZone(end, { hostileNames: entities.hostileNames }, bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null)
+  }
   return {
     ok: r.ok,
     reason: r.ok ? undefined : (REASON_TEXT[r.reason] ?? r.err?.message ?? '移动失败'),

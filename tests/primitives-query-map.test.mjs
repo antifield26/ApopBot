@@ -70,3 +70,32 @@ test('query_map: 混合场景——失效剔除 + 有效保留 + 未加载标记
   assert.ok(!r.some(x => x.x === 10), '失效记录已剔除')
   assert.equal(discovery.query('coal_ore').length, 2, '记忆已自愈（剩有效+未加载）')
 })
+
+// ---- danger 分支（World Model：附近危险区域记忆）----
+
+test('P1: query_map danger 分支——返回附近危险区域（fresh 标记）', async () => {
+  discovery._reset()
+  discovery.recordDangerZone({ x: 30, y: 64, z: 0 }, { hostileNames: ['zombie'] })
+  const reg = createPrimitiveRegistry(makeCtx(makeBot()))
+  const r = await reg.get('query_map').handler(makeCtx(makeBot()), { danger: true }, {})
+  assert.ok(r.danger, '应返回 danger 字段')
+  assert.equal(r.danger.length, 1)
+  assert.equal(r.danger[0].hostileNames[0], 'zombie')
+  assert.equal(r.danger[0].fresh, true)
+})
+
+test('P1: query_map danger 分支——无记录 → 空数组（非错误）', async () => {
+  discovery._reset()
+  const reg = createPrimitiveRegistry(makeCtx(makeBot()))
+  const r = await reg.get('query_map').handler(makeCtx(makeBot()), { danger: true }, {})
+  assert.deepEqual(r.danger, [])
+})
+
+test('P1: query_map danger 与 blockName 同传 → 互斥报错', async () => {
+  discovery._reset()
+  const reg = createPrimitiveRegistry(makeCtx(makeBot()))
+  await assert.rejects(
+    reg.get('query_map').handler(makeCtx(makeBot()), { danger: true, blockName: 'iron_ore' }, {}),
+    /互斥/
+  )
+})

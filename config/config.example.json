@@ -166,8 +166,9 @@
     "maxTokens": 1024,
     "thinking": "disabled",
     "effort": "low",
+    "dangerInjection": true,
     "planEnabled": true,
     "planCooldownMs": 120000,
-    "_comment": "预设 DeepSeek（Anthropic 兼容端点——裸域名会补到 OpenAI 路由 404，必须带 /anthropic）。API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（默认 ANTHROPIC_API_KEY，可改 DEEPSEEK_API_KEY 等），绝不写进配置文件；cloudMaxContextWindow 是云端预算守卫（32k 上下文端点调低到 32768）；maxActionsPerCall 是单次 act 动作数组上限（每轮动作预算 = maxSteps × maxActionsPerCall）；thinking=disabled（默认）显式关思考且不传 reasoning_effort（DeepSeek 端点两者互斥 400），enabled 时按 effort（low/medium/high/max）注入；planEnabled=自主推进（任务自然完成且无配置链时 LLM 评估目标生成下一个任务），planCooldownMs=规划调用独立冷却"
+    "_comment": "预设 DeepSeek（Anthropic 兼容端点——裸域名会补到 OpenAI 路由 404，必须带 /anthropic）。API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（默认 ANTHROPIC_API_KEY，可改 DEEPSEEK_API_KEY 等），绝不写进配置文件；cloudMaxContextWindow 是云端预算守卫（32k 上下文端点调低到 32768）；maxActionsPerCall 是单次 act 动作数组上限（每轮动作预算 = maxSteps × maxActionsPerCall）；thinking=disabled（默认）显式关思考且不传 reasoning_effort（DeepSeek 端点两者互斥 400），enabled 时按 effort（low/medium/high/max）注入；planEnabled=自主推进（任务自然完成且无配置链时 LLM 评估目标生成下一个任务），planCooldownMs=规划调用独立冷却，dangerInjection=附近危险区域被动注入（无新鲜记录时零成本）"
   }
 }

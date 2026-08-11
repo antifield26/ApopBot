@@ -297,12 +297,13 @@ export function registerObserve (register, _ctx) {
     }
   })
   register('query_map', {
-    description: '查询探索记忆中已知的资源坐标或命名地点（不重新扫描；已加载区块逐条验证，失效记录自动清除）',
+    description: '查询探索记忆中已知的资源坐标/命名地点/附近危险区域（不重新扫描；已加载区块逐条验证，失效记录自动清除）',
     schema: {
       type: 'object',
       properties: {
-        blockName: { type: 'string', description: '方块名（如 iron_ore/diamond_ore/bamboo；与 place 二选一）' },
-        place: { type: 'string', description: '命名地点名（如 home/矿场——!home set 登记的语义坐标；与 blockName 二选一）' },
+        blockName: { type: 'string', description: '方块名（如 iron_ore/diamond_ore/bamboo；与 place/danger 三选一）' },
+        place: { type: 'string', description: '命名地点名（如 home/矿场——!home set 登记的语义坐标；与 blockName/danger 三选一）' },
+        danger: { type: 'boolean', description: '查询附近危险区域记忆（hostile 出没坐标；fresh/stale 由返回标记判断；与 blockName/place 三选一）' },
         maxCount: { type: 'integer', min: 1, max: 20, description: '最多返回条数，默认 5' }
       }
     },
@@ -310,14 +311,22 @@ export function registerObserve (register, _ctx) {
     exclusiveClass: 'readonly',
     guardText: '',
     timeoutMs: 5000,
-    handler: async (c, { blockName, place, maxCount }) => {
+    handler: async (c, { blockName, place, danger, maxCount }) => {
+      // 三选一互斥（同 observe_blocks 语义——双传难归因，显式报错）
+      if (danger && (blockName || place)) {
+        throw new Error('query_map 的 danger 与 blockName/place 互斥，只能给一种')
+      }
+      // 危险区域分支（hostile 出没记忆——实体瞬态，fresh/ageMinutes 供判断）
+      if (danger) {
+        return { danger: discovery.queryDangerZones(c.bot?.entity?.position, { maxCount: maxCount ?? 5 }) }
+      }
       // 命名地点分支（!home set / set_place 登记的语义坐标——家/矿场/基地）
       if (place) {
         const p = discovery.getPlace(place)
         if (!p) return { place: String(place), found: false, hint: '地点不存在（!home set <name> 或 set_place 登记）' }
         return { place: p.name, found: true, x: p.x, y: p.y, z: p.z, dimension: p.dimension ?? 'overworld' }
       }
-      if (!blockName) throw new Error('query_map 需要 blockName 或 place')
+      if (!blockName) throw new Error('query_map 需要 blockName、place 或 danger')
       // 大小写归一——记忆 key 是 explore 记录的小写名（iron_ore），LLM 传 Iron_Ore
       // 会查空且无提示（误导 LLM 去重新探索）
       const name = String(blockName).toLowerCase()

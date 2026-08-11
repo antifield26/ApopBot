@@ -12,7 +12,7 @@
 // 错误永不向上抛——以友好回复返回（配合 logger.error 留痕）。
 
 import { isOp } from '../commands/permissions.js'
-import { environmentLine, degenerateLine } from '../core/environment.js'
+import { environmentLine, degenerateLine, dangerLine } from '../core/environment.js'
 import { withTimeout } from '../util/promise-timeout.js'
 
 // 确定性错误不反思（权限/参数/未知动作是模型无法从教训中获益的——它们是规则
@@ -235,7 +235,7 @@ const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手
 
 【行动协议】
 1. 用 act 工具执行动作数组 {actions:[{op,args},...]}，一次最多 8 个、按序执行；每个动作的结果按序返回，必须读取。动作原语（op）：
-   观察：observe_status（连接/位置/血量/饥饿）、observe_inventory（背包）、observe_environment（时间/天气/维度/群系/朝向/附近）、observe_entities（附近实体）、observe_blocks（找方块位置）、observe_block（单方块详情）、observe_crops（作物成熟度）、observe_tasks（任务列表/状态/等待原因）、query_map（探索记忆中的资源坐标——verified:false 表示该区块未加载无法核对，可能已被挖走/改变，行动前用 observe_block 确认）、map_status（探索统计）
+   观察：observe_status（连接/位置/血量/饥饿）、observe_inventory（背包）、observe_environment（时间/天气/维度/群系/朝向/附近）、observe_entities（附近实体）、observe_blocks（找方块位置）、observe_block（单方块详情）、observe_crops（作物成熟度）、observe_tasks（任务列表/状态/等待原因）、query_map（探索记忆中的资源坐标——verified:false 表示该区块未加载无法核对，可能已被挖走/改变，行动前用 observe_block 确认；danger 分支返回附近危险区域记忆——fresh/stale 由返回标记判断；place 分支查命名地点）、map_status（探索统计）
    移动：goto{x,y,z,range?,timeoutMs?} 寻路移动；explore_step{direction?,maxDistance?} 单步探索
    建造：dig{x,y,z} 挖方块（不捡掉落物）；place{x,y,z,face?} 放手持物品；collect_blocks{blockNames|positions,area?,maxBlocks?,chestLocations?} 批量采集（自动捡掉落）；plant_crops{area,cropTypes?} 种作物
    战斗：attack{filter,maxHits?} 攻击实体（自动接近连击）
@@ -454,6 +454,8 @@ export class AgentInterface {
           (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`) +
           // 退化状态注入（低血/饥饿/背包满/工具将坏——正常时空串零成本）
           (this.cfg.stateInjection === false ? '' : `\n${degenerateLine(this.ctx.bot)}`) +
+          // 附近危险注入（无新鲜危险记录时零成本空串——世界记忆被动感知）
+          (this.cfg.dangerInjection === false ? '' : `\n${dangerLine(this.ctx.bot)}`) +
           // 世界事件注入（仅事件存在时输出——上次对话后发生了什么）
           (this.pendingEvents.length ? `\n事件: ${this.pendingEvents.join('|')}` : '') + toolLog
         // 上下文预算裁剪（provider 有窗口时）——fixed = system + 工具定义；

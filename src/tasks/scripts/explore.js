@@ -132,6 +132,10 @@ export default {
           }
           const ents = scanEntities(task.bot)
           if (ents.counts.hostile > 0) task.log.info({ hostile: ents.hostile }, '站点附近有敌对实体（只记录不接触）')
+          // 危险区域记忆（与 exploreStep 同口径——站点 hostile → 记录目击位置）
+          if (ents.hostileNames.length && task.bot.entity?.position) {
+            discovery.recordDangerZone(task.bot.entity.position, { hostileNames: ents.hostileNames }, task.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null)
+          }
           discovery.recordAnchor(task.bot.entity?.position)
         }
         // 节奏等待（可被打断）

@@ -36,3 +36,46 @@ test('environmentLine: 环境行含正确时间与昼夜', () => {
   assert.ok(line.includes('晴'), line)
   assert.ok(line.includes('overworld'), line)
 })
+
+// ---- dangerLine 危险注入（World Model 被动感知）----
+
+import * as discovery from '../src/core/discovery.js'
+
+function makeBotWithPos (x, z) {
+  return { entity: { position: { x, y: 64, z } } }
+}
+
+test('P1: dangerLine——附近无新鲜危险 → 空串（零成本常态）', () => {
+  discovery._reset()
+  const bot = makeBotWithPos(0, 0)
+  // 无任何记录
+  assert.equal(importDangerLine(bot), '')
+  // 半径外记录（>128）
+  discovery.recordDangerZone({ x: 500, y: 64, z: 500 }, { hostileNames: ['zombie'] })
+  assert.equal(importDangerLine(bot), '')
+})
+
+test('P1: dangerLine——有新鲜危险 → 摘要行（名字/距离/分钟前）', () => {
+  discovery._reset()
+  discovery.recordDangerZone({ x: 30, y: 64, z: 0 }, { hostileNames: ['zombie', 'creeper'] })
+  const line = importDangerLine(makeBotWithPos(0, 0))
+  assert.ok(line.includes('危险: '), line)
+  assert.ok(line.includes('zombie/creeper'), line)
+  assert.ok(line.includes('30m'), line)
+  assert.ok(line.includes('分钟前'), line)
+})
+
+test('P1: dangerLine——过期危险（>1h）→ 空串', () => {
+  discovery._reset()
+  const zone = { x: 30, y: 64, z: 0, threatLevel: 1, hostileNames: ['zombie'], ts: Date.now() - 2 * 60 * 60 * 1000 }
+  discovery.importSnapshot({ version: 3, dangerZones: [zone] })
+  assert.equal(importDangerLine(makeBotWithPos(0, 0)), '', '过期危险不注入')
+})
+
+function importDangerLine (bot) {
+  // 动态 import 避免与 environment.test 顶部静态导入冲突（函数提升）
+  return dangerLineRef(bot)
+}
+
+// 静态导入放文件尾（动态引用防循环）
+import { dangerLine as dangerLineRef } from '../src/core/environment.js'

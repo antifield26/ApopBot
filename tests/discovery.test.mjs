@@ -51,7 +51,7 @@ test('B1: 快照往返——attachStore 后 setMemory 持久化 + importSnapshot
   discovery.recordAnchor({ x: 0, y: 64, z: 0 })
   assert.ok(saved.length >= 1, '修改应触发 setMemory')
   const snap = saved.at(-1)
-  assert.equal(snap.version, 2, 'v2 快照（含 places）')
+  assert.equal(snap.version, 3, 'v3 快照（含 places/dangerZones）')
   assert.equal(snap.resources.diamond_ore.length, 1)
   assert.equal(snap.anchors.length, 1)
   assert.ok(Array.isArray(snap.places), 'v2 快照含 places 数组')
@@ -152,12 +152,86 @@ test('A7: setPlace/removePlace/getPlace——同名覆盖 + 名字规范化 + �
   assert.equal(discovery.removePlace('home'), false, '重复删除 false')
 })
 
-test('A7: 快照往返保留 places（version 2）', () => {
+test('A7: 快照往返保留 places（version 3）', () => {
   discovery.setPlace('base', { x: 1, y: 2, z: 3 }, 'overworld')
   const snap = discovery.snapshot()
-  assert.equal(snap.version, 2)
+  assert.equal(snap.version, 3)
   assert.equal(snap.places[0].name, 'base')
   discovery._reset()
   discovery.importSnapshot(snap)
   assert.equal(discovery.getPlace('base').z, 3, '回灌后地点保留')
+})
+
+// ---- dangerZones 危险区域记忆（World Model）----
+
+test('P1: recordDangerZone——同 chunk 刷新 ts/名字并集不新增', () => {
+  discovery._reset()
+  const p1 = { x: 100, y: 64, z: 100 }
+  const p2 = { x: 108, y: 64, z: 100 } // 同 chunk（>>4 相同）
+  assert.equal(discovery.recordDangerZone(p1, { hostileNames: ['zombie'] }, 'overworld'), true)
+  assert.equal(discovery.recordDangerZone(p2, { hostileNames: ['creeper'] }, 'overworld'), false, '同 chunk 应刷新不新增')
+  const zones = discovery.listDangerZones()
+  assert.equal(zones.length, 1, '同 chunk 只保留 1 条')
+  assert.deepEqual(zones[0].hostileNames, ['zombie', 'creeper'], '名字应为并集')
+  assert.equal(zones[0].x, 108, '位置应更新为最近目击')
+})
+
+test('P1: recordDangerZone——容量上限淘汰最旧（MAX_DANGER_ZONES）', () => {
+  discovery._reset()
+  for (let i = 0; i < 70; i++) {
+    discovery.recordDangerZone({ x: i * 64, y: 64, z: 0 }, { hostileNames: ['zombie'] })
+  }
+  assert.equal(discovery.listDangerZones().length, 64, '应封顶 64 条')
+  assert.equal(discovery.listDangerZones()[0].x, 6 * 64, '最旧（x=0）应被淘汰')
+})
+
+test('P1: queryDangerZones——距离升序 + fresh/ageMinutes 标记', () => {
+  discovery._reset()
+  discovery.recordDangerZone({ x: 100, y: 64, z: 0 }, { hostileNames: ['zombie'] })
+  discovery.recordDangerZone({ x: 50, y: 64, z: 0 }, { hostileNames: ['creeper'] })
+  const zones = discovery.queryDangerZones({ x: 0, y: 64, z: 0 }, { radius: 200 })
+  assert.equal(zones.length, 2)
+  assert.equal(zones[0].x, 50, '近者优先')
+  assert.equal(zones[0].fresh, true, '刚记录应新鲜')
+  assert.equal(zones[0].ageMinutes, 0)
+})
+
+test('P1: queryDangerZones——维度过滤 + 半径外排除', () => {
+  discovery._reset()
+  discovery.recordDangerZone({ x: 10, y: 64, z: 0 }, { hostileNames: ['zombie'] }, 'the_nether')
+  discovery.recordDangerZone({ x: 10, y: 64, z: 0 }, { hostileNames: ['zombie'] }, 'overworld')
+  const ow = discovery.queryDangerZones({ x: 0, y: 64, z: 0 }, { dimension: 'overworld' })
+  assert.equal(ow.length, 1, '主世界查询只返回主世界记录')
+  assert.equal(discovery.queryDangerZones({ x: 0, y: 64, z: 0 }, { radius: 5 }).length, 0, '半径外排除')
+})
+
+test('P1: 快照往返——version 3 含 dangerZones；importSnapshot 旧快照按空', () => {
+  discovery._reset()
+  discovery.recordDangerZone({ x: 10, y: 64, z: 0 }, { hostileNames: ['zombie'] }, 'overworld')
+  const snap = discovery.snapshot()
+  assert.equal(snap.version, 3)
+  assert.equal(snap.dangerZones.length, 1)
+  // 旧快照（无 dangerZones 键）→ 按空
+  discovery._reset()
+  discovery.importSnapshot({ version: 2, anchors: [], resources: {}, places: [] })
+  assert.equal(discovery.listDangerZones().length, 0, '旧快照按空')
+  // 往返恢复
+  discovery._reset()
+  discovery.importSnapshot(snap)
+  assert.equal(discovery.listDangerZones().length, 1)
+  assert.deepEqual(discovery.listDangerZones()[0].hostileNames, ['zombie'])
+})
+
+test('P1: importSnapshot 形状防御——坏 dangerZones 按空', () => {
+  discovery._reset()
+  discovery.importSnapshot({ version: 3, dangerZones: [{ x: 'bad', y: 1, z: 1, threatLevel: 'x', hostileNames: 'not-array', ts: 'x' }] })
+  assert.equal(discovery.listDangerZones().length, 0, '坏记录按空')
+})
+
+test('P1: stats 含 dangerZones 计数；_reset 清空', () => {
+  discovery._reset()
+  discovery.recordDangerZone({ x: 10, y: 64, z: 0 }, { hostileNames: ['zombie'] })
+  assert.equal(discovery.stats().dangerZones, 1)
+  discovery._reset()
+  assert.equal(discovery.stats().dangerZones, 0)
 })

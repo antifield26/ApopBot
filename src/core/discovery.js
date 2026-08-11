@@ -15,11 +15,22 @@ const MAX_RESOURCES_PER_NAME = 16
 const MAX_RESOURCES_TOTAL = 512
 const MAX_ANCHORS = 256
 const MAX_PLACES = 32 // 命名地点上限（!home set / set_place）
+// 危险区域记忆：hostile 实体出没坐标（explore 站/entityHurt 记录）。
+// 实体是瞬态的——记录靠 chunk 去重限增长，查询按新鲜窗口判定（DANGER_FRESH_MS）
+const MAX_DANGER_ZONES = 64
+/** 危险记录新鲜窗口（查询/injection 只认窗口内的记录；导出供测试/注入行）。 */
+export const DANGER_FRESH_MS = 60 * 60 * 1000
 
+/** @typedef {{ x: number, y: number, z: number, ts: number, dimension?: string|null }} Anchor */
+/** @typedef {{ name: string, x: number, y: number, z: number, dimension?: string|null, ts: number }} Place */
+/** @typedef {{ x: number, y: number, z: number, threatLevel: number, hostileNames: string[], dimension?: string|null, ts: number }} DangerZone */
+
+/** @type {{ anchors: Anchor[], resources: Record<string, Array<Anchor>>, places: Place[], dangerZones: DangerZone[], store: { setMemory?: (mem: object) => void }|null }} */
 const state = {
   anchors: [], // [{x, y, z, ts}] 按插入序（旧在前），环形淘汰
   resources: {}, // blockName → [{x, y, z, ts}]（按插入序，新在后）
   places: [], // [{name, x, y, z, dimension, ts}] 命名地点（家/矿场/基地——LRU 淘汰最旧）
+  dangerZones: [], // [{x, y, z, threatLevel, hostileNames, dimension, ts}] 危险区域（chunk 去重）
   store: null // stateStore（attachStore 注入）
 }
 
@@ -53,10 +64,11 @@ function now () {
 /** 快照（持久化用）。 */
 export function snapshot () {
   return {
-    version: 2, // v2：+places（命名地点）
+    version: 3, // v2：+places；v3：+dangerZones（危险区域）
     anchors: state.anchors.slice(0, MAX_ANCHORS),
     resources: JSON.parse(JSON.stringify(state.resources)),
-    places: state.places.slice(0, MAX_PLACES)
+    places: state.places.slice(0, MAX_PLACES),
+    dangerZones: state.dangerZones.slice(0, MAX_DANGER_ZONES)
   }
 }
 
@@ -75,6 +87,16 @@ export function importSnapshot (memory) {
       .slice(-MAX_PLACES)
   } else {
     state.places = []
+  }
+  // v3：危险区域回灌（旧快照无 dangerZones 按空；形状防御——整数坐标/threatLevel
+  // number/hostileNames 数组/ts number）
+  if (Array.isArray(memory.dangerZones)) {
+    state.dangerZones = memory.dangerZones
+      .filter(z => z && Number.isInteger(z.x) && Number.isInteger(z.y) && Number.isInteger(z.z) &&
+        typeof z.threatLevel === 'number' && Array.isArray(z.hostileNames) && typeof z.ts === 'number')
+      .slice(-MAX_DANGER_ZONES)
+  } else {
+    state.dangerZones = []
   }
   if (memory.resources && typeof memory.resources === 'object' && !Array.isArray(memory.resources)) {
     const res = {}
@@ -261,6 +283,76 @@ export function listPlaces () {
   return state.places.map(p => ({ ...p }))
 }
 
+/**
+ * 记录危险区域（hostile 实体出没坐标）。
+ * chunk 去重（同 resources 口径）：同 chunk 刷新 ts/位置/名字并集（不新增）——
+ * 实体是瞬态的，刷新保持记录指向最近目击位置。
+ * @param {{ x: number, y: number, z: number }} pos 目击位置（bot 坐标）
+ * @param {{ hostileNames?: Array<string>, threatLevel?: number }} opts
+ * @param {string|null} [dimension]
+ * @returns {boolean} 是否新记录
+ */
+export function recordDangerZone (pos, { hostileNames = [], threatLevel } = {}, dimension = null) {
+  if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) return false
+  const x = Math.floor(pos.x); const y = Math.floor(pos.y); const z = Math.floor(pos.z)
+  const names = [...new Set(hostileNames.map(String).filter(Boolean))].slice(0, 8)
+  const level = typeof threatLevel === 'number' ? threatLevel : Math.min(Math.max(names.length, 1), 5)
+  const chunkKey = `${x >> 4},${z >> 4}`
+  const existing = state.dangerZones.find(d => `${d.x >> 4},${d.z >> 4}` === chunkKey)
+  if (existing) {
+    // 原地刷新：位置更新为最近目击、名字并集（≤8）、threatLevel 取新值
+    existing.x = x; existing.y = y; existing.z = z
+    existing.hostileNames = [...new Set([...existing.hostileNames, ...names])].slice(0, 8)
+    existing.threatLevel = level
+    existing.ts = now()
+    if (dimension) existing.dimension = dimension
+    persist()
+    return false
+  }
+  state.dangerZones.push({
+    x, y, z,
+    threatLevel: level,
+    hostileNames: names,
+    dimension: dimension ?? null,
+    ts: now()
+  })
+  if (state.dangerZones.length > MAX_DANGER_ZONES) state.dangerZones.shift()
+  persist()
+  return true
+}
+
+/**
+ * 查询附近危险区域（距离升序；维度过滤同资源口径）。
+ * 实体是瞬态的——无法用 blockAt 验证，用新鲜窗口判定：fresh = ts 在
+ * DANGER_FRESH_MS 内（查询方据此决定是否采信）。
+ * @param {{ x: number, y: number, z: number }} pos 查询中心
+ * @param {{ radius?: number, maxCount?: number, dimension?: string|null }} [opts]
+ * @returns {Array<DangerZone & { dist: number, fresh: boolean, ageMinutes: number }>}
+ */
+export function queryDangerZones (pos, { radius = 128, maxCount = 5, dimension = null } = {}) {
+  if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) return []
+  const nowTs = now()
+  return state.dangerZones
+    .filter(d => {
+      if (dimension && d.dimension !== dimension && !(d.dimension == null && dimension === 'overworld')) return false
+      const dist = Math.hypot(d.x - pos.x, d.z - pos.z)
+      return dist <= radius
+    })
+    .map(d => ({
+      ...d,
+      dist: Math.round(Math.hypot(d.x - pos.x, d.z - pos.z)),
+      fresh: nowTs - d.ts <= DANGER_FRESH_MS,
+      ageMinutes: Math.round((nowTs - d.ts) / 60000)
+    }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, maxCount)
+}
+
+/** 全部危险区域（测试/stats）。 */
+export function listDangerZones () {
+  return state.dangerZones.map(d => ({ ...d }))
+}
+
 /** 地图统计（map_status 技能与 /metrics 用）。 */
 export function stats () {
   const total = Object.values(state.resources).reduce((s, l) => s + l.length, 0)
@@ -290,6 +382,7 @@ export function stats () {
     anchors: state.anchors.length,
     resources: total,
     places: state.places.length, // 命名地点数
+    dangerZones: state.dangerZones.length, // 危险区域数
     covered,
     topResources: names,
     dimensions: dimCounts
@@ -301,6 +394,7 @@ export function _reset () {
   state.anchors = []
   state.resources = {}
   state.places = []
+  state.dangerZones = []
   byCoord.clear()
 }
 

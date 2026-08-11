@@ -73,6 +73,8 @@ const BUILTIN_DEFAULTS = {
     envInjection: true,
     // 退化状态自动注入：低血/饥饿/背包满/工具将坏（正常时零成本空串）
     stateInjection: true,
+    // 附近危险注入：新鲜窗口内的危险区域记忆（无记录时零成本空串）
+    dangerInjection: true,
     // 自主推进（规划器）：任务自然完成且无配置链时，LLM 评估目标并生成下一个任务
     planEnabled: true,
     // 规划调用独立冷却（与 summarize 60s 分开——带工具的规划调用成本高）
@@ -122,6 +124,7 @@ const ENV_MAP = {
   MCBOT_L2_EFFORT: ['l2', 'effort'],
   MCBOT_L2_ENV_INJECTION: ['l2', 'envInjection'],
   MCBOT_L2_STATE_INJECTION: ['l2', 'stateInjection'],
+  MCBOT_L2_DANGER_INJECTION: ['l2', 'dangerInjection'],
   MCBOT_L2_PLAN_ENABLED: ['l2', 'planEnabled'],
   MCBOT_L2_PLAN_COOLDOWN_MS: ['l2', 'planCooldownMs'],
   MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
@@ -136,7 +139,7 @@ const ENV_MAP = {
 // 'true'/'false' 应保持字符串（如 MCBOT_L2_THINKING=false——thinking 的合法值是
 // 'enabled'/'disabled' 字符串，转布尔后校验报"当前: false"误导）
 const BOOLEAN_ENV_KEYS = new Set([
-  'log.pretty', 'l2.enabled', 'l2.envInjection', 'l2.stateInjection', 'l2.planEnabled', 'http.enabled'
+  'log.pretty', 'l2.enabled', 'l2.envInjection', 'l2.stateInjection', 'l2.dangerInjection', 'l2.planEnabled', 'http.enabled'
 ])
 
 const CLI_KEYS = {
@@ -359,6 +362,7 @@ export function validateConfig (cfg) {
     }
     if (typeof cfg.l2.envInjection !== 'boolean') errors.push('l2.envInjection 必须是布尔值')
     if (typeof cfg.l2.stateInjection !== 'boolean') errors.push('l2.stateInjection 必须是布尔值')
+    if (typeof cfg.l2.dangerInjection !== 'boolean') errors.push('l2.dangerInjection 必须是布尔值')
     if (typeof cfg.l2.planEnabled !== 'boolean') errors.push('l2.planEnabled 必须是布尔值')
     if (!Number.isInteger(cfg.l2.planCooldownMs) || cfg.l2.planCooldownMs < 1000) {
       errors.push('l2.planCooldownMs 必须是 ≥1000 的整数（毫秒）')
@@ -375,7 +379,7 @@ export function validateConfig (cfg) {
     const L2_KNOWN_KEYS = new Set([
       'enabled', 'model', 'cloudBaseUrl', 'cloudApiKeyEnv', 'maxSteps', 'cooldownMs',
       'cloudTimeoutMs', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'envInjection',
-      'stateInjection', 'thinking', 'effort', 'planEnabled', 'planCooldownMs',
+      'stateInjection', 'dangerInjection', 'thinking', 'effort', 'planEnabled', 'planCooldownMs',
       '_comment' // JSON 注释惯例（config.example.json 使用；与 mineflayerPlugins/顶层一致）
     ])
     for (const key of Object.keys(cfg.l2)) {

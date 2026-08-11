@@ -607,3 +607,21 @@ test('第 8 轮：stop 后同实例重启（F4）——_abort 重建，动作正
   await task.stop()
   await p2
 })
+
+// ---- scanEntities hostileNames（World Model 落记忆字段）----
+
+test('P1: scanEntities 返回 hostileNames（纯名字列表，hostile 显示串不变）', async () => {
+  const { scanEntities } = await import('../src/core/explore.js')
+  const bot = {
+    entity: { position: new Vec3(0, 64, 0) },
+    entities: new Map([
+      [1, { name: 'zombie', type: 'hostile', position: new Vec3(10, 64, 0) }],
+      [2, { name: 'creeper', type: 'hostile', position: new Vec3(20, 64, 0) }],
+      [3, { name: 'cow', type: 'passive', position: new Vec3(5, 64, 0) }]
+    ])
+  }
+  const r = scanEntities(bot)
+  assert.deepEqual(r.hostileNames, ['zombie', 'creeper'], '纯名字列表')
+  assert.ok(r.hostile.every(h => h.includes('m')), 'hostile 显示串含距离（zombie(10m) 形态）')
+  assert.equal(r.counts.hostile, 2)
+})

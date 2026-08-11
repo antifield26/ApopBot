@@ -12,6 +12,7 @@
 //（core/explore.js 的 scanEntities 依赖它们——放本模块会造成 core→l2 上向引用）。
 
 import { distance, fmtPos, nearbyEntities } from './entities.js'
+import * as discovery from './discovery.js'
 
 /** yaw → 8 向罗盘（原版：yaw=0 朝南 +Z，顺时针增大）。 */
 export function directionFromYaw (yaw) {
@@ -131,4 +132,23 @@ export function degenerateLine (bot) {
     }
   } catch { /* 数据源异常——跳过退化行 */ }
   return parts.length ? `状态: ${parts.join(' ')}` : ''
+}
+
+/**
+ * 附近危险行（L2 每工具轮自动注入；无新鲜危险记录时返回空串——零成本常态）。
+ * 数据源：discovery 危险区域记忆（explore 站/entityHurt 记录）——只认新鲜窗口内
+ * （DANGER_FRESH_MS）的记录，实体是瞬态的，过期记录不注入避免误导。
+ */
+export function dangerLine (bot) {
+  try {
+    const me = bot?.entity?.position
+    if (!me) return ''
+    const zones = discovery.queryDangerZones(me, { radius: 128, maxCount: 3 })
+      .filter(z => z.fresh)
+    if (zones.length === 0) return ''
+    const parts = zones.map(z => `${z.hostileNames.join('/') || 'hostile'}(${z.dist}m,${z.ageMinutes}分钟前)`)
+    const line = `危险: ${parts.join(' ')}`
+    return line.length > 150 ? line.slice(0, 150) + '…' : line
+  } catch { /* 记忆数据异常——跳过危险行 */ }
+  return ''
 }

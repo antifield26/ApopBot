@@ -39,6 +39,14 @@ export function installWorldSensing (ctx, bot) {
     if (entity !== bot.entity) return
     const who = source?.username ?? source?.name ?? source?.type ?? 'unknown'
     ctx.agent?.notifyEvent?.('attacked', `被 ${who} 攻击`)
+    // 危险区域被动记录：怪物攻击（source 非自己/非玩家——排除环境自伤与 PvP）
+    // → 目击位置落记忆（explore 之外的威胁：combat 中/基地夜袭）
+    if (source && source !== bot.entity && !source.username && bot.entity?.position) {
+      const name = source.name ?? source.type
+      if (name) {
+        discovery.recordDangerZone(bot.entity.position, { hostileNames: [name] }, bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null)
+      }
+    }
   })
   // 重要资源收集（钻石/绿宝石/远古残骸/铁/金/红石/青金石——高频杂物不记）
   bot.on('playerCollect', (collector, collected) => {
