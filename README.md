@@ -67,6 +67,9 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 ```bash
 npm ci
 npm test                    # 单元测试（Windows 可跑）
+npm run lint                # ESLint 门禁（eslint:recommended + 项目风格）
+npm run typecheck           # checkJs 类型门禁（src 全部 @ts-check，渐进 TS 路线第一阶段）
+npm run test:coverage       # 覆盖率报告（lcov → coverage/lcov.info，CI artifact）
 npm run check:compat        # 协议 775 兼容性门禁
 cp config/config.example.json config/config.json   # 按需编辑
 npm start                   # 连接 localhost:25565
@@ -99,6 +102,7 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 - [L2 LLM 层设计](docs/l2.md)
 - [上游迁移（PR pin → 正式版）](docs/upstream-migration.md)
 - [路线图（完善/升级/重构三档与取舍）](docs/roadmap.md)
+- [部署机验收清单](docs/acceptance.md)（真机验证项跟踪——release 前核对；含 issue #1 现场数据采集指引）
 
 ## 性能要点（低配 PC）
 

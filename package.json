@@ -18,7 +18,7 @@
     "release": "node scripts/release.mjs",
     "postinstall": "patch-package",
     "typecheck": "tsc -p tsconfig.json",
-    "test:coverage": "node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info \"tests/*.test.mjs\""
+    "test:coverage": "node scripts/test-coverage.mjs"
   },
   "dependencies": {
     "croner": "^9.0.0",

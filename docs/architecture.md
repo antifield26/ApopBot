@@ -99,6 +99,13 @@ minecraft-bot (Node.js ≥22, ESM)
 - 历史修复若对理解当前行为必要（如"必须停在块面 ±1e-4 否则服务器拉回"），以**现在时的行为后果**表述，不叙述修复过程
 - 新代码合入时：轮次式开发中"这轮做了什么"只进 CHANGELOG/roadmap，注释保持与文档解耦（改文档不需改注释）
 
+## 质量工具（2026-08-11 工程治理轮）
+
+- **ESLint 10 flat config**（`eslint.config.js`）：eslint:recommended + 项目风格（无分号/单引号/2 空格），覆盖 src/tests/scripts；CI 门禁 `npm run lint`
+- **checkJs 渐进 TS 路线**：tsconfig.json（noEmit + allowJs + module nodenext）——src 全部文件 `// @ts-check` 开启，`npm run typecheck` 门禁；这是全量 TS 迁移的第一阶段（后续逐文件改 .ts 零阻碍，tsconfig 已兼容）。**新 src 文件必须带 `// @ts-check`**（CI 不强制但约定）
+- **覆盖率**：`npm run test:coverage`（node --test lcov → coverage/lcov.info，CI artifact）；基线多数模块 85-100% 行覆盖，**暂不设阈值**（mock 为主，阈值意义有限）——引入真机集成测试后再设
+- checkJs 已拦截的真实缺陷示例（证明工具价值）：observe_blocks regex 路径 TDZ 使用 dim（运行时必崩）、collect_blocks const chests 重新赋值（NoChests 分支必抛）——类型门禁后同类错误在开发期暴露
+
 ## 已知风险
 
 - mineflayer PR #3902 / minecraft-protocol PR #1487 上游仍未合并。补丁是本地载体：升级这两个包版本时补丁 context 冲突会显式报错（patch-package 行为，不会静默），需按 docs/upstream-migration.md 重新生成；26.1.2 的 use_entity 仍走旧格式（`useEntityUsesEntityId` feature=false），项目层 entity-actions.js 的旧格式原始包与之一致（部署机已验证），上游合并新格式后可删（保守保留）
@@ -106,4 +113,6 @@ minecraft-bot (Node.js ≥22, ESM)
 - pino v9 transport 无法主动拆除：反复改日志配置会累积文件句柄（接受，文档化）。第 11 轮起**仅 rotate/pretty/dir 变化才重建 logger**（只改 level 时复用 transport——旧实现双写同一 bot.log 会丢行/坏 JSONL）
 - 审计日志（audit.log）第 11 轮起**进程级共享单例**（dir+keepDays 键缓存）：热重载改 log.dir 时旧 worker 随旧配置弃用（句柄累积面收敛）
 - 任务长 idle LLM 播报（第 11 轮 G4）依赖 summarize（60s 全局冷却与死亡/任务播报共享）：高密度死亡场景下 idle 播报可能被冷却饿死（已按任务+原因去重 + 1 小时冷却限制频次，接受）
+- **LLM 提示注入残余风险**（2026-08-11）：CORE_SYSTEM_PROMPT 有注入防御段（玩家消息是唯一输入），执行器 op 权限门拦截非 op 会话的危险动作；但 **op 玩家自己的会话被注入文本时无二次确认**（LLM 自主性优先的设计取舍）——不做动作确认，文档化接受；部署机验证项见 docs/acceptance.md
+- **真机验证缺口**（2026-08-11）：13 轮功能迭代以离线 mock 测试为主，真实服务器交互项（B1 仓库/B4 作物/B5 睡觉/B6 剪羊毛等）集中在 docs/acceptance.md 跟踪——release 前应核对清单，缺失验收项不阻塞 release 但需显式记录
 - 自动存储（第 11 轮 G3）开箱依赖 collectblock 的 NoChests 错误码；找不到箱子/UI 卡死时回退 inventoryFull 语义（5 分钟等待）——不改变任务失败行为
