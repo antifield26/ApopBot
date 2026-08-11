@@ -211,6 +211,8 @@ const statusServer = createStatusServer(() => ctx.cfg, logger, () => ({
   discoveryStats: discovery.stats(), // 探索记忆统计
   tasks: ctx.tasks?.getStatus() ?? [],
   sessionCount: ctx.agent?.sessionCount?.() ?? 0,
+  // 多角色状态（v1.4.0：各角色 busy/会话数/planEnabled——运维看哪个角色在跑）
+  roleStats: ctx.agent?.roleStats?.() ?? null,
   lastLlmLatencyMs: ctx.agent?.usage?.latencyMs ?? null,
   lastLlmUsage: ctx.agent?.usage ? {
     inputTokens: ctx.agent.usage.inputTokens,

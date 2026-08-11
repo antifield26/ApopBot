@@ -361,25 +361,53 @@ export function registerBuiltinCommands (registry, _ctx) {
 
   registry.register({
     name: 'agent',
-    usage: '!agent chat <text> | !agent act <name> [json] | !agent doctor | !agent reset',
-    description: 'L2 LLM 层（需配置 l2.enabled=true；chat 全员可用，act 需 op）',
+    usage: '!agent chat <text> | !agent act <name> [json] | !agent doctor | !agent reset | !agent role list | !agent role <name> <action> [args]',
+    description: 'L2 LLM 层（需配置 l2.enabled=true；chat 全员可用，act 需 op；role 为多角色路由——缺省 primary，!agent <role> <action> 便捷形式）',
     // permission all：默认 op 会使 buildSystem 的"普通玩家"分支成为死代码
     //（!agent chat 在权限门就被拒）；技能层 isOp 仍是危险操作最终防线
     permission: 'all',
     handler: async (c, args, sender) => {
       if (!c.agent) { await sendChat(c.bot, '§cL2 未启用（配置 l2.enabled=true 后重启）', c.cfg.chat?.maxLength); return }
-      const [action, ...rest] = args
+      // 多角色路由（v1.4.0）：!agent role list / !agent role <name> <action> [args] 显式；
+      // 便捷形式 !agent <role> <action> [args]（role 非 primary 且次 token 是已知动作）；
+      // 否则默认路由 primary（与旧行为 100% 兼容——!agent chat X 恒为 primary 的 chat 动作）
+      const KNOWN_ACTIONS = ['chat', 'act', 'doctor', 'reset', 'goal']
+      const [t0, t1] = args
+      let target = c.agent
+      let roleName = null
+      let tokens = args
+      if (t0 === 'role') {
+        if (t1 === 'list') {
+          const stats = c.agent?.roleStats?.() ?? []
+          await sendChat(c.bot, stats.length
+            ? `§a角色: ${stats.map(s => `${s.name}${s.planEnabled ? '(plan)' : ''}${s.busy ? '(busy)' : ''}(${s.sessions}会话)`).join('；')}`
+            : '§e未启用多角色（缺省 primary）', c.cfg.chat?.maxLength)
+          return
+        }
+        const role = c.agent?.get?.(t1)
+        if (!role) { await sendChat(c.bot, `§c角色不存在: ${t1}（!agent role list 查看）`, c.cfg.chat?.maxLength); return }
+        target = role
+        roleName = t1
+        tokens = args.slice(2)
+      } else if (c.agent?.get && t0 && t0 !== 'primary' && c.agent.get(t0) && KNOWN_ACTIONS.includes(t1)) {
+        target = c.agent.get(t0)
+        roleName = t0
+        tokens = args.slice(1)
+      }
+      // 非主角色回复带 [role] 前缀（玩家可区分回复来源）
+      const prefix = roleName && roleName !== 'primary' ? `§7[${roleName}] ` : ''
+      const [action, ...rest] = tokens
       if (action === 'chat') {
         // 空文本进 LLM 消耗一轮生成与调用者冷却——入口拦截
         if (!rest.join(' ').trim()) {
           await sendChat(c.bot, '§c用法: !agent chat <text>（消息不能为空）', c.cfg.chat?.maxLength)
           return
         }
-        const { reply } = await c.agent.chat(sender, rest.join(' '))
-        await sendChat(c.bot, reply, c.cfg.chat?.maxLength)
+        const { reply } = await target.chat(sender, rest.join(' '))
+        await sendChat(c.bot, prefix + reply, c.cfg.chat?.maxLength)
       } else if (action === 'reset') {
         // 清空调用者会话记忆（多轮上下文误入歧途时重置）
-        c.agent.reset(sender)
+        target.reset(sender)
         await sendChat(c.bot, '§a已清空会话记忆', c.cfg.chat?.maxLength)
       } else if (action === 'goal') {
         // 长期目标记忆（!agent goal 查看全员 / set/clear 需 op——目标会注入 LLM
@@ -409,7 +437,7 @@ export function registerBuiltinCommands (registry, _ctx) {
           }
           const goalText = m ? rest.slice(1, -1).join(' ').trim() : text
           if (!goalText) { await sendChat(c.bot, '§c用法: !agent goal set <目标文本> [--plan=<JSON 数组>]', c.cfg.chat?.maxLength); return }
-          c.agent.setGoal(sender, goalText, plan)
+          target.setGoal(sender, goalText, plan)
           await sendChat(c.bot, `§a长期目标已设置: ${goalText.slice(0, 80)}${plan?.length ? `（计划 ${plan.length} 步）` : ''}`, c.cfg.chat?.maxLength)
           return
         }
@@ -418,20 +446,20 @@ export function registerBuiltinCommands (registry, _ctx) {
             await sendChat(c.bot, '§c权限不足：!agent goal clear 需要 op', c.cfg.chat?.maxLength)
             return
           }
-          c.agent.clearGoal(sender)
+          target.clearGoal(sender)
           await sendChat(c.bot, '§a长期目标已清除', c.cfg.chat?.maxLength)
           return
         }
-        const g = c.agent.getGoal(sender)
+        const g = target.getGoal(sender)
         await sendChat(c.bot, g
           ? `§a当前目标: ${g.text}${g.plan?.length ? `（计划: ${g.plan.join('→')}）` : ''}（由 ${g.setBy} 设置）`
           : '§e暂无长期目标（!agent goal set <文本> 设置）', c.cfg.chat?.maxLength)
       } else if (action === 'doctor') {
         // provider 连通性诊断（只读，全员可用）
         try {
-          const results = await c.agent.diagnose()
-          const mode = c.agent.provider?.mode ?? '?'
-          const latency = c.agent.usage?.latencyMs
+          const results = await target.diagnose()
+          const mode = target.provider?.mode ?? '?'
+          const latency = target.usage?.latencyMs
           const lines = results.map(r =>
             `${r.label}: ${r.ok ? `连通${r.status ? ` (${r.status})` : ''}` : `不可达（${r.error}）`}`)
           await sendChat(c.bot, `§a[doctor] 模式=${mode} 最近延迟=${latency ?? 'n/a'}ms；${lines.join('；')}`, c.cfg.chat?.maxLength)
@@ -448,7 +476,7 @@ export function registerBuiltinCommands (registry, _ctx) {
         if (!name) { await sendChat(c.bot, '§c用法: !agent act <name> [json]', c.cfg.chat?.maxLength); return }
         let params
         try { params = rest[1] ? JSON.parse(rest[1]) : {} } catch { await sendChat(c.bot, '§c参数必须是 JSON', c.cfg.chat?.maxLength); return }
-        const { ok, result } = await c.agent.act(sender, name, params)
+        const { ok, result } = await target.act(sender, name, params)
         const out = typeof result === 'string' ? result : JSON.stringify(result)
         await sendChat(c.bot, ok ? `§a${name}: ${out}` : `§c${name} 执行失败: ${out}`, c.cfg.chat?.maxLength)
       } else {

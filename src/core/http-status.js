@@ -109,6 +109,13 @@ function metricsPayload (s) {
     })),
     l2: {
       sessions: s.sessionCount ?? 0,
+      // 多角色（v1.4.0）：各角色 busy/会话数/planEnabled
+      roles: Array.isArray(s.roleStats) ? s.roleStats.map(r => ({
+        name: r.name,
+        busy: r.busy,
+        sessions: r.sessions,
+        planEnabled: r.planEnabled
+      })) : null,
       lastLatencyMs: s.lastLlmLatencyMs ?? null,
       lastUsageTokens: s.lastLlmUsage ?? null
     },

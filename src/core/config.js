@@ -372,6 +372,32 @@ export function validateConfig (cfg) {
     if (cfg.l2.effort !== undefined && !['low', 'medium', 'high', 'max'].includes(cfg.l2.effort)) {
       errors.push(`l2.effort 必须是 low/medium/high/max，当前: ${cfg.l2.effort}`)
     }
+    // 多角色（v1.4.0）：roles 数组——缺省/空 = 内置 primary+planner 两角色；
+    // 显式提供时 name 唯一非空、字段集收敛（enabled/planEnabled/systemPrompt/tools）、
+    // 必须含 primary（对话入口——自动补 primary 会静默改变行为，显式报错）
+    if (cfg.l2.roles !== undefined) {
+      if (!Array.isArray(cfg.l2.roles)) {
+        errors.push('l2.roles 必须是数组（缺省 = 内置 primary+planner 两角色）')
+      } else {
+        const seen = new Set()
+        for (const [i, r] of cfg.l2.roles.entries()) {
+          const label = `l2.roles[${i}]`
+          if (!r || typeof r !== 'object' || typeof r.name !== 'string' || !r.name.trim()) {
+            errors.push(`${label}.name 必须是非空字符串`)
+            continue
+          }
+          if (seen.has(r.name)) errors.push(`${label}.name 重复: ${r.name}`)
+          seen.add(r.name)
+          if (r.enabled !== undefined && typeof r.enabled !== 'boolean') errors.push(`${label}.enabled 必须是布尔值`)
+          if (r.planEnabled !== undefined && typeof r.planEnabled !== 'boolean') errors.push(`${label}.planEnabled 必须是布尔值`)
+          if (r.systemPrompt !== undefined && typeof r.systemPrompt !== 'string') errors.push(`${label}.systemPrompt 必须是字符串`)
+          if (r.tools !== undefined && (!Array.isArray(r.tools) || !r.tools.every(t => typeof t === 'string'))) {
+            errors.push(`${label}.tools 必须是字符串数组（原语名白名单）`)
+          }
+        }
+        if (!seen.has('primary')) errors.push('l2.roles 必须包含 primary 角色（多角色配置的对话入口）')
+      }
+    }
   }
   // l2 子键白名单（config 契约）：残留的 ollama/provider 键显式报错给迁移指引，不静默忽略
   if (cfg.l2) {
@@ -379,6 +405,7 @@ export function validateConfig (cfg) {
       'enabled', 'model', 'cloudBaseUrl', 'cloudApiKeyEnv', 'maxSteps', 'cooldownMs',
       'cloudTimeoutMs', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'envInjection',
       'stateInjection', 'dangerInjection', 'thinking', 'effort', 'planEnabled', 'planCooldownMs',
+      'roles', // v1.4.0 多角色数组（缺省 = 内置 primary+planner）
       '_comment' // JSON 注释惯例（config.example.json 使用；与 mineflayerPlugins/顶层一致）
     ])
     for (const key of Object.keys(cfg.l2)) {

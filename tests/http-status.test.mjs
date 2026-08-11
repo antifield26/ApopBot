@@ -74,6 +74,31 @@ test('/metrics：200 且含 tasks/l2 形状', async (t) => {
   assert.ok(Array.isArray(r.body.tasks))
 })
 
+test('v1.4.0: /metrics l2.roles——多角色状态透传（busy/会话数/planEnabled）', async (t) => {
+  const server = makeServer(makeState({
+    roleStats: [
+      { name: 'primary', busy: false, sessions: 2, planEnabled: true },
+      { name: 'planner', busy: true, sessions: 0, planEnabled: false }
+    ]
+  }))
+  t.after(() => server.stop())
+  const port = await waitForPort(server)
+  const r = await fetchJson(port, '/metrics')
+  assert.equal(r.status, 200)
+  assert.deepEqual(r.body.l2.roles, [
+    { name: 'primary', busy: false, sessions: 2, planEnabled: true },
+    { name: 'planner', busy: true, sessions: 0, planEnabled: false }
+  ])
+})
+
+test('/metrics：roleStats 缺省（单 agent/未启用）→ l2.roles null', async (t) => {
+  const server = makeServer(makeState({ roleStats: null }))
+  t.after(() => server.stop())
+  const port = await waitForPort(server)
+  const r = await fetchJson(port, '/metrics')
+  assert.equal(r.body.l2.roles, null)
+})
+
 test('/metrics：含 memory/actions/notify（持久化面健康与动作计数观测）', async (t) => {
   const server = makeServer(makeState({
     memoryBytes: [

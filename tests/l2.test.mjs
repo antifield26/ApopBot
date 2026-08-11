@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Vec3 } from 'vec3'
 import * as discovery from '../src/core/discovery.js'
-import { AgentInterface, _resetSummarizeCooldown, estimateTokens, applyTokenBudget } from '../src/l2/agent-interface.js'
+import { AgentInterface, PLANNER_SYSTEM_PROMPT, _resetSummarizeCooldown, estimateTokens, applyTokenBudget } from '../src/l2/agent-interface.js'
 import { createL2 } from '../src/l2/index.js'
 import { createActionExecutor } from '../src/core/executor.js'
 import { loadConfig } from '../src/core/config.js'
@@ -43,12 +43,14 @@ function makeFakeProvider (script) {
 
 const l2cfg = { enabled: true, provider: 'cloud', model: 'x', cooldownMs: 0, maxSteps: 5 }
 
-function makeAgent (ctx, script) {
+function makeAgent (ctx, script, role = 'primary') {
   const provider = makeFakeProvider(script)
   // v1.0.0 C4：executor（真实原语层 + 假 provider）——工具循环与 act 都走执行器
   const executor = createActionExecutor(ctx, { audit: null })
   // cfg 用副本——测试内 agent.cfg.planEnabled = false 等修改不得污染共享 l2cfg
-  const agent = new AgentInterface(ctx, { provider, executor, config: { ...l2cfg } })
+  const deps = { provider, executor, config: { ...l2cfg } }
+  if (role === 'planner') deps.systemPrompt = PLANNER_SYSTEM_PROMPT
+  const agent = new AgentInterface(ctx, deps, role)
   return { agent, provider, executor }
 }
 
@@ -1039,12 +1041,11 @@ test('第 8 轮：act 执行期间置 busy——chat 被拒（双控制流防线
 
 // ---- 自主推进（规划器 plan 通道）----
 
-import { _resetPlanCooldown } from '../src/l2/agent-interface.js'
 
 test('plan: 冷却内跳过（不调 provider）', async () => {
-  _resetPlanCooldown()
   const ctx = makeCtx()
-  const { agent, provider } = makeAgent(ctx, [])
+  const { agent, provider } = makeAgent(ctx, [], 'planner')
+  agent._resetPlanCooldown()
   agent.setGoal('steve', '挖铁', ['找铁矿', '挖矿'])
   assert.equal(await agent.onTaskCompleted({ id: 'm1' }), true, '首次应发起规划')
   assert.ok(provider.calls.length >= 1)
@@ -1054,14 +1055,14 @@ test('plan: 冷却内跳过（不调 provider）', async () => {
 })
 
 test('plan: 无 goal 会话跳过；有 goal 发起受限工具循环', async () => {
-  _resetPlanCooldown()
   const ctx = makeCtx()
-  const { agent: fresh } = makeAgent(ctx, [])
+  const { agent: fresh } = makeAgent(ctx, [], 'planner')
   fresh.reset('steve') // 清模块级 SESSIONS 残留（跨用例共享）
   const { agent, provider } = makeAgent(ctx, [
     { text: '', toolCalls: [{ id: 't1', name: 'start_task', arguments: { type: 'chop', id: 'c1' } }] },
     { text: '下一步已启动', toolCalls: [] }
-  ])
+  ], 'planner')
+  agent._resetPlanCooldown()
   // 无 goal → 跳过
   assert.equal(await agent.onTaskCompleted({ id: 'm1' }), false, '无 goal 应跳过')
   assert.equal(provider.calls.length, 0)
@@ -1077,9 +1078,9 @@ test('plan: 无 goal 会话跳过；有 goal 发起受限工具循环', async ()
 })
 
 test('plan: 只暴露受限工具集（无 act/reply/stop_task/clear_goal/follow_player）', async () => {
-  _resetPlanCooldown()
   const ctx = makeCtx()
-  const { agent, provider } = makeAgent(ctx, [{ text: '观察后决定', toolCalls: [] }])
+  const { agent, provider } = makeAgent(ctx, [{ text: '观察后决定', toolCalls: [] }], 'planner')
+  agent._resetPlanCooldown()
   agent.setGoal('steve', '目标', ['步1'])
   await agent.onTaskCompleted({ id: 'm1' })
   const names = provider.calls[0].tools.map(t => t.name)
@@ -1092,17 +1093,16 @@ test('plan: 只暴露受限工具集（无 act/reply/stop_task/clear_goal/follow
 })
 
 test('plan: 失败静默（provider 抛错不抛、不广播）', async () => {
-  _resetPlanCooldown()
   const ctx = makeCtx()
-  const { agent } = makeAgent(ctx, [{ throw: new Error('API 500') }])
+  const { agent } = makeAgent(ctx, [{ throw: new Error('API 500') }], 'planner')
   agent.setGoal('steve', '目标', ['步1'])
   assert.equal(await agent.onTaskCompleted({ id: 'm1' }), true, '发起即返回（失败也占冷却）')
 })
 
 test('plan: busy 时跳过（不抢占对话/act）', async () => {
-  _resetPlanCooldown()
   const ctx = makeCtx()
-  const { agent, provider } = makeAgent(ctx, [])
+  const { agent, provider } = makeAgent(ctx, [], 'planner')
+  agent._resetPlanCooldown()
   agent.setGoal('steve', '目标', ['步1'])
   agent.busy = true
   assert.equal(await agent.onTaskCompleted({ id: 'm1' }), false, 'busy 应跳过')
@@ -1110,9 +1110,9 @@ test('plan: busy 时跳过（不抢占对话/act）', async () => {
 })
 
 test('plan: planEnabled=false 总开关关闭', async () => {
-  _resetPlanCooldown()
   const ctx = makeCtx()
-  const { agent, provider } = makeAgent(ctx, [])
+  const { agent, provider } = makeAgent(ctx, [], 'planner')
+  agent._resetPlanCooldown()
   agent.setGoal('steve', '目标', ['步1'])
   agent.cfg.planEnabled = false
   assert.equal(await agent.onTaskCompleted({ id: 'm1' }), false)
@@ -1144,9 +1144,9 @@ test('set_goal 原语带 plan——写入会话 goal.plan', async () => {
 // ---- 语义聚合（P2）：planOnce 危险注入 + 记忆章节 ----
 
 test('P2: planOnce 的 system 含 危险: 行（记录 fresh 危险区后）', async () => {
-  _resetPlanCooldown()
   const ctx = makeCtx()
-  const { agent, provider } = makeAgent(ctx, [{ text: '观察后决定', toolCalls: [] }])
+  const { agent, provider } = makeAgent(ctx, [{ text: '观察后决定', toolCalls: [] }], 'planner')
+  agent._resetPlanCooldown()
   discovery._reset()
   discovery.recordDangerZone({ x: 20, y: 64, z: 0 }, { hostileNames: ['zombie'] }) // bot 在 (1,2,3) 附近
   agent.setGoal('steve', '挖矿', ['找矿点'])
@@ -1157,11 +1157,11 @@ test('P2: planOnce 的 system 含 危险: 行（记录 fresh 危险区后）', a
 })
 
 test('P2: planOnce dangerInjection=false 不注入危险行', async () => {
-  _resetPlanCooldown()
   const ctx = makeCtx()
   const provider = makeFakeProvider([{ text: '观察后决定', toolCalls: [] }])
   const executor = createActionExecutor(ctx, { audit: null })
-  const agent = new AgentInterface(ctx, { provider, executor, config: { ...l2cfg, dangerInjection: false } })
+  const agent = new AgentInterface(ctx, { provider, executor, config: { ...l2cfg, dangerInjection: false }, systemPrompt: PLANNER_SYSTEM_PROMPT }, 'planner')
+  agent._resetPlanCooldown()
   discovery._reset()
   discovery.recordDangerZone({ x: 20, y: 64, z: 0 }, { hostileNames: ['zombie'] })
   agent.setGoal('steve', '挖矿', ['找矿点'])

@@ -444,3 +444,60 @@ test('!agent goal 查看——显示目标与计划', async () => {
   assert.ok(lastMsg(bot).includes('建基地'), lastMsg(bot))
   assert.ok(lastMsg(bot).includes('挖木头→造工具'), lastMsg(bot))
 })
+
+// ---- 多角色路由（v1.4.0）：!agent role list / role <name> <action> / 便捷形式 ----
+
+function makeRoleAgent () {
+  return {
+    chat: async (user, text) => ({ reply: `primary:${text}` }),
+    act: async (user, name) => ({ ok: true, result: `done:${name}` }),
+    get: (name) => name === 'planner'
+      ? { chat: async (u, t) => ({ reply: `planner:${t}` }), act: async () => ({ ok: true, result: 'planner-done' }) }
+      : null,
+    roleStats: () => [
+      { name: 'primary', busy: false, sessions: 1, planEnabled: true },
+      { name: 'planner', busy: false, sessions: 0, planEnabled: true }
+    ]
+  }
+}
+
+test('v1.4.0: !agent role list → 输出角色统计', async () => {
+  const { ctx, bot } = makeCtx({ agent: makeRoleAgent() })
+  await dispatch(ctx, '!agent role list')
+  const msg = lastMsg(bot)
+  assert.ok(msg.includes('primary'), msg)
+  assert.ok(msg.includes('planner'), msg)
+  assert.ok(msg.includes('1会话'), msg)
+})
+
+test('v1.4.0: !agent role <name> <action> 显式路由 + [role] 回复前缀', async () => {
+  const { ctx, bot } = makeCtx({ agent: makeRoleAgent() })
+  await dispatch(ctx, '!agent role planner chat 看看作物')
+  assert.ok(lastMsg(bot).includes('planner:看看作物'), lastMsg(bot))
+  assert.ok(lastMsg(bot).includes('[planner]'), '非主角色回复带角色前缀')
+})
+
+test('v1.4.0: !agent <role> <action> 便捷形式（role 非 primary + 次 token 已知动作）', async () => {
+  const { ctx, bot } = makeCtx({ agent: makeRoleAgent() })
+  await dispatch(ctx, '!agent planner chat 规划一下')
+  assert.ok(lastMsg(bot).includes('planner:规划一下'), lastMsg(bot))
+})
+
+test('v1.4.0: !agent chat X 恒为 primary 的 chat 动作（回归——无歧义）', async () => {
+  const { ctx, bot } = makeCtx({ agent: makeRoleAgent() })
+  await dispatch(ctx, '!agent chat 你好')
+  assert.ok(lastMsg(bot).includes('primary:你好'), lastMsg(bot))
+  assert.ok(!lastMsg(bot).includes('[planner]'), 'primary 回复无角色前缀')
+})
+
+test('v1.4.0: !agent chat reset 退化输入 → 按 chat 动作（不会误路由角色）', async () => {
+  const { ctx, bot } = makeCtx({ agent: makeRoleAgent() })
+  await dispatch(ctx, '!agent chat reset')
+  assert.ok(lastMsg(bot).includes('primary:reset'), lastMsg(bot))
+})
+
+test('v1.4.0: !agent role 不存在 chat hi → 报错', async () => {
+  const { ctx, bot } = makeCtx({ agent: makeRoleAgent() })
+  await dispatch(ctx, '!agent role 不存在 chat hi')
+  assert.ok(lastMsg(bot).includes('角色不存在'), lastMsg(bot))
+})

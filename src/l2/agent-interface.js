@@ -111,15 +111,15 @@ export function _resetSummarizeCooldown () {
   lastSummarizeAt = 0
 }
 
-// 规划器独立冷却（自主推进）——与 summarize 60s 分开：规划调用带工具、成本高，
-// 共用播报冷却会饿死死亡/任务播报。任务高频完成时自动降频评估（可配 planCooldownMs）
-const PLAN_DEFAULT_COOLDOWN_MS = 120000
-let lastPlanAt = 0
-
-/** 测试钩子：重置规划冷却（生产不调用；tests 需要独立验证冷却语义）。 */
-export function _resetPlanCooldown () {
-  lastPlanAt = 0
+/** 测试钩子：清空全部会话（生产不调用；多角色测试需要独立验证会话隔离）。 */
+export function _resetSessions () {
+  SESSIONS.clear()
 }
+
+// 规划器独立冷却（自主推进）——与 summarize 60s 分开：规划调用带工具、成本高，
+// 共用播报冷却会饿死死亡/任务播报。任务高频完成时自动降频评估（可配 planCooldownMs）。
+// v1.4.0 多角色化：lastPlanAt 移入实例（每角色独立推进节奏，见 AgentInterface.this.lastPlanAt）
+const PLAN_DEFAULT_COOLDOWN_MS = 120000
 
 /**
  * token 估算（qwen3 BPE 近似，确定性可测，偏保守）——
@@ -206,20 +206,23 @@ export function applyTokenBudget (messages, fixedTokens, budget) {
  * 读取会话并刷新 LRU 序（delete+set 移到迭代末尾）。
  * 会话值形如 { history, calls }——calls 记录最近工具操作（跨对话注入，LLM 知道
  * 上次实际执行了什么）。兼容旧结构（纯数组 → 转 history）。
+ * v1.4.0 多角色化：key 带角色前缀 `${role}:${user}`——各角色会话隔离，
+ * 磁盘 store 不感知前缀（不透明 key→value），旧裸 key（v1.3.0）首读迁移。
  */
-function getSession (user) {
-  const v = SESSIONS.get(user)
+function getSession (role, user) {
+  const key = `${role}:${user}`
+  const v = SESSIONS.get(key)
   if (v !== undefined) {
-    SESSIONS.delete(user)
-    SESSIONS.set(user, v)
+    SESSIONS.delete(key)
+    SESSIONS.set(key, v)
     return Array.isArray(v) ? { history: v, calls: [] } : v
   }
   return null
 }
 
 /** 写入会话（LRU 上限驱逐最久未访问者——统一走 putBounded）。 */
-function setSession (user, value) {
-  putBounded(SESSIONS, user, Array.isArray(value) ? { history: value, calls: [] } : value)
+function setSession (role, user, value) {
+  putBounded(SESSIONS, `${role}:${user}`, Array.isArray(value) ? { history: value, calls: [] } : value)
 }
 
 /** 有界 Map（LRU 上限驱逐最久未访问者；cooldowns 与 SESSIONS 共用）。 */
@@ -257,14 +260,16 @@ const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手
 /**
  * 每次对话注入调用者身份：LLM 必须知道"谁在说话、是否有 op 权限"，
  * 否则面对危险操作请求只会回复"需要验证 op 身份"。
+ * v1.4.0 多角色化：systemPrompt 参数化（角色人设基底，缺省 CORE_SYSTEM_PROMPT）。
  * @param {string} user 消息来源玩家
  * @param {Record<string, any>} cfg
+ * @param {string} [systemPrompt] 角色人设基底
  */
-function buildSystem (user, cfg) {
+function buildSystem (user, cfg, systemPrompt = CORE_SYSTEM_PROMPT) {
   const auth = isOp(user, cfg)
     ? `${user} 是 op 白名单成员——危险操作可直接执行，无需再要求验证`
     : `${user} 是普通玩家——危险操作（goto/dig/place/attack 等动作）必须拒绝并说明权限不足`
-  return `${CORE_SYSTEM_PROMPT}\n\n当前会话：${auth}`
+  return `${systemPrompt}\n\n当前会话：${auth}`
 }
 
 // ---- 工具集：act（动作数组）+ 观察/回复工具 ----
@@ -295,11 +300,19 @@ function actTool (maxActionsPerCall) {
   }
 }
 
-/** 从原语注册表生成工具集（act + 观察类 + reply；wait/look/fish 只经 act）。 */
-function buildTools (executor, maxActionsPerCall) {
-  const tools = [actTool(maxActionsPerCall)]
+/**
+ * 从原语注册表生成工具集（act + 观察类 + reply；wait/look/fish 只经 act）。
+ * @param {{ primitives: Map<string, { permission: string, exclusiveClass: string, description?: string, schema?: object }> }} executor executor（executor.primitives）
+ * @param {number} maxActionsPerCall act 动作上限
+ * @param {string[]|null} [whitelist] 角色工具白名单（null=全量；提供=严格过滤，
+ *        不在白名单的原语不暴露；白名单不含 act 则该角色无动作通道）
+ */
+function buildTools (executor, maxActionsPerCall, whitelist = null) {
+  const tools = []
+  if (whitelist === null || whitelist.includes('act')) tools.push(actTool(maxActionsPerCall))
   for (const [op, p] of executor.primitives) {
     if (p.permission !== 'all') continue
+    if (whitelist !== null && !whitelist.includes(op)) continue
     if (['wait', 'look', 'fish'].includes(op)) continue // 流程原语经 act
     if (op === 'reply' || p.exclusiveClass === 'readonly') {
       tools.push({ name: op, description: p.description ?? op, parameters: p.schema ?? { type: 'object', properties: {} } })
@@ -309,8 +322,9 @@ function buildTools (executor, maxActionsPerCall) {
 }
 
 // 规划器提示词：无人值守目标推进——只经任务层表达意图（受限工具集强制），
-// 输出是内部决策不回复玩家
-const PLANNER_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 无人值守规划器（minecraft-bot）。你在玩家设定的长期目标框架下，在任务完成后决定下一步。
+// 输出是内部决策不回复玩家。v1.4.0 多角色化：planner 成为独立角色，此为人设基底
+//（导出供 l2/index.js 构建 planner 角色实例）
+export const PLANNER_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 无人值守规划器（minecraft-bot）。你在玩家设定的长期目标框架下，在任务完成后决定下一步。
 【约束】
 1. 只通过 start_task 推进目标（可带 next 任务链/schedule 定时）；绝不直接操控移动/战斗/物品——你的工具集只有观察与任务管理
 2. 先 observe_tasks 看当前任务状态再决定（不重复启动已运行/排队中的任务——id 冲突会报错）
@@ -321,11 +335,15 @@ const PLANNER_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 无
 /**
  * 规划器受限工具集：readonly 观察族 + start_task/set_goal——
  * 规划器只能经任务层表达意图，不能直接移动/挖掘/战斗/清除目标。
+ * @param {{ primitives: Map<string, { permission: string, exclusiveClass: string, description?: string, schema?: object }> }} executor executor（executor.primitives）
+ * @param {string[]|null} [whitelist] 角色工具白名单（null=全量 readonly；
+ *        提供=在白名单基础上再过滤；start_task/set_goal 恒追加——规划器必须能推进）
  */
-function buildPlanningTools (executor) {
+function buildPlanningTools (executor, whitelist = null) {
   const tools = []
   for (const [op, p] of executor.primitives) {
     if (p.permission !== 'all' || p.exclusiveClass !== 'readonly') continue
+    if (whitelist !== null && !whitelist.includes(op)) continue
     tools.push({ name: op, description: p.description ?? op, parameters: p.schema ?? { type: 'object', properties: {} } })
   }
   for (const op of ['start_task', 'set_goal']) {
@@ -338,9 +356,9 @@ function buildPlanningTools (executor) {
 export class AgentInterface {
   /**
    * @param {{ bot, cfg, logger, tasks, conn, plugins }} ctx
-   * @param {{ provider: { chat: Function, diagnose?: Function, contextWindow?: Function }, executor: { executeBatch: Function, executeOne: Function }, config: Record<string, any>, sessionStore?: { get(user: string): object|null, set(user: string, value: object): void, reset(user: string): void }|null, experience?: { add(entry: object): void, recent(n?: number): Array<object>, match(ops: Array<string>, n?: number): Array<object> }|null }} deps
+   * @param {{ provider: { chat: Function, diagnose?: Function, contextWindow?: Function }, executor: { executeBatch: Function, executeOne: Function, primitives: Map<string, { permission: string, exclusiveClass: string, description?: string, schema?: object }> }, config: Record<string, any>, sessionStore?: { get(user: string): object|null, set(user: string, value: object): void, reset(user: string): void }|null, experience?: { add(entry: object): void, recent(n?: number): Array<object>, match(ops: Array<string>, n?: number): Array<object> }|null, systemPrompt?: string, toolWhitelist?: string[]|null }} deps
    */
-  constructor (ctx, deps) {
+  constructor (ctx, deps, role = 'primary') {
     this.ctx = ctx
     this.provider = deps.provider
     this.executor = deps.executor
@@ -349,7 +367,12 @@ export class AgentInterface {
     this.sessionStore = deps.sessionStore ?? null
     // 经验记忆库（动作失败反思沉淀；缺省 null = 不反思/不注入）
     this.experience = deps.experience ?? null
-    this.log = ctx.logger.child({ module: 'l2' })
+    // 多角色化：角色名（会话 key 前缀 + 日志区分）；人设基底（缺省 CORE_SYSTEM_PROMPT）；
+    // 工具白名单（null=全量；提供=严格过滤，未知 op warn 跳过——角色配置错误不炸）
+    this.role = role
+    this.systemPrompt = deps.systemPrompt ?? CORE_SYSTEM_PROMPT
+    this.toolWhitelist = deps.toolWhitelist ?? null
+    this.log = ctx.logger.child({ module: 'l2', role })
     this.busy = false
     // 按玩家冷却：全局单值会让一个玩家的请求冷却挡住所有玩家的 !agent chat
     this.cooldowns = new Map()
@@ -359,6 +382,14 @@ export class AgentInterface {
     // 世界事件挂起（被动感知）：feature-layer 事件监听写入，下次对话注入——
     // 不做主动唤醒（busy 门/玩家冷却/权限语义约束）；≤3 条 × 80 字符
     this.pendingEvents = []
+    // 规划冷却（实例级——各角色独立自主推进节奏，互不干扰）
+    this.lastPlanAt = 0
+    // 白名单预校验（构造一次，避免每轮工具构建重复 warn）
+    if (Array.isArray(this.toolWhitelist)) {
+      for (const op of this.toolWhitelist) {
+        if (!deps.executor?.primitives?.has?.(op)) this.log.warn({ op }, '角色工具白名单含未知原语（跳过）')
+      }
+    }
   }
 
   /**
@@ -404,11 +435,26 @@ export class AgentInterface {
       // 会话注入：历史（裁剪后）+ 本轮用户消息（history 是副本，工具循环内 push 不污染存储）。
       // session.calls 是跨对话工具操作记录（最近 20 条，注入用）
       // 内存优先，miss 时从磁盘回填（重启后恢复多轮上下文）
-      let session = getSession(user)
+      let session = getSession(this.role, user)
+      if (session === null) {
+        // v1.3.0 旧裸 key 内存迁移：读到后移到角色前缀 key（无缝继承旧会话）
+        const legacy = SESSIONS.get(user)
+        if (legacy !== undefined) {
+          SESSIONS.delete(user)
+          setSession(this.role, user, legacy)
+          session = getSession(this.role, user)
+        }
+      }
       if (session === null && this.sessionStore) {
-        const disk = this.sessionStore.get(user)
+        const key = `${this.role}:${user}`
+        let disk = this.sessionStore.get(key)
+        if (disk === null) {
+          // v1.3.0 旧裸 key 磁盘迁移（sessions.json 旧数据）
+          const legacy = this.sessionStore.get(user)
+          if (legacy) { this.sessionStore.set(key, legacy); this.sessionStore.reset(user); disk = legacy }
+        }
         if (disk) {
-          putBounded(SESSIONS, user, disk)
+          putBounded(SESSIONS, key, disk)
           session = disk
         }
       }
@@ -438,8 +484,8 @@ export class AgentInterface {
       // 轮前（本轮 system 用上轮的失败集），Reflexion 语义的正确时序
       let prevRoundOps = []
       for (let step = 0; step < maxSteps && !finished; step++) {
-        // 固定工具集 = act + 观察/回复（从原语注册表生成）
-        const tools = buildTools(this.executor, this.cfg.maxActionsPerCall ?? 8)
+        // 固定工具集 = act + 观察/回复（从原语注册表生成；角色白名单过滤）
+        const tools = buildTools(this.executor, this.cfg.maxActionsPerCall ?? 8, this.toolWhitelist)
         // 环境自动注入——每次工具轮重新生成（bot 移动后数据新鲜）；开关可关；
         // 缺失字段 environmentLine 内部兜底（返回空串）
         // 最近工具操作注入（≤3 条 × ≤60 字符摘要）——跨对话规划连续性的核心：
@@ -450,7 +496,7 @@ export class AgentInterface {
         }
         // 单 provider（云端）——恒拼接完整提示词
         // 经验教训注入（按上轮失败 op 检索 ≤3 条；无匹配回退最近 2 条）
-        const system = buildSystem(user, this.ctx.cfg) +
+        const system = buildSystem(user, this.ctx.cfg, this.systemPrompt) +
           experienceInjection(this.experience, prevRoundOps) +
           // 长期目标注入（v2）：当前目标+计划（≤120 字符；无目标跳过）
           (session?.goal?.text ? `\n当前目标: ${session.goal.text.slice(0, 80)}${session.goal.plan?.length ? `（计划: ${session.goal.plan.join('→').slice(0, 40)}）` : ''}${session.goal.setBy ? `，由 ${session.goal.setBy} 设置` : ''}` : '') +
@@ -564,9 +610,9 @@ export class AgentInterface {
         goal: session?.goal ?? null,
         summary: session?.summary ?? null
       }
-      setSession(user, sessionValue)
+      setSession(this.role, user, sessionValue)
       // 落盘（2s 防抖 + exit flush）——重启/重连后多轮上下文不丢
-      this.sessionStore?.set(user, sessionValue)
+      this.sessionStore?.set(`${this.role}:${user}`, sessionValue)
       // 对话滚动摘要（v2）：被 slice 丢掉的旧轮非空且尚无摘要 → fire-and-forget
       // LLM 压缩（复用 summarize 60s 冷却天然节流；成功晚于本轮落盘——补写）
       const dropped = history.slice(0, -MAX_HISTORY_MESSAGES)
@@ -579,8 +625,8 @@ export class AgentInterface {
           .then((s) => {
             if (!s) return
             const v = { ...sessionValue, summary: s }
-            setSession(user, v)
-            this.sessionStore?.set(user, v)
+            setSession(this.role, user, v)
+            this.sessionStore?.set(`${this.role}:${user}`, v)
           })
           .catch(() => {})
       }
@@ -681,19 +727,24 @@ export class AgentInterface {
 
   /** 清空指定玩家的会话记忆（!agent reset；同步清磁盘）。 */
   reset (user) {
-    SESSIONS.delete(user)
-    this.sessionStore?.reset(user)
+    SESSIONS.delete(`${this.role}:${user}`)
+    this.sessionStore?.reset(`${this.role}:${user}`)
+  }
+
+  /** 测试钩子：重置本实例规划冷却（生产不调用；tests 需要独立验证冷却语义）。 */
+  _resetPlanCooldown () {
+    this.lastPlanAt = 0
   }
 
   /** 读取指定玩家的长期目标（!agent goal 查看）。 */
   getGoal (user) {
-    const session = getSession(user)
+    const session = getSession(this.role, user)
     return session?.goal ?? null
   }
 
   /** 设置长期目标（!agent goal set / set_goal 原语；同 text 重复 set 不更新）。 */
   setGoal (user, text, plan = []) {
-    const session = getSession(user) ?? { history: [], calls: [], goal: null, summary: null }
+    const session = getSession(this.role, user) ?? { history: [], calls: [], goal: null, summary: null }
     const goal = {
       text: String(text).slice(0, 200),
       plan: (plan ?? []).slice(0, 5).map(String),
@@ -702,18 +753,18 @@ export class AgentInterface {
     }
     if (session.goal?.text === goal.text && session.goal?.setBy === user) return session.goal
     session.goal = goal
-    setSession(user, session)
-    this.sessionStore?.set(user, session)
+    setSession(this.role, user, session)
+    this.sessionStore?.set(`${this.role}:${user}`, session)
     return goal
   }
 
   /** 清除长期目标（!agent goal clear / set_goal 原语传空）。 */
   clearGoal (user) {
-    const session = getSession(user)
+    const session = getSession(this.role, user)
     if (!session?.goal) return false
     session.goal = null
-    setSession(user, session)
-    this.sessionStore?.set(user, session)
+    setSession(this.role, user, session)
+    this.sessionStore?.set(`${this.role}:${user}`, session)
     return true
   }
 
@@ -729,7 +780,7 @@ export class AgentInterface {
       if (this.cfg.planEnabled === false) return false
       const now = Date.now()
       const cooldown = this.cfg.planCooldownMs ?? PLAN_DEFAULT_COOLDOWN_MS
-      if (now - lastPlanAt < cooldown) return false
+      if (now - this.lastPlanAt < cooldown) return false
       if (this.busy) return false // chat/act 进行中不抢占
       const picked = this.pickGoalSession()
       if (!picked) return false
@@ -748,10 +799,13 @@ export class AgentInterface {
   pickGoalSession () {
     let best = null
     let bestTs = -1
-    for (const [user, v] of SESSIONS) {
+    for (const [k, v] of SESSIONS) {
       const g = v?.goal
       if (!g?.text) continue
       if ((g.updatedAt ?? 0) > bestTs) {
+        // 剥离角色前缀返回裸 user——goal 只存于 primary 会话（!agent goal set 走主角色），
+        // planOnce 以 setBy 身份执行 start_task（isOp 按裸名判定，前缀会误拒）
+        const user = k.includes(':') ? k.slice(k.indexOf(':') + 1) : k
         best = { user, goal: g }
         bestTs = g.updatedAt ?? 0
       }
@@ -770,8 +824,8 @@ export class AgentInterface {
    */
   async planOnce (user, goal) {
     if (!this.provider?.chat) return false
-    lastPlanAt = Date.now() // 置位防重入
-    const tools = buildPlanningTools(this.executor)
+    this.lastPlanAt = Date.now() // 置位防重入
+    const tools = buildPlanningTools(this.executor, this.toolWhitelist)
     let messages = []
     let toolCalls = 0
     for (let step = 0; step < 2; step++) {
@@ -781,7 +835,8 @@ export class AgentInterface {
       const goalLine = `当前目标: ${goal.text.slice(0, 80)}${goal.plan?.length ? `（计划: ${goal.plan.join('→').slice(0, 40)}）` : ''}`
       const envLine = this.cfg.envInjection === false ? '' : environmentLine(this.ctx.bot)
       const dangerLine_ = this.cfg.dangerInjection === false ? '' : `\n${dangerLine(this.ctx.bot)}`
-      const system = `${PLANNER_SYSTEM_PROMPT}\n\n${goalLine}\n任务状态: ${statusLine}${envLine}${dangerLine_}`
+      // 人设基底用角色 systemPrompt（planner 角色缺省即 PLANNER_SYSTEM_PROMPT）
+      const system = `${this.systemPrompt}\n\n${goalLine}\n任务状态: ${statusLine}${envLine}${dangerLine_}`
       // 首轮补占位 user 消息（Anthropic 协议要求首条 user + 角色交替）
       if (messages.length === 0) {
         messages.push({ role: 'user', content: '评估当前目标进度并决定下一步（只观察或 start_task/set_goal）。' })
@@ -824,8 +879,10 @@ export class AgentInterface {
     return true
   }
 
-  /** 当前会话数（/metrics 用）。 */
+  /** 本角色会话数（/metrics 用；按角色前缀统计）。 */
   sessionCount () {
-    return SESSIONS.size
+    let n = 0
+    for (const k of SESSIONS.keys()) if (k.startsWith(`${this.role}:`)) n++
+    return n
   }
 }

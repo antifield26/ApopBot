@@ -169,6 +169,16 @@
     "dangerInjection": true,
     "planEnabled": true,
     "planCooldownMs": 120000,
-    "_comment": "预设 DeepSeek（Anthropic 兼容端点——裸域名会补到 OpenAI 路由 404，必须带 /anthropic）。API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（默认 ANTHROPIC_API_KEY，可改 DEEPSEEK_API_KEY 等），绝不写进配置文件；cloudMaxContextWindow 是云端预算守卫（32k 上下文端点调低到 32768）；maxActionsPerCall 是单次 act 动作数组上限（每轮动作预算 = maxSteps × maxActionsPerCall）；thinking=disabled（默认）显式关思考且不传 reasoning_effort（DeepSeek 端点两者互斥 400），enabled 时按 effort（low/medium/high/max）注入；planEnabled=自主推进（任务自然完成且无配置链时 LLM 评估目标生成下一个任务），planCooldownMs=规划调用独立冷却，dangerInjection=附近危险区域被动注入（无新鲜记录时零成本）"
+    "roles": [
+      {
+        "name": "primary",
+        "_comment": "对话助手（缺省人设全工具）——roles 显式提供时必须含 primary"
+      },
+      {
+        "name": "planner",
+        "_comment": "无人值守规划器（受限工具集：观察 + start_task/set_goal）——恒创建，planEnabled 只门控自主推进，仍可 !agent role planner 手动对话"
+      }
+    ],
+    "_comment": "预设 DeepSeek（Anthropic 兼容端点——裸域名会补到 OpenAI 路由 404，必须带 /anthropic）。API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（默认 ANTHROPIC_API_KEY，可改 DEEPSEEK_API_KEY 等），绝不写进配置文件；cloudMaxContextWindow 是云端预算守卫（32k 上下文端点调低到 32768）；maxActionsPerCall 是单次 act 动作数组上限（每轮动作预算 = maxSteps × maxActionsPerCall）；thinking=disabled（默认）显式关思考且不传 reasoning_effort（DeepSeek 端点两者互斥 400），enabled 时按 effort（low/medium/high/max）注入；planEnabled=自主推进（任务自然完成且无配置链时 LLM 评估目标生成下一个任务），planCooldownMs=规划调用独立冷却，dangerInjection=附近危险区域被动注入（无新鲜记录时零成本）；roles=多角色数组（缺省/空 = 内置 primary+planner 两角色；字段集 {name, enabled?, planEnabled?, systemPrompt?, tools?}——tools 为原语名白名单，可加自定义角色如 {name:'farmer', systemPrompt:'你是农场主', tools:['observe_crops']}）"
   }
 }

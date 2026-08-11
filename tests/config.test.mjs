@@ -264,6 +264,35 @@ test('l2 数值/模型校验（maxSteps/超时/maxActionsPerCall）', () => {
   assert.equal(good.ok, true, good.errors.join('; '))
 })
 
+test('v1.4.0: l2.roles 校验（非数组/重复/缺 primary/字段集/合法放行/旧配置通过）', () => {
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
+  const base = { ...cfg, l2: { ...cfg.l2, enabled: true } }
+  // 非数组
+  let r = validateConfig({ ...base, l2: { ...base.l2, roles: 'not-array' } })
+  assert.equal(r.ok, false)
+  assert.ok(r.errors.some(e => e.includes('l2.roles 必须是数组')))
+  // name 重复
+  r = validateConfig({ ...base, l2: { ...base.l2, roles: [{ name: 'primary' }, { name: 'primary' }] } })
+  assert.equal(r.ok, false)
+  assert.ok(r.errors.some(e => e.includes('重复')))
+  // 缺 primary（显式提供时必须含——对话入口）
+  r = validateConfig({ ...base, l2: { ...base.l2, roles: [{ name: 'farmer' }] } })
+  assert.equal(r.ok, false)
+  assert.ok(r.errors.some(e => e.includes('必须包含 primary')))
+  // 字段集校验（tools 非字符串数组）
+  r = validateConfig({ ...base, l2: { ...base.l2, roles: [{ name: 'primary', tools: 'not-array' }] } })
+  assert.equal(r.ok, false)
+  assert.ok(r.errors.some(e => e.includes('tools 必须是字符串数组')))
+  // 合法放行（primary + 自定义角色）
+  r = validateConfig({ ...base, l2: { ...base.l2, roles: [{ name: 'primary' }, { name: 'farmer', tools: ['observe_crops'] }] } })
+  assert.equal(r.ok, true, r.errors.join('; '))
+  // 旧配置（无 roles 键）通过——缺省 = 内置 primary+planner
+  assert.equal(validateConfig(base).ok, true)
+  // L2_KNOWN_KEYS 白名单放行 roles
+  const withRoles = validateConfig({ ...base, l2: { ...base.l2, roles: [{ name: 'primary' }] } })
+  assert.equal(withRoles.ok, true, withRoles.errors.join('; '))
+})
+
 test('MCBOT_TASKS_FILE 任务文件合并（内部键加载后删除）', () => {
   const tmp = path.join(os.tmpdir(), `mcbot-tasks-${process.pid}-${Date.now()}.json`)
   writeFileSync(tmp, JSON.stringify([{ id: 't1', type: 'mine', options: { blockTypes: ['iron_ore'] } }]))
