@@ -1,3 +1,4 @@
+// @ts-check
 // 任务类型单一注册表——统一为 name → { factory, naturalCompletion } 单点定义，
 // manager.js 装载与 config.js 校验均从注册表派生。
 

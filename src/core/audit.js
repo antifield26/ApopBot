@@ -1,3 +1,4 @@
+// @ts-check
 // 动作审计日志：所有 LLM/脚本/命令发起的动作全量记录到
 // logs/audit.log（JSONL，按天轮转，保留天数与主日志一致）——自主行为可追溯、
 // 可复盘（谁在什么时间对世界做了什么、结果如何）。
@@ -22,16 +23,19 @@ function trunc (v) {
 
 /**
  * 创建审计日志器。
- * @param {{ dir?: string, keepDays?: number, logger: object }} cfg
- *        dir 缺省不写文件（内存 noop——测试/无日志目录场景）
- * @returns {{ append(entry): void, path: string|null }}
+ * @param {Record<string, any>} cfg
+ * @param {string} [cfg.dir] 缺省不写文件（内存 noop——测试/无日志目录场景）
+ * @param {number} [cfg.keepDays]
+ * @param {object} [cfg.logger]
+ * @returns {{ append(entry: object): void, path: string|null }}
  *
  * 进程级共享：同一 dir 返回同一实例——全进程单 pino-roll worker。多写者共写同一
  * audit.log 会轮转竞争（旧句柄写被改名文件 → 日志拆分/丢失）且任务反复重启累积
  * worker；热重载 log.dir 变化时按新键新建（旧 worker 随旧配置弃用）。
  */
 const _shared = new Map() // `${dir}|${keepDays}` → { append, path }
-export function createAuditLogger ({ dir, keepDays = 14 } = {}) {
+export function createAuditLogger (cfg = {}) {
+  const { dir, keepDays = 14 } = cfg
   if (dir) {
     const key = `${dir}|${keepDays}`
     const existing = _shared.get(key)

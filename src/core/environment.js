@@ -1,3 +1,4 @@
+// @ts-check
 // 环境快照构建器：environment 技能与自动注入共用。
 // 数据源 26.1 已核实：
 //   - bot.time（timeOfDay/isDay/age/moonPhase，服务端 time 包驱动）

@@ -1,3 +1,4 @@
+// @ts-check
 // AFK 任务脚本：周期性微小视角转动，防 Paper afk-kick-timeout 踢出。
 // 语义说明：intervalMinutes ≥1 校验（校验在 task-schemas）、
 // _internalWait 内部等待（stop/pause 可打断）、视角转动失败仅 warn 不中断、

@@ -1,3 +1,4 @@
+// @ts-check
 // LLM Provider：单 Provider——仅云端 Anthropic 兼容 API（non-reasoning 模式）。
 // 接口：chat(messages, { tools, system, signal }) →
 //   Promise<{ text: string|null, toolCalls: Array<{id, name, arguments}>, usage, latencyMs }>
@@ -100,6 +101,11 @@ class CloudProvider {
     return { ...r, label: 'cloud' }
   }
 
+  /**
+   * 对话补全（Anthropic Messages 协议）。
+   * @param {Array<object>} messages
+   * @param {{ tools?: Array<Record<string, any>>, system?: string, signal?: AbortSignal }} opts
+   */
   async chat (messages, { tools = [], system = '', signal } = {}) {
     if (!this.apiKey) {
       throw new Error(`未配置 API key（环境变量 ${this.l2.cloudApiKeyEnv ?? 'ANTHROPIC_API_KEY'}）`)
@@ -119,7 +125,7 @@ class CloudProvider {
       body.thinking = { type: 'disabled' }
     }
     if (tools.length > 0) {
-      body.tools = tools.map(({ name, description, parameters }) => ({
+      body.tools = tools.map(({ name, description, parameters } = {}) => ({
         name,
         description,
         input_schema: parameters ?? { type: 'object', properties: {} }
@@ -152,11 +158,13 @@ class CloudProvider {
     const isRetryable = (status) => status === 429 || status >= 500
     const wait = async (ms) => {
       if (!signal) { await new Promise(r => setTimeout(r, ms)); return }
-      await new Promise((resolve, reject) => {
+      /** @type {Promise<void>} */
+      const delay = new Promise((resolve, reject) => {
         const onAbort = () => { clearTimeout(t); reject(new Error('请求已中止')) }
         const t = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve() }, ms)
         signal.addEventListener('abort', onAbort, { once: true })
       })
+      await delay
     }
     let lastErr = null
     for (let attempt = 0; attempt <= 2; attempt++) {

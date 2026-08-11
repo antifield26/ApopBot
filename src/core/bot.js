@@ -1,3 +1,4 @@
+// @ts-check
 import mineflayer from 'mineflayer'
 import { loadMineflayerPlugins } from '../plugins/index.js'
 

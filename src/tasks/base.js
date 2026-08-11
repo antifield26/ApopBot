@@ -1,3 +1,4 @@
+// @ts-check
 // 任务基类：状态机 created → init → running ⇄ paused → stopped/completed/failed。
 //
 // run-completion 语义：
@@ -25,7 +26,7 @@ export class BaseTask {
    * @param {string} id
    * @param {string} type
    * @param {object} options
-   * @param {{ bot, logger, config }} ctx 运行上下文注入
+   * @param {{ bot, logger, config, getConfig?: Function }} ctx 运行上下文注入
    */
   constructor (id, type, options, ctx) {
     this.id = id
@@ -86,9 +87,10 @@ export class BaseTask {
    * 防御：pause 落在 init 微任务窗口时 state 已置 paused——这里不得覆盖回 running，
    * 否则 resume() 因 state!=='paused' 直接返回、_pauseRequested 永不清除 → 任务
    * 永久卡在 _waitIfPaused（伪死锁）。
+   * @param {number} [_gen] 当前 run 代际（子类签名扩展；基类实现不使用）
    * @returns {Promise<void>}
    */
-  async run () {
+  async run (_gen) {
     if (!this._pauseRequested) this._setState('running')
     this.startedAt = Date.now()
   }
@@ -176,7 +178,8 @@ export class BaseTask {
     this.waitingSince = this.waitingSince ?? Date.now() // 首次进入等待时记录
     const gen = this._runGen
     try {
-      await new Promise((resolve) => {
+      /** @type {Promise<void>} */
+      const wait = new Promise((resolve) => {
         const token = {
           resolve,
           timer: setTimeout(() => {
@@ -186,6 +189,7 @@ export class BaseTask {
         }
         this._internalWaits.add(token)
       })
+      await wait
       if (gen !== this._runGen) return // 代际守卫：旧代残留等待醒来后直接退出
     } finally {
       // 只清当前代代的 waitingReason——旧代 finally 不得清掉新代设置的 reason

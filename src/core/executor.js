@@ -1,3 +1,4 @@
+// @ts-check
 // 动作执行器：LLM act 动作数组与任务脚本共用的统一执行管线。
 // executeBatch(actions, opts)：
 //   - 逐动作执行单动作管线（解析→权限门→exclusive 守卫→参数校验→冷却→执行→审计）
@@ -16,7 +17,7 @@ import { createAuditLogger } from './audit.js'
 
 /**
  * 创建动作执行器。
- * @param {{ bot, cfg, logger, tasks, conn, plugins }} ctx
+ * @param {{ bot: any, cfg: any, logger: any, tasks: any, conn: any, plugins: any, _caller?: string|null }} ctx
  * @param {{ primitives?: Map, audit?: object|null }} deps 测试注入（缺省真实实例）
  */
 export function createActionExecutor (ctx, deps = {}) {
@@ -86,7 +87,7 @@ export function createActionExecutor (ctx, deps = {}) {
   /**
    * 批量执行动作数组。
    * @param {Array<{op: string, args?: object}>} actions
-   * @param {{ user?: string, source: 'llm'|'script'|'act', taskId?: string,
+   * @param {{ user?: string, source?: 'llm'|'script'|'act', taskId?: string,
    *           signal?: AbortSignal|null, bypassExclusive?: boolean,
    *           continueOnError?: boolean,
    *           isPaused?: () => boolean, waitIfPaused?: () => Promise<void> }} opts

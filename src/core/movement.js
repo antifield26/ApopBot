@@ -1,3 +1,4 @@
+// @ts-check
 // 统一移动/寻路层：任务与命令体系共用的寻路封装（follow 的近距离直接控制独立，
 // 见 follow.js 文件头分层说明）。
 //
@@ -55,7 +56,7 @@ export const REASON_TEXT = {
  * 真实可调项是 pathfinder 实例字段（thinkTimeout/tickTimeout，A* 分片预算），
  * 由 createMovement 可选参数暴露（默认不覆盖已验证值）。
  * @param {import('mineflayer').Bot} bot
- * @param {Function} Movements pathfinder 的 Movements 类（DI 注入，测试友好）
+ * @param {new (bot: import('mineflayer').Bot) => object} Movements pathfinder 的 Movements 类（DI 注入，测试友好）
  */
 export function createMovements (bot, Movements) {
   return new Movements(bot)
@@ -72,7 +73,7 @@ export function stopPathfinding (bot) {
  * 横移离开贴墙位置后起跳无延迟即可通过。失败（侧向也是墙/超时）不阻塞——
  * 返回后由 goto 重试兜底。
  * @param {import('mineflayer').Bot} bot
- * @param {object} goal 原目标（用于计算侧向方向）
+ * @param {{ x?: number, z?: number }} goal 原目标（用于计算侧向方向）
  */
 async function sidestep (bot, goal, timeoutMs = 8000) {
   try {
@@ -144,8 +145,8 @@ export function clearGoal (bot) {
 /**
  * 移动入口工厂。
  * @param {import('mineflayer').Bot} bot
- * @param {object} logger
- * @param {{ pollMs?: number, thinkTimeoutMs?: number, tickTimeoutMs?: number }} [opts]
+ * @param {Record<string, any>} logger
+ * @param {{ pollMs?: number, thinkTimeoutMs?: number, tickTimeoutMs?: number, stuckGraceMs?: number, stuckDetectMs?: number, sidestepTimeoutMs?: number }} [opts]
  */
 export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeoutMs = null, stuckGraceMs = STUCK_GRACE_MS, stuckDetectMs = STUCK_DETECT_MS, sidestepTimeoutMs = 8000 } = {}) {
   const log = logger?.child ? logger.child({ module: 'movement' }) : logger
@@ -234,7 +235,7 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
     let stuckSince = null
     const timer = setInterval(() => {
       // 双保险：error 路径可能先于 end 到达——轮询器检测到断线立即收尾
-      if (!disconnected && bot._client?.state === 'disconnected') onEnd()
+      if (!disconnected && String(bot._client?.state) === 'disconnected') onEnd()
       else if (isInterrupted?.()) {
         stoppedByUs = true
         stopPathfinding(bot) // 下一 tick 触发 PathStopped 拒绝
@@ -295,6 +296,8 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
 
   /**
    * 走到指定坐标。range 缺省 → GoalBlock（精确站格）；提供 → GoalNear（范围内即可）。
+   * @param {{ x: number, y: number, z: number }} pos
+   * @param {{ range?: number|null, timeoutMs?: number, pollMs?: number, isInterrupted?: (() => boolean)|null }} [opts]
    * @returns {Promise<{ ok: boolean, reason?: string, err?: Error }>}
    */
   async function gotoPoint (pos, { range = null, ...opts } = {}) {
@@ -329,7 +332,7 @@ export function createMovement (bot, logger, { thinkTimeoutMs = null, tickTimeou
    * 复杂地形 A* 永远算不完 → Bot 原地不动。
    * 目标位移超 RECALC_DIST 视为"目标跑了"→ interrupted → 调用方重扫（保持追逐，
    * 且不打断 A* 计算）；不可达由 goto 的 NoPath/Timeout 拒绝。
-   * @param {{ position?: { x, y, z } }} entity
+   * @param {{ position?: import('vec3').Vec3, id?: number, height?: number }} entity
    * @param {{ range?: number, isInterrupted?: (() => boolean)|null, timeoutMs?: number, pollMs?: number }} [opts]
    */
   async function approachEntity (entity, { range = 2, isInterrupted = null, timeoutMs = 30000, pollMs = 500 } = {}) {

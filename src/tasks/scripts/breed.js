@@ -1,3 +1,4 @@
+// @ts-check
 import { isArea } from '../util.js'
 // 养殖任务脚本：区域内对白名单动物喂食繁殖。
 // 语义说明：

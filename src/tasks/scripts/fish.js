@@ -1,3 +1,4 @@
+// @ts-check
 // 钓鱼任务脚本：bot.fish() 循环挂机钓鱼，按时长或背包满停止。
 // 语义说明：durationMinutes 必填（task-schemas 校验）、
 // 60s 抛竿超时兜底（fish 原语内部 withTimeout + signal race）、失败 5s 重试

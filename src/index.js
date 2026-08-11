@@ -1,3 +1,4 @@
+// @ts-check
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -45,7 +46,9 @@ function fatalExit (err, label) {
 process.on('unhandledRejection', (err) => fatalExit(err, 'unhandledRejection'))
 process.on('uncaughtException', (err) => fatalExit(err, 'uncaughtException'))
 // pino transport worker 错误（轮转失败/磁盘满）：记录并降级 stdout，不崩进程
-logger.on('error', (err) => {
+// pino Logger 类型只声明 level-change 事件——error 事件是 transport 层的扩展
+const loggerAny = /** @type {any} */ (logger)
+loggerAny.on('error', (err) => {
   console.error(`[logger-error] ${err?.message ?? String(err)}`)
 })
 

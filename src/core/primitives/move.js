@@ -1,3 +1,4 @@
+// @ts-check
 // 动作原语注册表（按族拆分）：LLM act 动作数组与任务脚本共用的原子动作层。
 // 每个原语 { schema, permission, exclusiveClass, guardText, timeoutMs, cooldownMs?, handler }。
 // 约定（与 skills.execute 同源，由 executor 统一执行管线保证）：
@@ -100,7 +101,8 @@ export function registerMove (register, _ctx) {
       try {
         await withTimeout(c.bot.sleep(bed), 15000, 'sleep timeout')
         // 等天亮（wake 事件——白天自动唤醒/被吵醒提前返回）；listener 配对移除
-        await new Promise((resolve, reject) => {
+        /** @type {Promise<void>} */
+        const wake = new Promise((resolve, reject) => {
           const t = setTimeout(() => { if (onWake) c.bot.removeListener('wake', onWake); resolve() }, timeoutMs ?? 300000)
           onWake = () => { clearTimeout(t); resolve() }
           c.bot.once('wake', onWake)
@@ -111,6 +113,7 @@ export function registerMove (register, _ctx) {
             clearTimeout(t); c.bot.removeListener('wake', onWake); reject(new Error('等待被中断'))
           }, { once: true })
         })
+        await wake
         return { slept: true }
       } catch (err) {
         if (err?.message?.includes('中断')) throw err

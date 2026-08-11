@@ -1,3 +1,4 @@
+// @ts-check
 // 挖矿任务脚本：collectblock + pathfinder 在限定区域内挖掘指定方块。
 // 语义说明：
 // - init 校验（blockTypes 非空/插件/未知方块类型）→ scriptDef.init

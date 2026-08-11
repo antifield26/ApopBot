@@ -1,3 +1,4 @@
+// @ts-check
 // 动作原语注册表（按族拆分）：LLM act 动作数组与任务脚本共用的原子动作层。
 // 每个原语 { schema, permission, exclusiveClass, guardText, timeoutMs, cooldownMs?, handler }。
 // 约定（与 skills.execute 同源，由 executor 统一执行管线保证）：
@@ -145,6 +146,9 @@ export function registerObserve (register, _ctx) {
           if (new RegExp(regex).test(name)) ids.add(block.id)
         }
       }
+      // 观察即记录（记录带维度；chunk 去重 + 全局上限天然防膨胀）——声明在
+      // handler 开头：regex 路径与 names 路径共用（TDZ 防护）
+      const dim = c.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
       const candidates = []
       const matchedNames = []
       // 区域过滤 + 中心距离告警（两条路径共用：regex 路径用 findBlocks 扫任意位置，
@@ -187,8 +191,6 @@ export function registerObserve (register, _ctx) {
         return finish()
       }
       if (!names || names.length === 0) throw new Error('observe_blocks 需要 blockNames/blockName/regex 之一')
-      // 观察即记录（记录带维度；chunk 去重 + 全局上限天然防膨胀）
-      const dim = c.bot?.game?.dimension?.replace(/^minecraft:/, '') ?? null
       for (const name of names) {
         let found
         try {

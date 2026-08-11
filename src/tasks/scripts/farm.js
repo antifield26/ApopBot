@@ -1,3 +1,4 @@
+// @ts-check
 import { isArea } from '../util.js'
 import { CROP_MATURITY, CROP_BY_BLOCK } from '../../core/crops.js'
 // 农场任务脚本：区域内 种植 → 等待成熟 → 收割 → 补种 的循环。

@@ -1,3 +1,4 @@
+// @ts-check
 // 自定义插件：跟随指定玩家（供 !follow 命令使用）。
 //
 // 实现：混合跟随。pathfinder 的 GoalFollow 基于 A*，其动作集不含跳跃——目标跳过
@@ -180,7 +181,7 @@ export function followPlugin (bot) {
   }
 
   const follow = {
-    /** @param {import('mineflayer').Entity|null} player */
+    /** @param {object|null} player */
     setTarget (player) {
       target = player
       if (!player) {

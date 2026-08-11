@@ -1,3 +1,4 @@
+// @ts-check
 import { parseCommand } from './parser.js'
 import { isOp } from './permissions.js'
 import { sendChat } from '../core/chat.js'
@@ -37,8 +38,7 @@ export class CommandRegistry {
   /**
    * 分发一条聊天消息。
    * @param {string} line 完整消息（含 ! 前缀）
-   * @param {{ sender: string, ctx: object }} dispatchCtx
-   * @param {object} dispatchCtx.ctx 命令上下文 { bot, cfg, logger, tasks, conn, agent, plugins }
+   * @param {{ sender: string, ctx: Record<string, any> }} dispatchCtx 命令上下文 { bot, cfg, logger, tasks, conn, agent, plugins }
    * @returns {Promise<boolean>} 是否命中命令
    */
   async dispatch (line, { sender, ctx }) {

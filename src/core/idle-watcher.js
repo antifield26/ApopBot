@@ -1,3 +1,4 @@
+// @ts-check
 // 任务长 idle LLM 播报——waitingReason 持续超过 IDLE_THRESHOLD_MS 时经 LLM 一句话
 // 解释（玩家/运维感知"卡在哪"）。模块级 interval（跨重建保留——重建新建 interval
 // 会累积泄漏），重建时只更新引用；已播报按 `任务id:原因` 去重 + 冷却。
@@ -39,7 +40,7 @@ export function _resetIdleWatcher () {
 
 /**
  * 更新 idle 播报 watcher 引用（模块级 interval 跨重建保留，重建只换引用）。
- * @param {object} ctx 可变上下文（tasks/agent 实时读取）
+ * @param {Record<string, any>} ctx 可变上下文（tasks/agent 实时读取）
  * @param {import('mineflayer').Bot} bot
  */
 export function bindIdleWatcher (ctx, bot) {

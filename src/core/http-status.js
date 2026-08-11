@@ -1,3 +1,4 @@
+// @ts-check
 // 只读 HTTP 状态端点：/health 与 /metrics，本机运维可观测（curl 即可）。
 // 零新依赖（node:http），默认关闭（cfg.http.enabled=false）。
 // 安全边界：只绑 127.0.0.1、只读、无写操作；暴露到局域网需自行加反向代理/防火墙。

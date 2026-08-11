@@ -1,3 +1,4 @@
+// @ts-check
 // 世界事件感知：方块变化（探索记忆失效）与实体/收集事件（LLM 被动感知）。
 // 地形记忆失效：方块变化（被挖/被放/火烧/水冲等）→ 该坐标的探索记忆删除——记忆
 // 只增不减会让 query_map 长期返回过期坐标。只覆盖已加载区块（mineflayer
@@ -9,7 +10,7 @@ import * as discovery from './discovery.js'
 
 /**
  * 挂载地形记忆失效监听（blockUpdate → 删除该坐标探索记忆）。
- * @param {object} ctx 保留签名一致性（handler 直接用 discovery 单例）
+ * @param {Record<string, any>} ctx 保留签名一致性（handler 直接用 discovery 单例）
  * @param {import('mineflayer').Bot} bot
  */
 export function installMemoryInvalidation (ctx, bot) {
@@ -21,7 +22,7 @@ export function installMemoryInvalidation (ctx, bot) {
 
 /**
  * 挂载世界事件被动感知（低血/饥饿、被攻击、重要资源收集 → notifyEvent）。
- * @param {object} ctx 可变上下文（agent 实时读取）
+ * @param {Record<string, any>} ctx 可变上下文（agent 实时读取）
  * @param {import('mineflayer').Bot} bot
  */
 export function installWorldSensing (ctx, bot) {

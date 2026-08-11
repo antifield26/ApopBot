@@ -1,3 +1,4 @@
+// @ts-check
 // 断线原因分类（mindcraft LoginGuard 的进程内轻量版）与指数退避计算。
 // 全部为纯函数，便于单测。
 
@@ -25,22 +26,26 @@ const CLASSIFIERS = [
 
 /**
  * 将断开原因归类。reason 可能是字符串、Error 或 kick 消息对象。
+ * @param {Record<string, any>} [opts] { minecraftVersion }
  * @returns {{ type: string, isFatal: boolean, detail: string }}
  */
-export function classifyDisconnect (reason, { minecraftVersion } = {}) {
+export function classifyDisconnect (reason, opts = {}) {
+  const { minecraftVersion } = opts ?? {}
   let text = ''
   let detail = ''
   if (typeof reason === 'string') {
     text = reason
     detail = reason
   } else if (reason instanceof Error) {
-    text = reason.message
-    // AggregateError（Node 网络层合并 IPv4/IPv6 尝试）message 常为空：取 code 与 errors 数组
-    if (!text && reason.code) text = reason.code
-    if (!text && Array.isArray(reason.errors)) {
-      text = reason.errors.map(e => e?.message || e?.code || String(e)).join(', ')
+    // AggregateError（Node 网络层合并 IPv4/IPv6 尝试）message 常为空：
+    // code/errors 是 Error 子类扩展字段（Node 网络错误/聚合错误）
+    const e = /** @type {Error & { code?: string, errors?: Array<{ message?: string, code?: string }> }} */ (reason)
+    text = e.message
+    if (!text && e.code) text = e.code
+    if (!text && Array.isArray(e.errors)) {
+      text = e.errors.map(er => er?.message || er?.code || String(er)).join(', ')
     }
-    detail = text || `(${reason.name ?? 'Error'})`
+    detail = text || `(${e.name ?? 'Error'})`
   } else if (reason && typeof reason === 'object') {
     text = reason.text ?? reason.message ?? JSON.stringify(reason)
     detail = text

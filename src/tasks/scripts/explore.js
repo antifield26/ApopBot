@@ -1,3 +1,4 @@
+// @ts-check
 // 探索任务脚本：后台持续探索——方形螺旋向外游荡，每站采样记录
 // 资源与实体（发现写入 DiscoveryMap，LLM 经 query_map 查询）。exclusive 互斥。
 //

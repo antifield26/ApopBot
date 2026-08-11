@@ -1,3 +1,4 @@
+// @ts-check
 // 作物数据（core 常量——primitives 的 observe_crops/plant_crops 原语与任务
 // 共享，避免 core→tasks 上向引用）。
 //

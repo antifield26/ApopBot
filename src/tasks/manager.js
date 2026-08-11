@@ -1,3 +1,4 @@
+// @ts-check
 import { createTaskSchedule } from './scheduled.js'
 import { withTimeout } from '../util/promise-timeout.js'
 import { sendChat } from '../core/chat.js'
@@ -29,10 +30,10 @@ const RUNNING_STATES = ['init', 'running', 'paused']
  */
 export class TaskManager {
   /**
-   * @param {object} cfg
+   * @param {Record<string, any>} cfg
    * @param {import('pino').Logger} logger
    * @param {{ bot: import('mineflayer').Bot }} ctx 运行上下文
-   * @param {object} [stateStore] 运行状态快照：ad-hoc 条目 + 计数器持久化
+   * @param {{ counters?: object, tasks?: Array<object>, memory?: object, setTasks?: (tasks: Array<object>) => void, setCounter?: (id: string, counters: object) => void, deleteCounter?: (id: string) => void }} [stateStore] 运行状态快照：ad-hoc 条目 + 计数器持久化
    */
   constructor (cfg, logger, ctx, stateStore = null, getAgent = null) {
     this.cfg = cfg

@@ -1,3 +1,4 @@
+// @ts-check
 // 聊天命令解析：'!task start "mine iron" foo' → { name: 'task', args: ['start', 'mine iron', 'foo'] }
 // shell 式引号语义：仅 token 开头的 " 作为引号分隔符，token 内部的 " 按字面保留
 // （支持 JSON 参数如 !agent act mine {"a":1}）。

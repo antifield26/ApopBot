@@ -1,3 +1,4 @@
+// @ts-check
 import pino from 'pino'
 import path from 'node:path'
 

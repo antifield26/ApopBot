@@ -1,3 +1,4 @@
+// @ts-check
 // 资源白名单（探索采样/重要资源推送共用；26.1.2 已核实存在，注意 sugar_cane 非 sugarcane）。
 // 领域概念归 core——core/explore.js 的采样与推送依赖它们，放 l2 会造成 core→l2 上向引用。
 

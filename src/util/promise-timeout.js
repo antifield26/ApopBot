@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * 给 Promise 加超时。超时后拒绝并附带消息；不泄漏原始 promise（错误被吞掉避免 unhandledRejection）。
  */

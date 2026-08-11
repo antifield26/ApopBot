@@ -1,3 +1,4 @@
+// @ts-check
 // 进程信号处理：SIGINT/SIGTERM/SIGBREAK 优雅退出（Windows 下 NSSM stop 发送 Ctrl+C
 // 事件 → Node 映射 SIGINT；Ctrl+C 等待超时后 NSSM 发 CTRL_BREAK → Node 映射 SIGBREAK——
 // 注册 handler 后走同一优雅路径，不再默认终止）。
@@ -12,7 +13,7 @@ const SHUTDOWN_TIMEOUT_MS = 15000
 /**
  * 注册信号处理。注意 deps 须包含可变 ctx（tasks/agent 在 spawn 后才初始化，须在
  * 关闭/重载时读取最新值，不能注册时捕获 null）。
- * @param {object} deps { logger, conn, ctx, onReload: () => Promise<void> }
+ * @param {Record<string, any>} deps { logger, conn, ctx, onReload: () => Promise<void> }
  */
 export function setupSignals (deps) {
   let shuttingDown = false

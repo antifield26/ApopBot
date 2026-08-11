@@ -1,3 +1,4 @@
+// @ts-check
 import { readFileSync, mkdirSync, accessSync, constants as FS_CONST } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -215,7 +216,7 @@ function readJson (file) {
  * 加载并合并配置。优先级：内置默认 < default.json < --config 文件 < MCBOT_* 环境变量 < CLI 参数
  * @param {{ argv?: string[], env?: object }} [opts] skipProdConfig 仅供测试：不合并
  *   工作区 config/config.json（测试必须独立于本地真实配置——本地测试会创建该文件）
- * @returns {object} 冻结的配置对象
+ * @returns {Record<string, any>} 冻结的配置对象
  */
 export function loadConfig ({ argv = process.argv.slice(2), env = process.env } = {}, { skipProdConfig = false } = {}) {
   const cli = parseCli(argv)
@@ -265,7 +266,7 @@ function deepFreeze (obj) {
 /**
  * 启动前检查日志目录可写（创建 + 写权限探测）。
  * 目录只读/不可访问时给出明确错误而非 pino-roll 静默失败。
- * @param {object} cfg
+ * @param {Record<string, any>} cfg
  * @throws {Error} 目录不可写时抛出
  */
 export function assertLogDirWritable (cfg) {

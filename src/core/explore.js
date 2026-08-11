@@ -1,3 +1,4 @@
+// @ts-check
 // 探索核心：explore 技能（单步）与 ExploreTask（螺旋）共享——
 // 资源采样、实体扫描、螺旋 waypoint 生成。
 //
@@ -111,7 +112,7 @@ export function spiralWaypoints (centerX, centerZ, maxDistance, step = SPIRAL_ST
 /**
  * 单步探索（explore 技能）：向 direction 游走 min(maxDistance, 48) 格，
  * 到达后采样记录 + 实体扫描。移动走 movement.js（end-race/墙钟超时免费获得）。
- * @returns {{ok: boolean, reason?: string, from: {x,y,z}, to: {x,y,z}|null, found: Array, entities: object}}
+ * @returns {Promise<{ok: boolean, reason?: string, from: {x: number, y: number, z: number}|null, to: {x: number, y: number, z: number}|null, found: Array<{name: string, x: number, y: number, z: number}>, entities: { hostile?: Array<string>, counts?: object } }>}
  */
 export async function exploreStep (bot, log, { maxDistance = EXPLORE_STEP, direction = 'random', signal = null } = {}) {
   const me = bot?.entity

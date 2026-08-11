@@ -1,3 +1,4 @@
+// @ts-check
 // 聊天监听绑定：chatHandler 创建与 bot.on('chat') 挂载。
 // 服务器会回显 Bot 自己的消息——不自过滤会把 LLM 回复/!say 内容里以 ! 开头的
 // 文本当命令解析（非 op 玩家可借 LLM 触发 op 命令）。
@@ -6,9 +7,9 @@ import { sendChat } from './chat.js'
 
 /**
  * 挂载聊天监听：每次重建生成新 handler 引用（旧监听随旧 bot 消亡）。
- * @param {object} ctx 可变上下文（cfg/commands 实时读取）
+ * @param {Record<string, any>} ctx 可变上下文（cfg/commands 实时读取）
  * @param {import('mineflayer').Bot} bot
- * @param {() => object} log 惰性取当前 logger（热重载后换 transport）
+ * @param {() => Record<string, any>} log 惰性取当前 logger（热重载后换 transport）
  */
 export function installChatListener (ctx, bot, log) {
   ctx.chatHandler = async (sender, msg) => {

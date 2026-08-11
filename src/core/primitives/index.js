@@ -1,3 +1,4 @@
+// @ts-check
 // 动作原语注册表（按族拆分）：LLM act 动作数组与任务脚本共用的原子动作层。
 // 每个原语 { schema, permission, exclusiveClass, guardText, timeoutMs, cooldownMs?, handler }。
 // 约定（与 skills.execute 同源，由 executor 统一执行管线保证）：

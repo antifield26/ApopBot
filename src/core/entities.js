@@ -1,3 +1,4 @@
+// @ts-check
 // 实体/玩家遍历工具（core/explore.js 的 scanEntities 依赖 nearbyEntities——
 // 放 l2 会造成 core→l2 上向引用）。纯实体遍历，不涉及 LLM 环境快照语义。
 //
@@ -23,9 +24,11 @@ export function distance (a, b) {
  * （zombie）或 26.1 的 type（hostile/passive/animal/projectile/player/mob）；
  * 必须用 OR（AND + e.kind 大写分类 'Hostile mobs' 会使过滤恒失效）。
  * 玩家由 nearbyPlayers 覆盖（entity.kind 对 player 不可靠）；绝不读实体 health。
- * @param {{ name?: string, kind?: string, maxDistance?: number }} opts
+ * @param {{ name?: string, kind?: string, maxDistance?: number, limit?: number }} opts
+ * @returns {Array<{ id?: number, name?: string, kind?: string, type?: string, position?: import('vec3').Vec3, dist?: number, height?: number }>}
  */
-export function nearbyEntities (bot, { name, kind, maxDistance = 64, limit = 10 } = {}) {
+export function nearbyEntities (bot, opts = {}) {
+  const { name, kind, maxDistance = 64, limit = 10 } = opts ?? {}
   try {
     const me = bot?.entity
     const nameFilter = name?.toLowerCase()

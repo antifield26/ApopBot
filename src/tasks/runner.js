@@ -1,3 +1,4 @@
+// @ts-check
 // 脚本任务执行器：BaseTask 状态机外壳 + 脚本 DSL 解释器。
 //
 // 脚本化重构的核心理念：任务 = 动作原语脚本，与 LLM 的 act 动作数组共用同一
@@ -36,7 +37,7 @@ export class ScriptTask extends BaseTask {
    * @param {string} type
    * @param {object} options
    * @param {{ bot, logger, config, getConfig }} ctx
-   * @param {object} scriptDef 脚本定义（scripts/*.js 默认导出）
+   * @param {{ exclusive?: boolean, script?: { steps: Array<object> }, init?: Function, maxActions?: number, defaultOptions?: object, ops?: object }} scriptDef 脚本定义（scripts/*.js 默认导出）
    */
   constructor (id, type, options, ctx, scriptDef) {
     super(id, type, options, ctx)

@@ -1,3 +1,4 @@
+// @ts-check
 // 任务 options JSONSchema：类型/必填/范围集中在一处——入口零校验会让负
 // durationMinutes（fish 立即假完成）、intervalMinutes 0（1ms 忙循环）、负数
 // attackRange 等全部放行；config.js validateConfig 只查 scheduled 场景的

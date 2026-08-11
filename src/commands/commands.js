@@ -1,3 +1,4 @@
+// @ts-check
 import { CommandRegistry } from './registry.js'
 import { isOp } from './permissions.js'
 import { sendChat } from '../core/chat.js'

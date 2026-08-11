@@ -1,3 +1,4 @@
+// @ts-check
 // 任务/原语公共工具。
 
 /** 区域对象校验（farm/collect/combat/breed/explore 与原语共用；六坐标整数）。 */

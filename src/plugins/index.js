@@ -1,3 +1,4 @@
+// @ts-check
 import { createMovements } from '../core/movement.js'
 
 // mineflayer 生态插件装载器：按配置条件装载，顺序敏感（collectblock 依赖 pathfinder 实例化）。
@@ -13,8 +14,8 @@ import { createMovements } from '../core/movement.js'
 
 /**
  * @param {import('mineflayer').Bot} bot
- * @param {object} cfg  完整配置对象
- * @param {object} logger
+ * @param {Record<string, any>} cfg  完整配置对象
+ * @param {Record<string, any>} logger
  * @param {{ imports?: object }} [deps] 测试注入：deps.imports[key] 覆写动态 import（默认真实包）
  * @returns {Promise<object>} 已装载插件句柄 { pathfinder, collectBlock, autoEat, armorManager, follow }
  */

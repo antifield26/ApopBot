@@ -1,3 +1,4 @@
+// @ts-check
 // 实体交互动作（协议层直连）：
 // mineflayer PR 分支在 26.1（协议 775 / minecraft-data 3.112.0）下存在特性门控 bug：
 // useEntityUsesEntityId=false 使 bot.attack()/bot.useOn() 回退到旧式 use_entity 包
@@ -13,7 +14,7 @@
 /**
  * 近战攻击：26.1 独立 attack 包（{entityId}）+ 挥臂（{hand}）。
  * @param {import('mineflayer').Bot} bot
- * @param {{ id: number }} target
+ * @param {{ id?: number }} target
  */
 export function attackEntity (bot, target) {
   bot._client.write('attack', { entityId: target.id })
@@ -23,7 +24,7 @@ export function attackEntity (bot, target) {
 /**
  * 右键交互实体（喂食等）：26.1 use_entity 新格式——location 必填（实体中心点）。
  * @param {import('mineflayer').Bot} bot
- * @param {{ id: number, position: { x, y, z }, height?: number }} target
+ * @param {{ id?: number, position?: { x, y, z }, height?: number }} target
  */
 export function useEntityOn (bot, target) {
   // pos 缺失明确报错（调用方 catch 重扫）而非 TypeError 吞成

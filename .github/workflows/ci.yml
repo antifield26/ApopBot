@@ -49,6 +49,9 @@ jobs:
       - name: Lint (eslint flat config)
         run: npm run lint
 
+      - name: Type check (tsc checkJs, src 全部 @ts-check)
+        run: npm run typecheck
+
       - name: Compatibility gate (check:compat, 离线模式)
         run: npm run check:compat
 

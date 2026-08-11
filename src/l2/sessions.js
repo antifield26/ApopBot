@@ -1,3 +1,4 @@
+// @ts-check
 // 会话记忆落盘：LLM 会话（按玩家多轮历史 + 跨对话工具记录）持久化——
 // 重启/重连后玩家多轮上下文不丢。
 //
@@ -49,7 +50,7 @@ export function loadSessions (file = DEFAULT_FILE) {
 /**
  * 创建会话存储。
  * @param {{ file?: string, debounceMs?: number, logger?: object, maxSessions?: number }} opts
- * @returns {{ get(user), set(user, value), reset(user), snapshot(), flush() }}
+ * @returns {{ get(user): object|null, set(user, value): void, reset(user): void, snapshot(): object, flush(): void, size(): number }}
  *          get 返回 { history, calls } 副本或 null；set 更新内存 + 调度落盘
  */
 export function createSessionStore ({ file = DEFAULT_FILE, debounceMs = 2000, logger = null, maxSessions = DEFAULT_MAX_SESSIONS } = {}) {
@@ -70,6 +71,8 @@ export function createSessionStore ({ file = DEFAULT_FILE, debounceMs = 2000, lo
   })
 
   return {
+    /** 快照（测试/优雅退出）。 */
+    snapshot: () => JSON.parse(JSON.stringify(last)),
     /** 读取会话（副本；刷新 LRU 序——存在则重插到末尾）。 */
     get (user) {
       const v = last.sessions[user]

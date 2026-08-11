@@ -1,3 +1,4 @@
+// @ts-check
 // L2 Agent 接口：进程内 LLM 工具循环（不引入子进程/IPC——单 bot、maxSteps 有界，
 // Node 22 全局 fetch 零新依赖；mindcraft 的 AgentProcess 模式在此规模无收益，见 docs/l2.md）。
 //
@@ -244,7 +245,7 @@ const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手
  * 每次对话注入调用者身份：LLM 必须知道"谁在说话、是否有 op 权限"，
  * 否则面对危险操作请求只会回复"需要验证 op 身份"。
  * @param {string} user 消息来源玩家
- * @param {object} cfg
+ * @param {Record<string, any>} cfg
  */
 function buildSystem (user, cfg) {
   const auth = isOp(user, cfg)
@@ -297,7 +298,7 @@ function buildTools (executor, maxActionsPerCall) {
 export class AgentInterface {
   /**
    * @param {{ bot, cfg, logger, tasks, conn, plugins }} ctx
-   * @param {{ provider: object, executor: object, config: object }} deps
+   * @param {{ provider: { chat: Function, diagnose?: Function, contextWindow?: Function }, executor: { executeBatch: Function, executeOne: Function }, config: Record<string, any>, sessionStore?: { get(user: string): object|null, set(user: string, value: object): void, reset(user: string): void }|null, experience?: { add(entry: object): void, recent(n?: number): Array<object>, match(ops: Array<string>, n?: number): Array<object> }|null }} deps
    */
   constructor (ctx, deps) {
     this.ctx = ctx

@@ -1,3 +1,4 @@
+// @ts-check
 import { Cron } from 'croner'
 
 /**
@@ -10,7 +11,7 @@ import { Cron } from 'croner'
  *
  * @param {{ schedule: string, id: string }} taskEntry
  * @param {{ onTrigger: () => Promise<void> }} handlers
- * @param {object} logger
+ * @param {import('pino').Logger} logger
  * @param {string} timezone 调度时区（默认 Asia/Shanghai）
  * @returns {import('croner').Cron|null} 无 schedule 时返回 null
  */

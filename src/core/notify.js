@@ -1,3 +1,4 @@
+// @ts-check
 // 运维 webhook 通知：任务终态/断线重连/死亡重生/fatal 停服推送手机。
 // 低配 PC 无人值守场景：事件只在游戏聊天与日志可见，fatal 停服后无人在线——
 // webhook 通道让运维第一时间收到。
@@ -9,7 +10,7 @@
 // 不含敏感信息：只推事件摘要（任务 id/类型/计数、坐标、断线原因），不推聊天内容。
 
 /**
- * @param {object} cfg 顶层配置（读 cfg.notify.webhook）
+ * @param {Record<string, any>} cfg 顶层配置（读 cfg.notify.webhook）
  * @param {import('pino').Logger} logger
  * @returns {{ enabled: boolean, send: (event: string, title: string, body?: string) => Promise<void> }}
  */

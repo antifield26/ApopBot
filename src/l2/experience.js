@@ -1,3 +1,4 @@
+// @ts-check
 // 经验记忆库：动作失败 → 反思总结 → 跨会话经验注入。
 // LLM 自主能力持续进化：失败教训沉淀为"经验教训"注入后续对话 system——
 // 下次遇到同类场景直接知道正确做法（对齐 Voyager/Reflexion 思想）。
@@ -38,7 +39,7 @@ export function loadExperience (file = DEFAULT_FILE) {
 /**
  * 创建经验库。
  * @param {{ file?: string, debounceMs?: number, logger?: object, capacity?: number }} opts
- * @returns {{ add(entry), recent(n), flush(), size() }}
+ * @returns {{ add(entry): void, recent(n): Array<object>, match(ops: Array<string>, n?: number): Array<object>, flush(): void, size(): number }}
  */
 export function createExperienceStore ({ file = DEFAULT_FILE, debounceMs = 2000, logger = null, capacity = 100 } = {}) {
   let last = loadExperience(file)

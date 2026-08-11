@@ -1,3 +1,4 @@
+// @ts-check
 // 功能层生命周期：每次 spawn 全量重建 tasks/commands/agent 并重挂 chat 监听。
 //
 // ConnectionManager.onSpawn 在每次 spawn 时触发（含重连后的再次 spawn），ctx.bot
@@ -141,8 +142,8 @@ export function createFeatureLayerManager (ctx, logger) {
    * 将任意异步操作放入同一串行队列（reload 等，避免与 rebuild 交错）。
    * 队列链本身吸收错误（单次失败不毒化后续调用），但返回值把错误上抛给
    * 调用方——!reload 据此反馈"运行时错误"而非假成功。
-   * @param {() => Promise<void>} fn
-   * @returns {Promise<void>}
+   * @param {() => Promise<any>} fn
+   * @returns {Promise<any>}
    */
   function queue (fn) {
     const run = pending.then(fn)

@@ -1,3 +1,4 @@
+// @ts-check
 // 防抖落盘存储（第 11 轮 F3）：sessions/experience/state 三处同款
 // "dirty + 防抖定时器 + tmp+rename 原子写 + exit flush" 提取。
 //
@@ -30,7 +31,7 @@ function registerExitFlush (flush) {
 }
 
 /**
- * @param {{ file: string, debounceMs: number, logger?: object, encode: () => string }} opts
+ * @param {{ file: string, debounceMs: number, logger?: Record<string, any>, encode: () => string }} opts
  *        encode：返回落盘 JSON 字符串（调用方负责形状/LRU 裁剪与 schemaVersion）
  * @returns {{ persist(): void, schedule(): void, flush(): void }}
  */

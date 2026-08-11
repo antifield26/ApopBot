@@ -1,3 +1,4 @@
+// @ts-check
 // 玩家跟踪与上线问候：playerJoined/playerLeft 记账 + 固定模板问候。
 // 模块级已知玩家 Set 与按玩家冷却（跨重建保留——player_info 首包会把登录时
 // 已在线的玩家全部触发 playerJoined，重连后闭包重建会把在线玩家当新人问候全服）。
@@ -17,7 +18,7 @@ export function _resetGreetState () {
 
 /**
  * 挂载玩家跟踪：离开玩家移出已知集合——重新加入时才会再次触发问候。
- * @param {object} ctx 可变上下文（cfg.username 实时读取）
+ * @param {Record<string, any>} ctx 可变上下文（cfg.username 实时读取）
  * @param {import('mineflayer').Bot} bot
  */
 export function installPlayerTracking (ctx, bot) {

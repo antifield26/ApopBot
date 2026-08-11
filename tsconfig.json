@@ -1,0 +1,19 @@
+{
+  // 渐进 TypeScript 第一阶段：checkJs 默认关，核心文件顶部 `// @ts-check` 逐文件开启。
+  // allowJs + nodenext 保证后续逐文件改 .ts 零阻碍升级（迁移路线见 docs/architecture.md）。
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "target": "es2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2022"],
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*.js"]
+}

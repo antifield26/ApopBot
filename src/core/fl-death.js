@@ -1,3 +1,4 @@
+// @ts-check
 // 死亡/重生处理：createBot 显式 respawn:false → 死亡后 bot 停在死亡界面，重生时序
 // 完全可控。死亡 → 通知 + 暂停全部任务 + 停止跟随 + 请求重生；L2 可用时经 LLM
 // 一句话播报死因；重生后自动恢复暂停的任务 + 播报重生位置。
@@ -8,10 +9,10 @@ import { sendChat } from './chat.js'
 
 /**
  * 挂载死亡/重生处理。
- * @param {object} ctx 可变上下文（tasks/plugins/agent 实时读取）
+ * @param {Record<string, any>} ctx 可变上下文（tasks/plugins/agent 实时读取）
  * @param {import('mineflayer').Bot} bot
- * @param {() => object} log 惰性取当前 logger
- * @param {() => object} notifier 惰性取 webhook 通知器（reload 换 webhook 后实时生效）
+ * @param {() => Record<string, any>} log 惰性取当前 logger
+ * @param {() => Record<string, any>} notifier 惰性取 webhook 通知器（reload 换 webhook 后实时生效）
  */
 export function installDeathHandling (ctx, bot, log, notifier) {
   let deathPaused = Promise.resolve([]) // 本次死亡暂停任务 id 的 promise（重生时恢复）

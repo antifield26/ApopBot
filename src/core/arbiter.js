@@ -1,3 +1,4 @@
+// @ts-check
 // 移动权仲裁器：!find/!follow/任务统一登记"谁在移动"。exclusive 互斥若只覆盖
 // 任务之间（manager._pendingExclusive），!follow 与 exclusive 任务会双控制器
 // 冲突（follow 的 setControlState 与任务 pathfinder 打架）。

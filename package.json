@@ -16,7 +16,8 @@
     "smoke": "node scripts/smoke.mjs",
     "migrate-upstream": "node scripts/migrate-upstream.mjs",
     "release": "node scripts/release.mjs",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "croner": "^9.0.0",
@@ -34,10 +35,12 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@stylistic/eslint-plugin": "^5.10.0",
+    "@types/node": "^26.2.0",
     "eslint": "^10.8.1",
     "globals": "^17.9.0",
     "minecraft-protocol": "^1.66.2",
-    "pino-pretty": "^11.0.0"
+    "pino-pretty": "^11.0.0",
+    "typescript": "^7.0.2"
   },
   "overrides": {
     "minecraft-data": "^3.113.0",

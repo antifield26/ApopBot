@@ -1,3 +1,4 @@
+// @ts-check
 import { createBot as realCreateBot, loadMineflayerPluginsAsync as realLoadMineflayerPlugins } from './bot.js'
 import { classifyDisconnect, nextBackoff } from './reconnect.js'
 import { withTimeout } from '../util/promise-timeout.js'
@@ -16,10 +17,10 @@ const PLUGIN_LOAD_TIMEOUT_MS = 30000
  */
 export class ConnectionManager {
   /**
-   * @param {object} cfg 完整配置
+   * @param {Record<string, any>} cfg 完整配置
    * @param {import('pino').Logger} logger
-   * @param {{ onSpawn?: (bot: import('mineflayer').Bot) => void, onStateChange?: (state: string) => void }} hooks
-   * @param {{ createBot?: (cfg) => object, loadMineflayerPlugins?: (bot, cfg, logger) => Promise<object> }} deps 测试注入
+   * @param {{ onSpawn?: (bot: import('mineflayer').Bot) => void, onStateChange?: (state: string) => void, onPluginsReady?: (plugins: object) => void }} hooks
+   * @param {{ createBot?: (cfg: object) => import('mineflayer').Bot, loadMineflayerPlugins?: (bot: import('mineflayer').Bot, cfg: object, logger: object) => Promise<object> }} deps 测试注入
    */
   constructor (cfg, logger, hooks = {}, deps = {}) {
     this.cfg = cfg
@@ -110,7 +111,7 @@ export class ConnectionManager {
 
   /**
    * 更新配置（热重载：host/port/reconnect 参数在下次连接时生效）。
-   * @param {object} cfg
+   * @param {Record<string, any>} cfg
    */
   updateCfg (cfg) {
     this.cfg = cfg
@@ -122,8 +123,9 @@ export class ConnectionManager {
     // spawn 超时兜底必须在插件装载（await 动态 import）之前注册——否则 spawn 在装载
     // 期间已触发（本机/快速握手），后注册的监听器永远等不到事件 → 60s 后误杀正常 bot
     // 并触发重连循环。两处 bot.once('spawn') 按注册顺序先后触发，无冲突。
+    /** @type {Promise<void>} */
     this._spawnPromise = new Promise((resolve) => {
-      bot.once('spawn', resolve)
+      bot.once('spawn', () => resolve())
     })
     withTimeout(this._spawnPromise, this.cfg.spawnTimeoutMs, 'spawn 超时')
       .then(() => {

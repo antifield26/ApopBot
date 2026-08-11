@@ -1,3 +1,4 @@
+// @ts-check
 import { AgentInterface } from './agent-interface.js'
 import { createProvider } from './provider.js'
 import { createActionExecutor } from '../core/executor.js'

@@ -1,3 +1,4 @@
+// @ts-check
 import { isArea } from '../util.js'
 // 战斗任务脚本：区域内对敌对实体巡逻战斗。
 // 语义说明：
