@@ -3,6 +3,20 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 **版本单一来源 = package.json**（`node scripts/release.mjs [patch|minor|major]` bump，check:compat 交叉校验 package.json ↔ lockfile）。
 
+## [1.3.0] - 2026-08-11
+
+LLM 自主性深化（ChatGPT 评估驱动的两档功能增量——Planner + World Model，独立提交）：
+
+- **Planner 档（自主推进）**：
+  - **start_task 扩展**：LLM 可表达任务链与定时任务——`next`（自然完成后接力 {type,id,options?}）/`schedule`（cron 定时触发而非立即启动）；validateNextOptions/validateCron 纯函数统一 config 与 start_task 两条路径的校验口径（config next.options/schedule 此前零校验——注释声称校验实际未做）；options.schedule 塞进 options 不再静默不调度（显式迁移报错）
+  - **!agent goal set --plan=JSON**：目标 + 计划（≤5 步）命令路径贯通（set_goal 原语早已支持 plan）
+  - **自主推进（核心）**：任务自然完成且无配置链时 → `onTaskCompleted` → 规划器（无会话 LLM 受限工具循环 ≤2 轮 × ≤3 调用）读 goal 生成下一个任务（start_task 可带 next/schedule 表达延续）。9 层保护：planEnabled 开关 / 独立冷却 planCooldownMs（默认 120s，与 summarize 60s 分开）/ busy 门 / 动作预算 / 受限工具集（readonly 观察族 + start_task/set_goal——不含 act/reply/stop_task/clear_goal，规划器只能经任务层表达意图）/ 失败静默 / 链优先（config 链启动则规划器跳过）/ 失控边界（maxSteps 硬顶 + 超限回填 + 审计源 'plan'）/ 权限闭环（plan 以 goal.setBy 身份执行，setBy 必为 op 无提权面）
+- **World Model 档（危险区域记忆）**：
+  - **discovery dangerZones**（snapshot v3）：hostile 出没坐标记忆——chunk 去重（同 resources 口径）、容量 64、新鲜窗口 1h（DANGER_FRESH_MS 导出）；importSnapshot 形状防御双向安全（旧快照按空、新快照多余键忽略）
+  - **三写入路径**：exploreStep/ExploreTask 站点有 hostile → 记录目击位置（scanEntities 新增 hostileNames 纯名字字段，hostile 显示串向后兼容）；entityHurt 被动点（怪物攻击记录，玩家/自伤排除）——捕获 explore 之外的威胁（combat 中/基地夜袭）
+  - **query_map danger 分支**：查询附近危险区域（dist/fresh/ageMinutes 标记——实体瞬态无法 blockAt 验证，用新鲜窗口判定）；blockName/place/danger 三选一互斥
+  - **dangerLine 被动注入**：system 组装链加"危险: zombie/creeper(30m,3分钟前)"行——仅新鲜窗口内记录，无记录零成本空串（`l2.dangerInjection` 开关）
+
 ## [1.2.0] - 2026-08-11
 
 工程治理与架构重构（非轮次任务，全量复盘后实施——安全/质量基座/重构/运维/可观测性五主题）：

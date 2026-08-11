@@ -63,6 +63,8 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 - **维度感知**：探索记忆按维度存储——下界/末地坐标独立，`query_map` 只返回当前维度的记录（旧主世界数据兼容）；`observe_blocks` 观察到的资源自动记入探索记忆（LLM 探索即积累）；任务长 idle（等待原因持续 10 分钟）经 LLM 一句话播报原因
 - **LLM 能力深化**：长期目标记忆（`!agent goal` + `set_goal` 原语——目标+计划跨会话注入）；对话滚动摘要（历史超限 LLM 压缩，"继续"不断片）；检索式经验（按失败动作匹配注入 + 重复教训合并计数）；退化状态自动注入（低血/饥饿/背包满/工具将坏，零工具调用成本）；`observe_tasks` 任务状态感知；世界事件被动感知（被攻击/低血/背包满/稀有收集——下次对话 LLM 知道发生了什么）；命名地点（`!home` + `set_place`——家/矿场语义坐标，`query_map place:` 查询）
 - **Bot 功能扩展**：仓库管理（`storage.chests` 配置 + `store_items`/`fetch_items`——背包满自动存配置仓库，替代临时找箱）；工具耐久管理（挖掘自动换最优工具 + 护甲自动装备）；farm 扩展 5 作物（甘蔗/南瓜/西瓜/甜浆果/可可——三种成熟判定四种种植模式）；`sleep` 睡觉（天黑过夜，farm/combat `sleepAtNight` 可选）；`harvest_animals` 剪羊毛/捡掉落物
+- **自主推进（Planner）**：任务自然完成且无配置链时，LLM 规划器读长期目标自动生成下一个任务（start_task 支持 `next` 任务链 / `schedule` 定时）；`!agent goal set <文本> --plan=[...]` 设置目标+计划；9 层保护（开关/冷却/busy/预算/受限工具集/静默/链优先/失控边界/权限闭环）
+- **危险区域记忆（World Model）**：hostile 出没坐标自动记录（探索站 + 被攻击被动点），`query_map {"danger":true}` 查询附近危险区（fresh/stale 标记）；LLM 对话自动注入"危险:"行（1 小时新鲜窗口内）——Bot 知道哪里安全
 
 ## 快速开始（开发机）
 

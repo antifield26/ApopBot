@@ -92,6 +92,11 @@ minecraft-bot (Node.js ≥22, ESM)
 - **命名地点**：discovery places（32 上限带维度）——`!home`/`set_place` 登记，query_map place 分支查询（LLM 语义导航）
 - **移动卡住诊断**：goto stuck 重试时记录周围 3×3 方块/手持/落地态（issue #1 现场数据——离线不可复现依赖此日志定位）
 
+## 自主推进与危险记忆（Planner + World Model）
+
+- **自主推进**：任务自然完成且无配置链 → `agent.onTaskCompleted` → 规划器（受限工具循环）读 goal 生成下一个任务。start_task 支持 `next`（任务链）/`schedule`（cron 定时）——config 与 start_task 共用 validateNextOptions/validateCron 校验口径。9 层保护见 docs/l2.md「自主推进」节；`l2.planEnabled`/`l2.planCooldownMs` 配置
+- **危险区域记忆**：discovery dangerZones（snapshot v3）——hostile 出没坐标 chunk 去重 + 1h 新鲜窗口；写入 = exploreStep/ExploreTask 站点 + entityHurt 被动点；查询 = query_map danger 分支（实体瞬态无法 blockAt 验证，用 fresh/ageMinutes 标记）；被动注入 = system"危险:"行（`l2.dangerInjection`）
+
 ## 注释与文档约定
 
 - **代码注释只解释当前代码**的意图/契约/边界（现在时态）：为什么这样设计、何时触发、什么条件下跳过、与哪里的契约对应
