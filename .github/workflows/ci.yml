@@ -52,6 +52,18 @@ jobs:
       - name: Type check (tsc checkJs, src 全部 @ts-check)
         run: npm run typecheck
 
+      # 覆盖率基线报告（仅 ubuntu/24 跑一次；本阶段不设阈值门禁——mock 为主）
+      - name: Coverage report (informational)
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 24
+        run: npm run test:coverage
+
+      - name: Upload coverage artifact
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 24
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+
       - name: Compatibility gate (check:compat, 离线模式)
         run: npm run check:compat
 
