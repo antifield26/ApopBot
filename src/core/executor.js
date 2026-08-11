@@ -11,7 +11,7 @@
 import { withTimeout } from '../util/promise-timeout.js'
 import { isOp } from '../commands/permissions.js'
 import { hasExclusiveActive, getExclusiveOwner } from './arbiter.js'
-import { createPrimitiveRegistry } from './primitives.js'
+import { createPrimitiveRegistry } from './primitives/index.js'
 import { createAuditLogger } from './audit.js'
 
 /**

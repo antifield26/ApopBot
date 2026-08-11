@@ -3,7 +3,7 @@
 // 失效的根因）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createPrimitiveRegistry } from '../src/core/primitives.js'
+import { createPrimitiveRegistry } from '../src/core/primitives/index.js'
 import * as discovery from '../src/core/discovery.js'
 
 test.beforeEach(() => discovery._reset())
