@@ -626,3 +626,53 @@ test('U1: 任务终态快照计数器', async () => {
   assert.deepEqual(counters.at(-1)[1], {}, 'combat 无目标完成 counters 为空对象')
   await manager.stopAll()
 })
+
+// ---- 自主推进：ad-hoc 任务链（next/schedule 经 addTask）+ onTaskCompleted 挂接 ----
+
+test('addTask 携带 next——自然完成后启动下一个（ad-hoc 任务链）', async () => {
+  const started = []
+  const bot = makeCombatBot()
+  const mgr = new TaskManager({ tasks: [], chat: { maxLength: 250 } }, makeLogger(), { bot }, null, () => null)
+  // 用完成语义快的任务：combat stopWhenNoTargets（无怪 → 自然完成；mock bot 无 findBlocks）
+  mgr.addTask({ id: 'c1', type: 'combat', options: { stopWhenNoTargets: true }, next: { id: 'm1', type: 'combat', options: { stopWhenNoTargets: true } } })
+  await settle(6)
+  const chained = mgr.getStatus().find(t => t.id === 'm1')
+  assert.ok(chained, 'next 任务应被注册启动（ad-hoc 链）')
+  // m1 是 combat stopWhenNoTargets——settle 期间可能已自然完成（链已执行即为成功）
+  assert.ok(!['failed', 'stopped'].includes(chained.state), `m1 不应失败/停止: ${chained.state}`)
+  void started
+  await mgr.stopAll()
+})
+
+test('addTask 携带 schedule——注册 cron 不立即启动（ad-hoc 定时）', async () => {
+  const bot = makeCombatBot()
+  const mgr = new TaskManager({ scheduleTimezone: 'UTC' }, makeLogger(), { bot }, null, () => null)
+  mgr.addTask({ id: 'f1', type: 'afk', options: { intervalMinutes: 1 }, schedule: '0 3 * * *' })
+  await settle(3)
+  const st = mgr.getStatus().find(t => t.id === 'f1')
+  assert.ok(st.nextRunAt instanceof Date, 'cron 任务应显示下次触发时间（注册而非启动）')
+  assert.equal(st.state, 'created', 'cron 任务不应立即启动')
+  await mgr.stopAll()
+})
+
+test('自然完成触发 agent.onTaskCompleted（entry 链已启动则不触发）', async () => {
+  const calls = []
+  const bot = makeCombatBot()
+  const agent = { onTaskCompleted: async (rec) => { calls.push(rec.entry?.id) } }
+  const mgr = new TaskManager({ tasks: [], chat: { maxLength: 250 } }, makeLogger(), { bot }, null, () => agent)
+  // 无链任务自然完成（combat stopWhenNoTargets 一轮完成）→ 触发规划器
+  mgr.addTask({ id: 'a1', type: 'combat', options: { stopWhenNoTargets: true } })
+  await settle(8)
+  assert.ok(mgr.getStatus().some(t => t.id === 'a1' && t.state === 'completed'), 'a1 应自然完成')
+  assert.ok(calls.includes('a1'), '无链任务完成应触发 onTaskCompleted')
+  // 有链任务完成 → 链优先，不触发规划器
+  const calls2 = []
+  const agent2 = { onTaskCompleted: async (rec) => { calls2.push(rec.entry?.id) } }
+  const mgr2 = new TaskManager({ tasks: [], chat: { maxLength: 250 } }, makeLogger(), { bot }, null, () => agent2)
+  mgr2.addTask({ id: 'c1', type: 'combat', options: { stopWhenNoTargets: true }, next: { id: 'm1', type: 'combat', options: { stopWhenNoTargets: true } } })
+  await settle(8)
+  assert.ok(mgr2.tasks.get('m1'), 'next 已启动')
+  assert.ok(!calls2.includes('c1'), 'entry 链已启动时不应触发规划器')
+  await mgr.stopAll()
+  await mgr2.stopAll()
+})

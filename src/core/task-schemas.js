@@ -5,12 +5,64 @@
 // durationMinutes。
 // schema 与各任务 init 校验并存：init 是最终防线（构造期防御），schema 是入口拦截
 //（早失败、文案统一）。
+// 任务链（next）与 cron 校验同在此处——config 条目、start_task 原语、规划器三条
+// 入口共用同一口径（防 config 校验与 LLM 路径行为分叉）。
 //
 // 字段约定（与 skills.js validateParams 同风格的极简 JSONSchema 子集）：
 //   type: number/integer/string/boolean/object/array
 //   required: true → 缺失即错（默认 false）
 //   min/max: 数值下限/上限（含边界）
 //   minItems: 数组最少元素数
+
+import { Cron } from 'croner'
+// 延迟 import：types.js →(runner→executor→primitives→本文件)→ types.js 存在 ESM
+// 循环依赖，顶层求值会读未初始化的 TASK_TYPES（TDZ）——函数体内访问延迟到调用时
+import { TASK_TYPES } from '../tasks/types.js'
+const knownTypes = () => Object.keys(TASK_TYPES)
+
+/**
+ * 校验 cron 表达式（croner 可解析即合法——非法表达式会被调度器静默吞掉，
+ * 任务注册但永不触发）。
+ * @param {unknown} expr
+ * @returns {{ ok: boolean, error?: string }}
+ */
+export function validateCron (expr) {
+  if (typeof expr !== 'string' || !expr.trim()) return { ok: false, error: 'cron 表达式必须是非空字符串' }
+  try {
+    new Cron(expr)
+    return { ok: true }
+  } catch {
+    return { ok: false, error: `非法 cron 表达式: ${expr}（任务将永不触发）` }
+  }
+}
+
+/**
+ * 校验任务链 next（{type, id, options?, schedule?}）——options 递归过该类型的
+ * validateTaskOptions；schedule 过 validateCron。
+ * @param {unknown} next
+ * @returns {{ ok: boolean, error?: string }}
+ */
+export function validateNextOptions (next) {
+  if (typeof next !== 'object' || next === null || Array.isArray(next)) {
+    return { ok: false, error: 'next 必须是对象（任务链 {type, id, options?, schedule?}）' }
+  }
+  /** @type {{ id?: string, type?: string, options?: unknown, schedule?: unknown }} */
+  const n = next
+  if (typeof n.id !== 'string' || !n.id) return { ok: false, error: 'next.id 必须是非空字符串' }
+  const known = knownTypes()
+  if (typeof n.type !== 'string' || !known.includes(n.type)) {
+    return { ok: false, error: `next.type 未知: ${n.type}（已知: ${known.join(', ')}）` }
+  }
+  if (n.options !== undefined) {
+    const v = validateTaskOptions(n.type, n.options)
+    if (!v.ok) return { ok: false, error: `next.options 校验失败: ${v.error}` }
+  }
+  if (n.schedule !== undefined) {
+    const v = validateCron(n.schedule)
+    if (!v.ok) return { ok: false, error: `next.schedule ${v.error}` }
+  }
+  return { ok: true }
+}
 
 export const TASK_OPTION_SCHEMAS = {
   mine: {

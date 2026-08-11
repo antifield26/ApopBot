@@ -393,3 +393,54 @@ test('dispatch 层：未知命令返回 false（chatHandler 负责反馈，见 f
   const hit = await registry.dispatch('!fly-away', { sender: 'op1', ctx })
   assert.equal(hit, false)
 })
+
+test('!agent goal set --plan=JSON——设置目标与计划（op）', async () => {
+  const goalCalls = []
+  const { ctx, bot } = makeCtx({
+    agent: {
+      chat: async () => ({ reply: 'ok' }),
+      act: async () => ({ ok: true, result: 'ok' }),
+      setGoal: (user, text, plan) => { goalCalls.push({ user, text, plan }) },
+      getGoal: () => ({ text: '目标', plan: ['挖矿', '烧炼'], setBy: 'op1' }),
+      clearGoal: () => {}
+    }
+  })
+  await dispatch(ctx, '!agent goal set 建基地 --plan=["挖木头","造工具","盖房"]')
+  assert.equal(goalCalls.length, 1)
+  assert.equal(goalCalls[0].text, '建基地')
+  assert.deepEqual(goalCalls[0].plan, ['挖木头', '造工具', '盖房'])
+  assert.ok(lastMsg(bot).includes('计划 3 步'), lastMsg(bot))
+})
+
+test('!agent goal set --plan 非法 JSON → 明确报错（不设置）', async () => {
+  const goalCalls = []
+  const { ctx, bot } = makeCtx({
+    agent: {
+      chat: async () => ({ reply: 'ok' }),
+      act: async () => ({ ok: true, result: 'ok' }),
+      setGoal: (u, t, p) => { goalCalls.push({ u, t, p }) },
+      getGoal: () => null,
+      clearGoal: () => {}
+    }
+  })
+  await dispatch(ctx, '!agent goal set 建基地 --plan=not-json')
+  assert.ok(lastMsg(bot).includes('计划必须是 JSON'), lastMsg(bot))
+  assert.equal(goalCalls.length, 0, '非法计划不应设置')
+  await dispatch(ctx, '!agent goal set 建基地 --plan="挖木头"')
+  assert.ok(lastMsg(bot).includes('字符串数组'), lastMsg(bot))
+})
+
+test('!agent goal 查看——显示目标与计划', async () => {
+  const { ctx, bot } = makeCtx({
+    agent: {
+      chat: async () => ({ reply: 'ok' }),
+      act: async () => ({ ok: true, result: 'ok' }),
+      setGoal: () => {},
+      getGoal: () => ({ text: '建基地', plan: ['挖木头', '造工具'], setBy: 'op1' }),
+      clearGoal: () => {}
+    }
+  })
+  await dispatch(ctx, '!agent goal')
+  assert.ok(lastMsg(bot).includes('建基地'), lastMsg(bot))
+  assert.ok(lastMsg(bot).includes('挖木头→造工具'), lastMsg(bot))
+})

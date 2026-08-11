@@ -375,3 +375,28 @@ test('第 8 轮：非法 cron 表达式启动校验报错（不再静默永不�
   const g = validateConfig(good)
   assert.equal(g.ok, true, g.errors.join('; '))
 })
+
+test('任务链 next: options 非法拒绝（嵌套过 schema——此前零校验）', () => {
+  const bad = { ...base(), tasks: [{ id: 'm', type: 'mine', options: { blockTypes: ['iron_ore'] }, next: { type: 'mine', id: 'm2', options: { radius: 1 } } }] }
+  const { ok, errors } = validateConfig(bad)
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => e.includes('next.options')), errors.join('; '))
+})
+
+test('任务链 next: schedule 非法 cron 拒绝', () => {
+  const bad = { ...base(), tasks: [{ id: 'm', type: 'mine', options: { blockTypes: ['iron_ore'] }, next: { type: 'mine', id: 'm2', schedule: 'bad-cron' } }] }
+  const { ok } = validateConfig(bad)
+  assert.equal(ok, false)
+})
+
+test('任务链 next: 合法 options 放行', () => {
+  const good = { ...base(), tasks: [{ id: 'm', type: 'mine', options: { blockTypes: ['iron_ore'] }, next: { type: 'fish', id: 'f1', options: { durationMinutes: 30 } } }] }
+  assert.equal(validateConfig(good).ok, true)
+})
+
+test('options.schedule 未放顶层 → 显式报错（禁止静默不调度）', () => {
+  const bad = { ...base(), tasks: [{ id: 'm', type: 'mine', schedule: undefined, options: { blockTypes: ['iron_ore'], schedule: '0 3 * * *' } }] }
+  const { ok, errors } = validateConfig(bad)
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => e.includes('schedule 请放在任务条目顶层')), errors.join('; '))
+})

@@ -3,7 +3,7 @@ import { readFileSync, mkdirSync, accessSync, constants as FS_CONST } from 'node
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { Cron } from 'croner'
-import { validateTaskOptions } from './task-schemas.js'
+import { validateTaskOptions, validateNextOptions, validateCron } from './task-schemas.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -72,7 +72,11 @@ const BUILTIN_DEFAULTS = {
     // 环境感知自动注入：每次对话 system 尾部追加 ≤150 字符环境行
     envInjection: true,
     // 退化状态自动注入：低血/饥饿/背包满/工具将坏（正常时零成本空串）
-    stateInjection: true
+    stateInjection: true,
+    // 自主推进（规划器）：任务自然完成且无配置链时，LLM 评估目标并生成下一个任务
+    planEnabled: true,
+    // 规划调用独立冷却（与 summarize 60s 分开——带工具的规划调用成本高）
+    planCooldownMs: 120000
   },
   // 聊天安全层：服务端单条消息上限 256 字符，Bot 分片发送时留冗余
   chat: {
@@ -118,6 +122,8 @@ const ENV_MAP = {
   MCBOT_L2_EFFORT: ['l2', 'effort'],
   MCBOT_L2_ENV_INJECTION: ['l2', 'envInjection'],
   MCBOT_L2_STATE_INJECTION: ['l2', 'stateInjection'],
+  MCBOT_L2_PLAN_ENABLED: ['l2', 'planEnabled'],
+  MCBOT_L2_PLAN_COOLDOWN_MS: ['l2', 'planCooldownMs'],
   MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
   MCBOT_CHAT_COMMAND_COOLDOWN_MS: ['chat', 'commandCooldownMs'],
   MCBOT_HTTP_ENABLED: ['http', 'enabled'],
@@ -130,7 +136,7 @@ const ENV_MAP = {
 // 'true'/'false' 应保持字符串（如 MCBOT_L2_THINKING=false——thinking 的合法值是
 // 'enabled'/'disabled' 字符串，转布尔后校验报"当前: false"误导）
 const BOOLEAN_ENV_KEYS = new Set([
-  'log.pretty', 'l2.enabled', 'l2.envInjection', 'l2.stateInjection', 'http.enabled'
+  'log.pretty', 'l2.enabled', 'l2.envInjection', 'l2.stateInjection', 'l2.planEnabled', 'http.enabled'
 ])
 
 const CLI_KEYS = {
@@ -352,6 +358,11 @@ export function validateConfig (cfg) {
       errors.push(`l2.maxActionsPerCall 必须是 ≥1 的整数，当前: ${cfg.l2.maxActionsPerCall}`)
     }
     if (typeof cfg.l2.envInjection !== 'boolean') errors.push('l2.envInjection 必须是布尔值')
+    if (typeof cfg.l2.stateInjection !== 'boolean') errors.push('l2.stateInjection 必须是布尔值')
+    if (typeof cfg.l2.planEnabled !== 'boolean') errors.push('l2.planEnabled 必须是布尔值')
+    if (!Number.isInteger(cfg.l2.planCooldownMs) || cfg.l2.planCooldownMs < 1000) {
+      errors.push('l2.planCooldownMs 必须是 ≥1000 的整数（毫秒）')
+    }
     if (cfg.l2.thinking !== undefined && !['enabled', 'disabled'].includes(cfg.l2.thinking)) {
       errors.push(`l2.thinking 必须是 enabled 或 disabled，当前: ${cfg.l2.thinking}`)
     }
@@ -364,7 +375,7 @@ export function validateConfig (cfg) {
     const L2_KNOWN_KEYS = new Set([
       'enabled', 'model', 'cloudBaseUrl', 'cloudApiKeyEnv', 'maxSteps', 'cooldownMs',
       'cloudTimeoutMs', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'envInjection',
-      'stateInjection', 'thinking', 'effort',
+      'stateInjection', 'thinking', 'effort', 'planEnabled', 'planCooldownMs',
       '_comment' // JSON 注释惯例（config.example.json 使用；与 mineflayerPlugins/顶层一致）
     ])
     for (const key of Object.keys(cfg.l2)) {
@@ -423,22 +434,18 @@ export function validateConfig (cfg) {
     // 非法 cron 表达式启动即报错——避免任务注册但永不触发、只留一条 error 日志
     //（与 scheduleTimezone 同款"静默永不调度"失败模式）
     if (t.schedule) {
-      try {
-        new Cron(t.schedule)
-      } catch {
-        errors.push(`${label} schedule 非法 cron 表达式: ${t.schedule}（任务将永不触发）`)
-      }
+      const v = validateCron(t.schedule)
+      if (!v.ok) errors.push(`${label} ${v.error}`)
     }
-    // 任务链 next 轻校验（含 type/id；options 交给 validateTaskOptions）
+    // 任务链 next 校验（options/schedule 递归——与 start_task 原语共用 validateNextOptions）
     if (t.next !== undefined) {
-      if (typeof t.next !== 'object' || t.next === null || Array.isArray(t.next)) {
-        errors.push(`${label} next 必须是对象（任务链 {id, type, options?}）`)
-      } else {
-        if (typeof t.next.id !== 'string' || !t.next.id) errors.push(`${label} next.id 必须是非空字符串`)
-        if (typeof t.next.type !== 'string' || !KNOWN_TASK_TYPES.includes(t.next.type)) {
-          errors.push(`${label} next.type 未知: ${t.next.type}（已知: ${KNOWN_TASK_TYPES.join(', ')}）`)
-        }
-      }
+      const v = validateNextOptions(t.next)
+      if (!v.ok) errors.push(`${label} next ${v.error}`)
+    }
+    // options.schedule 迁移报错——调度器只消费顶层 entry.schedule，塞进 options 会
+    // 静默不触发（"任务注册但永不调度"失败模式，与非法 cron 同款显式报错）
+    if (t.options?.schedule !== undefined && t.schedule === undefined) {
+      errors.push(`${label} schedule 请放在任务条目顶层（options.schedule 不会被调度器消费）`)
     }
     const opts = t.options ?? {}
     if (opts.blockTypes !== undefined) {

@@ -71,3 +71,32 @@ test('A2/P1-2: mine/chop radius 上限 256（同步 findBlocks 枚举限幅）',
   assert.ok(!r2.ok, 'chop 无界 radius 应拒绝')
   assert.deepEqual(validateTaskOptions('chop', { area: {}, radius: 256 }), { ok: true })
 })
+
+// ---- 任务链 next 与 cron 校验（start_task/config 共用入口）----
+
+import { validateNextOptions, validateCron } from '../src/core/task-schemas.js'
+
+test('next: 合法 next（type/id/options/schedule）放行', () => {
+  assert.deepEqual(validateNextOptions({ type: 'mine', id: 'm1' }), { ok: true })
+  assert.deepEqual(validateNextOptions({ type: 'mine', id: 'm1', options: { blockTypes: ['iron_ore'] } }), { ok: true })
+  assert.deepEqual(validateNextOptions({ type: 'fish', id: 'f1', options: { durationMinutes: 30 }, schedule: '0 20 * * *' }), { ok: true })
+})
+
+test('next: 缺 id / 未知 type 拒绝', () => {
+  assert.ok(!validateNextOptions({ type: 'mine' }).ok, '缺 id 应拒绝')
+  assert.ok(!validateNextOptions({ type: 'unknown-type', id: 'x' }).ok, '未知 type 应拒绝')
+  assert.ok(!validateNextOptions(null).ok, 'null 应拒绝')
+  assert.ok(!validateNextOptions([]).ok, '数组应拒绝')
+})
+
+test('next: 嵌套 options 递归校验（非法拒绝）', () => {
+  const r = validateNextOptions({ type: 'mine', id: 'm1', options: { radius: 1 } })
+  assert.ok(!r.ok && r.error.includes('next.options'), r.error)
+})
+
+test('cron: 非法表达式拒绝（调度器静默吞非法 → 任务永不触发）', () => {
+  assert.deepEqual(validateCron('0 3 * * *'), { ok: true })
+  assert.ok(!validateCron('not-a-cron').ok)
+  assert.ok(!validateCron('').ok, '空字符串应拒绝')
+  assert.ok(!validateCron(123).ok, '非字符串应拒绝')
+})

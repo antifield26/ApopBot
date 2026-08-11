@@ -390,9 +390,27 @@ export function registerBuiltinCommands (registry, _ctx) {
             return
           }
           const text = rest.slice(1).join(' ').trim()
-          if (!text) { await sendChat(c.bot, '§c用法: !agent goal set <目标文本>', c.cfg.chat?.maxLength); return }
-          c.agent.setGoal(sender, text)
-          await sendChat(c.bot, `§a长期目标已设置: ${text.slice(0, 80)}`, c.cfg.chat?.maxLength)
+          if (!text) { await sendChat(c.bot, '§c用法: !agent goal set <目标文本> [--plan=<JSON 数组>]', c.cfg.chat?.maxLength); return }
+          // 尾部 --plan=<JSON 数组> token（parser 引号感知——含空格 JSON 需双引号包裹）
+          let plan
+          const m = /^--plan=(.+)$/.exec(rest.at(-1) ?? '')
+          if (m) {
+            try {
+              const parsed = JSON.parse(m[1])
+              if (!Array.isArray(parsed) || !parsed.every(p => typeof p === 'string')) {
+                await sendChat(c.bot, '§c计划必须是 JSON 字符串数组，如 --plan=["挖矿","烧炼"]', c.cfg.chat?.maxLength)
+                return
+              }
+              plan = parsed
+            } catch {
+              await sendChat(c.bot, '§c计划必须是 JSON 数组，如 --plan=["挖矿","烧炼"]', c.cfg.chat?.maxLength)
+              return
+            }
+          }
+          const goalText = m ? rest.slice(1, -1).join(' ').trim() : text
+          if (!goalText) { await sendChat(c.bot, '§c用法: !agent goal set <目标文本> [--plan=<JSON 数组>]', c.cfg.chat?.maxLength); return }
+          c.agent.setGoal(sender, goalText, plan)
+          await sendChat(c.bot, `§a长期目标已设置: ${goalText.slice(0, 80)}${plan?.length ? `（计划 ${plan.length} 步）` : ''}`, c.cfg.chat?.maxLength)
           return
         }
         if (rest[0] === 'clear') {

@@ -1034,3 +1034,107 @@ test('第 8 轮：act 执行期间置 busy——chat 被拒（双控制流防线
   const r2 = await agent.chat('steve', 'hi')
   assert.ok(!r2.reply.includes('仍在处理'), r2.reply)
 })
+
+// ---- 自主推进（规划器 plan 通道）----
+
+import { _resetPlanCooldown } from '../src/l2/agent-interface.js'
+
+test('plan: 冷却内跳过（不调 provider）', async () => {
+  _resetPlanCooldown()
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [])
+  agent.setGoal('steve', '挖铁', ['找铁矿', '挖矿'])
+  assert.equal(await agent.onTaskCompleted({ id: 'm1' }), true, '首次应发起规划')
+  assert.ok(provider.calls.length >= 1)
+  const before = provider.calls.length
+  assert.equal(await agent.onTaskCompleted({ id: 'm2' }), false, '冷却内应跳过')
+  assert.equal(provider.calls.length, before, '冷却内不得调用 provider')
+})
+
+test('plan: 无 goal 会话跳过；有 goal 发起受限工具循环', async () => {
+  _resetPlanCooldown()
+  const ctx = makeCtx()
+  const { agent: fresh } = makeAgent(ctx, [])
+  fresh.reset('steve') // 清模块级 SESSIONS 残留（跨用例共享）
+  const { agent, provider } = makeAgent(ctx, [
+    { text: '', toolCalls: [{ id: 't1', name: 'start_task', arguments: { type: 'chop', id: 'c1' } }] },
+    { text: '下一步已启动', toolCalls: [] }
+  ])
+  // 无 goal → 跳过
+  assert.equal(await agent.onTaskCompleted({ id: 'm1' }), false, '无 goal 应跳过')
+  assert.equal(provider.calls.length, 0)
+  // 有 goal → 发起规划
+  agent.setGoal('steve', '建基地', ['砍树', '盖房'])
+  assert.equal(await agent.onTaskCompleted({ id: 'm1' }), true)
+  assert.ok(provider.calls.length >= 1, '有 goal 应发起规划调用')
+  const sys = provider.calls[0].system
+  assert.ok(sys.includes('无人值守规划器'), 'system 应为规划器人设')
+  assert.ok(sys.includes('建基地'), 'system 应含当前目标')
+  assert.ok(sys.includes('砍树→盖房'), 'system 应含计划')
+  assert.ok(provider.calls[0].tools.some(t => t.name === 'start_task'), '工具集应含 start_task')
+})
+
+test('plan: 只暴露受限工具集（无 act/reply/stop_task/clear_goal/follow_player）', async () => {
+  _resetPlanCooldown()
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [{ text: '观察后决定', toolCalls: [] }])
+  agent.setGoal('steve', '目标', ['步1'])
+  await agent.onTaskCompleted({ id: 'm1' })
+  const names = provider.calls[0].tools.map(t => t.name)
+  assert.ok(names.includes('observe_tasks'), '应含 observe_tasks')
+  assert.ok(names.includes('observe_status'), '应含 readonly 观察族')
+  assert.ok(names.includes('set_goal'), '应含 set_goal')
+  for (const forbidden of ['act', 'reply', 'stop_task', 'clear_goal', 'follow_player', 'goto', 'dig', 'attack']) {
+    assert.ok(!names.includes(forbidden), `规划器不得含 ${forbidden}`)
+  }
+})
+
+test('plan: 失败静默（provider 抛错不抛、不广播）', async () => {
+  _resetPlanCooldown()
+  const ctx = makeCtx()
+  const { agent } = makeAgent(ctx, [{ throw: new Error('API 500') }])
+  agent.setGoal('steve', '目标', ['步1'])
+  assert.equal(await agent.onTaskCompleted({ id: 'm1' }), true, '发起即返回（失败也占冷却）')
+})
+
+test('plan: busy 时跳过（不抢占对话/act）', async () => {
+  _resetPlanCooldown()
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [])
+  agent.setGoal('steve', '目标', ['步1'])
+  agent.busy = true
+  assert.equal(await agent.onTaskCompleted({ id: 'm1' }), false, 'busy 应跳过')
+  assert.equal(provider.calls.length, 0)
+})
+
+test('plan: planEnabled=false 总开关关闭', async () => {
+  _resetPlanCooldown()
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [])
+  agent.setGoal('steve', '目标', ['步1'])
+  agent.cfg.planEnabled = false
+  assert.equal(await agent.onTaskCompleted({ id: 'm1' }), false)
+  assert.equal(provider.calls.length, 0)
+})
+
+test('goal 注入: chat 的 system 含目标与计划行', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [{ text: '明白', toolCalls: [] }])
+  agent.setGoal('steve', '建基地', ['砍树', '盖房'])
+  await agent.chat('steve', '继续')
+  const sys = provider.calls.at(-1).system
+  assert.ok(sys.includes('当前目标: 建基地'), sys.slice(0, 200))
+  assert.ok(sys.includes('砍树→盖房'), sys.slice(0, 200))
+})
+
+test('set_goal 原语带 plan——写入会话 goal.plan', async () => {
+  const ctx = makeCtx({}, { ops: ['steve'] })
+  const { agent } = makeAgent(ctx, [])
+  ctx.agent = agent // set_goal handler 读 c.agent.setGoal
+  // 直接经 set_goal 原语（executor 通道）
+  const r = await agent.executor.executeOne('set_goal', { text: '建基地', plan: ['砍树', '盖房'] }, { user: 'steve', source: 'act' })
+  assert.ok(r.ok, r.result)
+  const g = agent.getGoal('steve')
+  assert.equal(g.text, '建基地')
+  assert.deepEqual(g.plan, ['砍树', '盖房'])
+})

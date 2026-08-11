@@ -111,6 +111,16 @@ export function _resetSummarizeCooldown () {
   lastSummarizeAt = 0
 }
 
+// 规划器独立冷却（自主推进）——与 summarize 60s 分开：规划调用带工具、成本高，
+// 共用播报冷却会饿死死亡/任务播报。任务高频完成时自动降频评估（可配 planCooldownMs）
+const PLAN_DEFAULT_COOLDOWN_MS = 120000
+let lastPlanAt = 0
+
+/** 测试钩子：重置规划冷却（生产不调用；tests 需要独立验证冷却语义）。 */
+export function _resetPlanCooldown () {
+  lastPlanAt = 0
+}
+
 /**
  * token 估算（qwen3 BPE 近似，确定性可测，偏保守）——
  * CJK ×1.0 + ASCII ×0.25 + 其他 ×0.5。字符级截断 ≠ token 级截断的工程折中：
@@ -232,7 +242,7 @@ const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手
    交互：interact_entity{filter,foodName?,count?} 右键实体（喂食繁殖）
    物品：equip{itemName}；drop{itemName?,count?}；use_item 用手持物；eat 自动进食
    流程：wait{ms} 等待（≤5 分钟）；look{x,y,z|yaw,pitch} 转向；reply{text} 说话；fish{timeoutMs?} 钓鱼
-   任务：start_task{type,id,options?} 启动任务；stop_task{id} 停止任务；follow_player{name|off} 跟随玩家
+   任务：start_task{type,id,options?,next{type,id,options?,schedule?}?,schedule?} 启动任务（next=自然完成后接力任务链；schedule=cron 定时触发而非立即启动）；stop_task{id} 停止任务；follow_player{name|off} 跟随玩家
 2. 观测优先：行动前先观察（observe_*），不凭猜测行动、不编造世界状态。单步行动后读结果再决定下一步。
 3. 异常恢复：失败先读懂原因（如"移动失败: 无法到达"、"exclusive 任务 X 运行中"、"权限不足"、"先 goto 靠近"），同一失败操作不要盲目重试超过 2 次；需要等待用 wait{ms}。
 4. 预算：每次 act ≤8 动作、每轮对话 ≤4 次工具调用（超限动作将不执行）。移动/采集耗时长，拆小步执行。
@@ -262,7 +272,7 @@ function buildSystem (user, cfg) {
 function actTool (maxActionsPerCall) {
   return {
     name: 'act',
-    description: '执行一串动作（动作数组，按序执行）。op 为动作原语（goto/dig/place/collect_blocks/plant_crops/attack/interact_entity/equip/drop/use_item/eat/wait/look/fish/explore_step/start_task/stop_task/follow_player），args 为对应参数对象；结果数组按序对应每个动作。',
+    description: '执行一串动作（动作数组，按序执行）。op 为动作原语（goto/dig/place/collect_blocks/plant_crops/attack/interact_entity/equip/drop/use_item/eat/wait/look/fish/explore_step/start_task/stop_task/follow_player），args 为对应参数对象（start_task 支持 next 任务链与 schedule 定时）；结果数组按序对应每个动作。',
     parameters: {
       type: 'object',
       required: ['actions'],
@@ -291,6 +301,33 @@ function buildTools (executor, maxActionsPerCall) {
     if (op === 'reply' || p.exclusiveClass === 'readonly') {
       tools.push({ name: op, description: p.description ?? op, parameters: p.schema ?? { type: 'object', properties: {} } })
     }
+  }
+  return tools
+}
+
+// 规划器提示词：无人值守目标推进——只经任务层表达意图（受限工具集强制），
+// 输出是内部决策不回复玩家
+const PLANNER_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 无人值守规划器（minecraft-bot）。你在玩家设定的长期目标框架下，在任务完成后决定下一步。
+【约束】
+1. 只通过 start_task 推进目标（可带 next 任务链/schedule 定时）；绝不直接操控移动/战斗/物品——你的工具集只有观察与任务管理
+2. 先 observe_tasks 看当前任务状态再决定（不重复启动已运行/排队中的任务——id 冲突会报错）
+3. 每次调用最多 3 次工具调用；不确定时只观察不行动
+4. 计划确实变化时才 set_goal（更新 plan）；不要清除目标、不要停止任务
+5. 输出是内部决策记录，不需要回复玩家`
+
+/**
+ * 规划器受限工具集：readonly 观察族 + start_task/set_goal——
+ * 规划器只能经任务层表达意图，不能直接移动/挖掘/战斗/清除目标。
+ */
+function buildPlanningTools (executor) {
+  const tools = []
+  for (const [op, p] of executor.primitives) {
+    if (p.permission !== 'all' || p.exclusiveClass !== 'readonly') continue
+    tools.push({ name: op, description: p.description ?? op, parameters: p.schema ?? { type: 'object', properties: {} } })
+  }
+  for (const op of ['start_task', 'set_goal']) {
+    const p = executor.primitives.get(op)
+    if (p) tools.push({ name: op, description: p.description ?? op, parameters: p.schema ?? { type: 'object', properties: {} } })
   }
   return tools
 }
@@ -672,6 +709,113 @@ export class AgentInterface {
     session.goal = null
     setSession(user, session)
     this.sessionStore?.set(user, session)
+    return true
+  }
+
+  /**
+   * 任务自然完成 → 规划器评估目标推进（自主行为）。
+   * 门控：planEnabled / 独立冷却 / busy（不抢占对话）/ 无 goal 会话。全程静默——
+   * 任何失败只留日志，绝不抛错/广播（任务完成通知流程不受影响）。
+   * @param {object} rec 完成的任务条目
+   * @returns {Promise<boolean>} 是否发起了规划调用
+   */
+  async onTaskCompleted (rec) {
+    try {
+      if (this.cfg.planEnabled === false) return false
+      const now = Date.now()
+      const cooldown = this.cfg.planCooldownMs ?? PLAN_DEFAULT_COOLDOWN_MS
+      if (now - lastPlanAt < cooldown) return false
+      if (this.busy) return false // chat/act 进行中不抢占
+      const picked = this.pickGoalSession()
+      if (!picked) return false
+      return await this.planOnce(picked.user, picked.goal)
+    } catch (err) {
+      this.log.warn({ err: err.message }, 'onTaskCompleted 规划失败（静默）')
+      return false
+    }
+  }
+
+  /**
+   * 有 goal 的最近活动会话（按 goal.updatedAt 降序——比 LRU 访问序稳：
+   * LRU 序会因只读 chat 刷新）。
+   * @returns {{ user: string, goal: { text: string, plan?: string[] } } | null}
+   */
+  pickGoalSession () {
+    let best = null
+    let bestTs = -1
+    for (const [user, v] of SESSIONS) {
+      const g = v?.goal
+      if (!g?.text) continue
+      if ((g.updatedAt ?? 0) > bestTs) {
+        best = { user, goal: g }
+        bestTs = g.updatedAt ?? 0
+      }
+    }
+    return best
+  }
+
+  /**
+   * 单次规划调用（无会话 LLM 循环，受限工具集）。
+   * 上下文：规划器人设 + 当前目标 + 任务状态行 + 环境行（每轮重注入）；
+   * ≤2 轮 × ≤3 工具调用（超限回填"未执行"——模型可见可收敛）。
+   * 失败也占冷却（防 LLM 故障循环打爆 API）。
+   * @param {string} user goal 的 setBy（op 身份——executor 权限门按此判定）
+   * @param {{ text: string, plan?: string[] }} goal
+   * @returns {Promise<boolean>}
+   */
+  async planOnce (user, goal) {
+    if (!this.provider?.chat) return false
+    lastPlanAt = Date.now() // 置位防重入
+    const tools = buildPlanningTools(this.executor)
+    let messages = []
+    let done = false
+    let toolCalls = 0
+    for (let step = 0; step < 2 && !done; step++) {
+      const statusLine = (this.ctx.tasks?.getStatus?.() ?? []).slice(0, 10)
+        .map(t => `${t.id}:${t.state}${t.waitingReason ? `(${t.waitingReason})` : ''}`)
+        .join(' ') || '无任务'
+      const goalLine = `当前目标: ${goal.text.slice(0, 80)}${goal.plan?.length ? `（计划: ${goal.plan.join('→').slice(0, 40)}）` : ''}`
+      const envLine = this.cfg.envInjection === false ? '' : environmentLine(this.ctx.bot)
+      const system = `${PLANNER_SYSTEM_PROMPT}\n\n${goalLine}\n任务状态: ${statusLine}${envLine}`
+      // 首轮补占位 user 消息（Anthropic 协议要求首条 user + 角色交替）
+      if (messages.length === 0) {
+        messages.push({ role: 'user', content: '评估当前目标进度并决定下一步（只观察或 start_task/set_goal）。' })
+      }
+      let res
+      try {
+        res = await this.provider.chat(messages, { tools, system, signal: AbortSignal.timeout(45000) })
+      } catch (err) {
+        this.log.warn({ err: err.message }, '规划调用失败（静默，占冷却）')
+        return true
+      }
+      if (res.usage) {
+        this.usage.inputTokens += res.usage.inputTokens ?? 0
+        this.usage.outputTokens += res.usage.outputTokens ?? 0
+      }
+      this.usage.latencyMs = res.latencyMs ?? null
+      const allCalls = res.toolCalls ?? []
+      const calls = allCalls.slice(0, 3)
+      if (calls.length === 0) { done = true; break }
+      const results = []
+      for (const tc of allCalls.slice(3)) {
+        results.push({ id: tc.id, name: tc.name, output: '未执行（单轮工具调用上限 3，请减少本轮动作）' })
+      }
+      for (const tc of calls) {
+        toolCalls++
+        try {
+          const r = await this.executor.executeOne(tc.name, tc.arguments ?? {}, { user, source: 'plan', signal: AbortSignal.timeout(45000) })
+          let output = r.ok ? (typeof r.result === 'string' ? r.result : JSON.stringify(r.result)) : r.result
+          if (typeof output !== 'string') output = JSON.stringify(output)
+          if (output.length > TOOL_RESULT_MAX_CHARS) output = truncateJson(output, TOOL_RESULT_MAX_CHARS)
+          results.push({ id: tc.id, name: tc.name, output })
+        } catch (err) {
+          results.push({ id: tc.id, name: tc.name, output: `执行失败: ${err.message}` })
+        }
+      }
+      messages.push({ role: 'assistant', content: res.text ?? '', toolCalls: calls })
+      messages.push({ role: 'user', content: '', toolResults: results })
+    }
+    this.log.info({ user, goal: goal.text.slice(0, 60), toolCalls }, '规划完成（后台静默推进）')
     return true
   }
 

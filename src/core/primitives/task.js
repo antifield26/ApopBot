@@ -12,7 +12,7 @@
 // 观察类返回结构化对象（LLM 收到 JSON、脚本读字段）；动作类返回简短中文文案。
 // 任务管理（op / flow——任务互斥由 manager 排队，不拦）
 import * as discovery from '../discovery.js'
-import { validateTaskOptions } from '../task-schemas.js'
+import { validateTaskOptions, validateNextOptions, validateCron } from '../task-schemas.js'
 import { TASK_TYPES } from '../../tasks/types.js'
 import { hasExclusiveActive, getExclusiveOwner } from '../arbiter.js'
 
@@ -29,18 +29,40 @@ export function registerTask (register, _ctx) {
       properties: {
         type: { type: 'string', description: Object.keys(TASK_TYPES).join('/') },
         id: { type: 'string', description: '任务唯一 id' },
-        options: { type: 'object', description: '任务 options（如 area/blockTypes/durationMinutes）' }
+        options: { type: 'object', description: '任务 options（如 area/blockTypes/durationMinutes）' },
+        next: { type: 'object', description: '任务链：本任务自然完成后启动 {type,id,options?,schedule?}' },
+        schedule: { type: 'string', description: 'cron 表达式——定时触发而非立即启动' }
       }
     },
     permission: 'op',
     exclusiveClass: 'flow',
     guardText: '',
     timeoutMs: 10000,
-    handler: async (c, { type, id, options }) => {
-      // LLM 生成的 ad-hoc options 过 schema（与 !task new 同款入口拦截）
+    handler: async (c, { type, id, options, next, schedule }) => {
+      // LLM 生成的 ad-hoc options/next/schedule 过 schema（与 !task new 同款入口拦截；
+      // next/schedule 是任务链与定时表达——config 与 start_task 共用同一校验口径）
       const v = validateTaskOptions(type, options)
       if (!v.ok) throw new Error(`参数校验失败: ${v.error}`)
-      c.tasks.addTask({ id, type, options: options ?? {}, notifyChat: true })
+      if (next !== undefined) {
+        const vn = validateNextOptions(next)
+        if (!vn.ok) throw new Error(`参数校验失败: ${vn.error}`)
+      }
+      // schedule 顶层优先，兼容旧 options.schedule 路径（config 校验已报迁移指引）
+      const cron = schedule ?? options?.schedule
+      if (cron !== undefined) {
+        const vc = validateCron(cron)
+        if (!vc.ok) throw new Error(`参数校验失败: ${vc.error}`)
+      }
+      c.tasks.addTask({
+        id,
+        type,
+        options: options ?? {},
+        notifyChat: true,
+        ...(next !== undefined ? { next } : {}),
+        ...(cron !== undefined ? { schedule: cron } : {})
+      })
+      // cron 任务注册即返回（到点触发，无 init/启动流程可等）
+      if (cron !== undefined) return `任务 ${id} (${type}) 已注册（cron ${cron} 定时触发）`
       // 等 init 完成：同步 init 在一个事件循环轮内 settle；异步 init 轮询至多
       // 500ms——状态离开 created/init 即知结果（failed/completed/running/排队）
       let st = null

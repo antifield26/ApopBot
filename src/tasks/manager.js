@@ -226,7 +226,9 @@ export class TaskManager {
     if (rec.entry.notifyChat === false) return
     if (rec.task.state === 'completed') {
       this._notify(rec, 'completed')
-      this._maybeStartNext(rec) // 任务链
+      // 配置链优先（链已启动则规划器跳过——避免双控制源并发 start_task）；
+      // 无链时交给 LLM 规划器评估目标推进（自主行为，agent 内部有门控）
+      if (!this._maybeStartNext(rec)) this._getAgent?.()?.onTaskCompleted?.(rec)
     } else if (rec.task.state === 'failed') {
       this._notify(rec, `failed: ${rec.task.lastError ?? '未知原因'}`)
     }
@@ -237,13 +239,14 @@ export class TaskManager {
    * 本任务自然完成（completed）后自动注册并启动下一个任务（ad-hoc 形态，可被
    * !task remove 移除；不写回配置文件）。失败/停止不接力（只对"完成"接力——
    * 失败链会让错误静默蔓延）。目标任务已运行/排队中则不重复启动。
+   * @returns {boolean} 是否实际注册/启动了 next（调用方据此决定是否交给规划器）
    */
   _maybeStartNext (rec) {
     const next = rec.entry?.next
-    if (!next || typeof next !== 'object' || !next.type || !next.id) return
-    if (rec.task.state !== 'completed') return // 仅自然完成触发
+    if (!next || typeof next !== 'object' || !next.type || !next.id) return false
+    if (rec.task.state !== 'completed') return false // 仅自然完成触发
     const existing = this.tasks.get(next.id)
-    if (existing && ['init', 'running', 'paused'].includes(existing.task.state)) return
+    if (existing && ['init', 'running', 'paused'].includes(existing.task.state)) return false
     if (existing) {
       this.stopTask(next.id).catch(() => {}) // 残留终态任务先停（重启语义）
     }
@@ -257,8 +260,10 @@ export class TaskManager {
       } else {
         this.startTask(next.id, newRec).catch(err => this.log.error({ task: next.id, err: err.message }, '任务链启动失败'))
       }
+      return true
     } catch (err) {
       this.log.error({ from: rec.entry.id, next: next.id, err: err.message }, '任务链注册失败')
+      return false
     }
   }
 
@@ -341,8 +346,9 @@ export class TaskManager {
       }
     }
     this._notify(rec, rec.task.state)
-    // 任务链：scheduled 自然完成同样接力 next（rec.task 已终态）
-    this._maybeStartNext(rec)
+    // 任务链：scheduled 自然完成同样接力 next（rec.task 已终态）；
+    // 无链时交给规划器（与 _notifyCompletion 同语义——链优先）
+    if (!this._maybeStartNext(rec)) this._getAgent?.()?.onTaskCompleted?.(rec)
   }
 
   /** 完成/失败通知（scheduled 运行；notifyChat:false 关闭聊天；webhook 独立于 notifyChat——运维通道）。 */
