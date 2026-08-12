@@ -1,13 +1,30 @@
 // @ts-check
 // 聊天发送安全层：服务端单条消息上限 256 字符，超长会被截断/拒绝。
 // sendChat 将长文本按 cfg.chat.maxLength 分片发送（优先在空白处断开，
-// 避免把单词截成两半），片间 100ms 间隔防刷屏触发服务端速率限制。
+// 避免把单词截成两半），片间 300ms 间隔——Paper 默认反刷屏检测
+//（disconnect.spam kick，实测 6 片消息 100ms 间隔触发）按 10s 窗口计数，
+// 单条长回复 6 片 0.5s 发完即踢；300ms 虽不能完全规避窗口叠加（多源短消息
+// 同 10s 内仍是风险），但消除了单条消息自触发的主因，配合发送日志可追溯。
 //
 // 颜色码剥离：聊天消息含 § 颜色码会被服务器直接踢出
 //（multiplayer.disconnect.illegal_characters）。源码中的 §a/§c 前缀
 // 保留作设计标记，发送层统一剥离（若服务器日后允许颜色码，改此处即可恢复）。
 
-const INTER_MESSAGE_DELAY_MS = 100
+const INTER_MESSAGE_DELAY_MS = 300
+
+// 发送日志（可观测性）：spam kick 排查需要知道"谁发了什么"——
+// index.js 启动时 registerChatLogger 注入一次，sendChat 内部记 info
+//（发送方/文本摘要/分片数）。未注册（测试/无 logger）时静默零成本。
+/** @type {((msg: object) => void)|null} */
+let chatLogger = null
+
+/**
+ * 注册聊天发送日志（启动时注入；spam kick/消息丢失排查用）。
+ * @param {(msg: object) => void} logger pino child
+ */
+export function registerChatLogger (logger) {
+  chatLogger = logger
+}
 
 /**
  * 移除聊天颜色码（§ 及合法颜色字符）。
@@ -61,6 +78,7 @@ export async function sendChat (bot, text, maxLength = 250) {
   const clean = stripColorCodes(text)
   if (!clean.trim()) return 0 // 空/纯空白（!say 无参或纯 §）不发包——空消息行为未验证，避免触发服务端拒绝
   const chunks = chunkText(clean, maxLength)
+  if (chatLogger) chatLogger({ chunks: chunks.length, text: clean.slice(0, 80) })
   for (let i = 0; i < chunks.length; i++) {
     bot.chat(chunks[i])
     if (i < chunks.length - 1) {

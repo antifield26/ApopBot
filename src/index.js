@@ -11,6 +11,7 @@ import { setupSignals } from './core/signals.js'
 import { createStatusServer } from './core/http-status.js'
 import { createStateStore } from './core/state.js'
 import { createNotifier } from './core/notify.js'
+import { registerChatLogger } from './core/chat.js'
 import * as discovery from './core/discovery.js'
 
 // 入口：参数 → 配置 → logger → ConnectionManager → 功能层（tasks/命令/L2）→ 信号处理
@@ -31,6 +32,8 @@ try {
 }
 
 let logger = createLogger(cfg)
+// 聊天发送日志注册（spam kick/消息丢失排查——sendChat 内记发送方/摘要/分片数）
+registerChatLogger((msg) => logger.child({ module: 'chat' }).info(msg))
 
 // 进程级错误兜底：未捕获 rejection/异常不得静默崩溃走 NSSM 无限重启循环——
 // 与连接层 fatal 语义一致 exit(2) 停止等人工（flush 带 1s 兜底防卡死）
