@@ -27,6 +27,10 @@ export function installGuardResponse (ctx, bot, log) {
     if (!source || source === bot.entity || source.username) return // 只响应怪物攻击（玩家/环境自伤除外）
     void trigger()
   })
+  // 死亡重置冷却：怪物多时死亡-重生循环中，重生后受击若仍在 30s 冷却窗口内会被
+  // 挡住——"死亡重生后不进入战斗"（实测 17:00:18-17:00:44 被僵尸蹲守多次死亡
+  // 未触发 guard）。死亡=威胁需重新评估，重生后首次受击立即进入战斗。
+  bot.on('death', () => { lastTriggerAt = 0 })
   /** 受击响应主流程（串行 await——combat 完成才恢复，防并发触发）。 */
   async function trigger () {
     const g = cfg()

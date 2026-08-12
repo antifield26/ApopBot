@@ -84,6 +84,26 @@ test('guard: 冷却内重复受击不触发；combat 运行中不重复', async 
   assert.equal(tasks.calls.pauseAll, 1, '冷却内不重复触发')
 })
 
+test('guard: 死亡重置冷却——重生后首次受击立即触发（怪物多时死亡循环场景）', async () => {
+  const { bot, tasks } = makeEnv()
+  bot.emit('entityHurt', bot.entity, hostileSource)
+  await new Promise((r) => setTimeout(r, 10))
+  assert.equal(tasks.calls.pauseAll, 1)
+  tasks.combatDone()
+  await new Promise((r) => setTimeout(r, 10))
+  // 冷却内受击被挡
+  bot.emit('entityHurt', bot.entity, hostileSource)
+  await new Promise((r) => setTimeout(r, 10))
+  assert.equal(tasks.calls.pauseAll, 1, '死亡前冷却内受击不触发')
+  // 死亡 → 冷却重置 → 受击立即触发
+  bot.emit('death')
+  bot.emit('entityHurt', bot.entity, hostileSource)
+  await new Promise((r) => setTimeout(r, 10))
+  assert.equal(tasks.calls.pauseAll, 2, '死亡重置冷却——重生后首次受击立即触发战斗')
+  tasks.combatDone()
+  await new Promise((r) => setTimeout(r, 10))
+})
+
 test('guard: enabled=false 不响应', async () => {
   const { bot, tasks } = makeEnv({ cfg: { guard: { enabled: false, radius: 32, cooldownMs: 30000 } } })
   bot.emit('entityHurt', bot.entity, hostileSource)
