@@ -17,7 +17,10 @@
 // 解析容错：服务器返回格式本地化（英文 "The time is 12345" / 中文 "时间是 12345"），
 // 用双模式正则；只接受 Server 来源消息（self 过滤已有 fl-chat，这里再过滤 username）。
 
-const QUERY_INTERVAL_MS = 30000
+// 15s 周期：服务器 30s 无客户端包判 timeout 踢出（实测：LLM 工具循环处理期间
+// 30s 查询周期卡边缘——延迟/抖动即超时，chat 命令触发断线）。
+// 15s 一条 /minecraft:time 远低于 Paper 反刷屏阈值（100ms 分片才触发）。
+const QUERY_INTERVAL_MS = 15000
 
 /**
  * 挂载时间查询：定时执行 /minecraft:time query time + 解析聊天返回缓存。
