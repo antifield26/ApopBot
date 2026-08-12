@@ -208,7 +208,7 @@ export function registerObserve (register, _ctx) {
     }
   })
   register('observe_block', {
-    description: '获取单方块详情（名称/属性/是否空）',
+    description: '获取单方块详情（名称/属性/isAir——容器内容不可见，需打开容器才能确认）',
     schema: {
       type: 'object',
       required: ['x', 'y', 'z'],
@@ -222,8 +222,10 @@ export function registerObserve (register, _ctx) {
     timeoutMs: 5000,
     handler: async (c, { x, y, z }) => {
       const block = c.bot.blockAt(new Vec3(x, y, z))
-      if (!block) return { name: null, empty: true, x, y, z }
-      return { name: block.name, id: block.type, properties: block.getProperties?.() ?? null, empty: block.boundingBox === 'empty' }
+      if (!block) return { name: null, isAir: true, x, y, z }
+      // isAir = 方块是否为空气（boundingBox empty）——与容器内容无关：
+      // 箱子等容器 isAir=false 只表示"有方块实体/碰撞箱"，内容需打开容器确认
+      return { name: block.name, id: block.type, properties: block.getProperties?.() ?? null, isAir: block.boundingBox === 'empty' }
     }
   })
   register('observe_crops', {
@@ -266,9 +268,11 @@ export function registerObserve (register, _ctx) {
         const block = c.bot.blockAt(p)
         if (!block) continue
         if (block.name in CROP_MATURITY) {
-          const age = block.getProperties?.()?.age
+          // getProperties 的带 values 属性返回字符串（"7" 非 7）——Number() 转换
+          //（26.1 实测：不转换则 typeof age === 'number' 恒 false → 成熟小麦全判未成熟）
+          const age = Number(block.getProperties?.()?.age)
           const m = CROP_MATURITY[block.name]
-          if (typeof age === 'number' && age >= m && crops.includes(block.name)) mature.push([p.x, p.y, p.z])
+          if (Number.isFinite(age) && age >= m && crops.includes(block.name)) mature.push([p.x, p.y, p.z])
           else if (crops.includes(block.name)) immature.push([p.x, p.y, p.z])
         } else if (block.name in CROP_BY_BLOCK) {
           const crop = CROP_BY_BLOCK[block.name]

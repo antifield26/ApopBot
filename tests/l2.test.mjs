@@ -114,6 +114,30 @@ test('chat: 无活跃任务 → 不注入任务状态行（零成本）', async 
   assert.ok(!provider.calls[0].system.includes('任务:'), '无活跃任务不注入')
 })
 
+test('observe_crops: getProperties 字符串 age 兼容（26.1 实测 "7" 非 7——成熟全判未成熟）', async () => {
+  const ctx = makeCtx()
+  ctx.bot.entity = { position: { x: 0, y: 64, z: 0 } }
+  ctx.bot.findBlocks = () => [{ x: 1, y: 63, z: 1 }, { x: 2, y: 63, z: 2 }] // mineflayer findBlocks 同步返回数组
+  ctx.bot.blockAt = (p) => p.x === 1
+    ? { name: 'wheat', getProperties: () => ({ age: '7' }) } // 成熟（字符串）
+    : { name: 'wheat', getProperties: () => ({ age: '2' }) } // 未成熟
+  const executor = createActionExecutor(ctx, { audit: null })
+  const r = await executor.executeOne('observe_crops', { area: { x1: 0, y1: 62, z1: 0, x2: 5, y2: 64, z2: 5 } }, { user: 'steve', source: 'test' })
+  const res = r.result // executeOne 返回原始对象（序列化在 agent 层）
+  assert.deepEqual(res.mature, [[1, 63, 1]], '字符串 age "7" 应判成熟')
+  assert.deepEqual(res.immature, [[2, 63, 2]])
+})
+
+test('observe_block: isAir 语义（boundingBox——箱子非空误判修复：容器内容不可见）', async () => {
+  const ctx = makeCtx()
+  ctx.bot.blockAt = () => ({ name: 'chest', type: 54, boundingBox: 'block', getProperties: () => ({ facing: 'north' }) })
+  const executor = createActionExecutor(ctx, { audit: null })
+  const r = await executor.executeOne('observe_block', { x: 1, y: 64, z: 1 }, { user: 'steve', source: 'test' })
+  const res = r.result // executeOne 返回原始对象（序列化在 agent 层）
+  assert.equal(res.isAir, false, '箱子 isAir=false 只表示非空气方块——不得解读为"有内容"')
+  assert.ok(!('empty' in res), '字段改名 isAir——empty 语义误导 LLM 判定箱子内容')
+})
+
 test('chat: cooldown 阻止连续请求', async () => {
   const ctx = makeCtx()
   const { agent } = makeAgent(ctx, [{ text: 'a' }, { text: 'b' }])
