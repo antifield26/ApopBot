@@ -104,6 +104,13 @@ minecraft-bot (Node.js ≥22, ESM)
 - **L2 实例化改造**：SESSIONS key 带角色前缀（磁盘零改动 + 旧裸 key 首读迁移）；plan 冷却入实例、summarize 冷却留模块级共享（防并发推理）；pickGoalSession 剥离前缀（权限身份）——架构上为多 bot 扩展留了口（发现/仲裁/连接仍单实例，扩展点在 l2 层已验证）
 - **零改动面**：feature-layer/manager/fl-*/commands 的 `ctx.agent` 消费面全部经注册表显式委托（onTaskCompleted 路由 planner）——单角色升级多角色无源码改动，纯配置驱动
 
+## 自主学习循环（skill 库，v1.5.0）
+
+- **学习闭环**：任务自然完成 → 注册表 onTaskCompleted **并行**触发（planner 自主推进 + `learnFromTask` 学习，独立冷却互不阻塞）→ LLM 提炼结构化 skill（SKILL_SUMMARIZER_PROMPT 严格 JSON：name/summary/steps[≤6]/pitfalls[≤3]）→ skills.json 落盘（同 taskType+name 覆盖刷新 usage++）→ 后续对话按活跃任务类型注入"技能:"段
+- **三层记忆分工**：会话（短期）/ 经验（失败教训，op 键控）/ **技能（成功实践，taskType 键控）**——检索键正交；CORE 第 11 条低权威声明（技能是参考提示不是规则）
+- **安全面**：skill 是文本提示非可执行代码（不引入 LLM 生成代码执行）；taskType 以 rec.entry.type 强制覆盖（LLM 乱起类型名不污染检索键）；失败静默不重试（下个任务完成自然重试）；failed 任务不学习（manager 调用点天然保证 + 状态门双保险）
+- **边界**：config 任务链（next）接力完成不学习（链优先短路，v-next 可加 onTaskSucceeded 通道）；planOnce 规划不注入技能（v-next）
+
 ## 注释与文档约定
 
 - **代码注释只解释当前代码**的意图/契约/边界（现在时态）：为什么这样设计、何时触发、什么条件下跳过、与哪里的契约对应

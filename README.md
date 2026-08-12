@@ -67,6 +67,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 - **危险区域记忆（World Model）**：hostile 出没坐标自动记录（探索站 + 被攻击被动点），`query_map {"danger":true}` 查询附近危险区（fresh/stale 标记）；LLM 对话自动注入"危险:"行（1 小时新鲜窗口内）——Bot 知道哪里安全
 - **语义聚合（v1.4.0）**：资源×危险区关联——`query_map {"blockName":"iron_ore"}` 每条返回附最近危险区距离（nearestDanger），`{"assess":"home"}` 位置安全评估（半径 64 内危险区 + safe 标记），`minSafeDist` 过滤危险区附近的资源点；四分支严格互斥
 - **多角色 Agent（v1.4.0）**：单 bot 多角色——恒有 primary（对话）+ planner（规划）两角色，`l2.roles` 配置自定义角色（独立人设/工具白名单/会话/冷却）；`!agent role list` / `!agent role <name> <action>` / `!agent <role> <action>` 便捷路由；各角色会话隔离，v1.3.0 旧会话自动迁移
+- **自主学习循环（v1.5.0）**：任务自然完成后 LLM 把成功实践提炼为结构化 skill（步骤+注意点）存库——后续对话按活跃任务类型自动注入"技能:"行（LLM 参考过往成功做法）；与失败教训经验库互补成完整学习闭环；`l2.skillEnabled` / `skillLearnCooldownMs` / `skillInjection` 可配
 
 ## 快速开始（开发机）
 
