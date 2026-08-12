@@ -44,7 +44,7 @@ export function installTimeQuery (ctx, bot, log) {
   // 不认识新键，渲染时数值丢失（"Clock minecraft:overworld is at  tick(s)"）。
   // 故直接在 _client 层解析原始 JSON（在 prismarine-chat 处理之前/之后均无妨——
   // 各自独立监听）。
-  bot._client?.on?.('systemChat', (data) => {
+  bot._client?.on?.('systemChat', (/** @type {Record<string, any>} */ data) => {
     try {
       const raw = data?.formattedMessage ?? data?.content
       if (typeof raw !== 'string') return
@@ -70,9 +70,9 @@ export function installTimeQuery (ctx, bot, log) {
     }
   }
 
-  // 文本正则兜底（旧格式/其他 locale 渲染完整时）——解析逻辑与 JSON 通道共用
-  bot.on('messagestr', (msg, _position, _originalMsg, sender) => {
-    if (sender !== null && sender !== undefined) return // 玩家聊天不处理
+  // 文本正则兜底（旧格式/其他 locale 渲染完整时）——解析逻辑与 JSON 通道共用。
+  // messagestr 事件只含系统消息（玩家聊天走 chat 事件）——无需 sender 过滤
+  bot.on('messagestr', (msg) => {
     const text = String(msg ?? '')
     // 诊断：记录全部系统消息（权限拒绝/格式不匹配定位）——debug 级避免每 30s 刷屏
     log().debug({ text: text.slice(0, 160) }, 'time: 系统消息')
