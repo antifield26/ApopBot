@@ -579,7 +579,7 @@ export class AgentInterface {
           (this.cfg.skillInjection === false ? '' : skillLine(this.skills, activeTaskTypes(this.ctx.tasks))) +
           // 长期目标注入（v2）：当前目标+计划（≤120 字符；无目标跳过）
           (session?.goal?.text ? `\n当前目标: ${session.goal.text.slice(0, 80)}${session.goal.plan?.length ? `（计划: ${session.goal.plan.join('→').slice(0, 40)}）` : ''}${session.goal.setBy ? `，由 ${session.goal.setBy} 设置` : ''}` : '') +
-          (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot)}`) +
+          (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot, 3, this.log)}`) +
           // 退化状态注入（低血/饥饿/背包满/工具将坏——正常时空串零成本）
           (this.cfg.stateInjection === false ? '' : `\n${degenerateLine(this.ctx.bot)}`) +
           // 附近危险注入（无新鲜危险记录时零成本空串——世界记忆被动感知）
@@ -912,7 +912,7 @@ export class AgentInterface {
         .map(t => `${t.id}:${t.state}${t.waitingReason ? `(${t.waitingReason})` : ''}`)
         .join(' ') || '无任务'
       const goalLine = `当前目标: ${goal.text.slice(0, 80)}${goal.plan?.length ? `（计划: ${goal.plan.join('→').slice(0, 40)}）` : ''}`
-      const envLine = this.cfg.envInjection === false ? '' : environmentLine(this.ctx.bot)
+      const envLine = this.cfg.envInjection === false ? '' : environmentLine(this.ctx.bot, 3, this.log)
       const dangerLine_ = this.cfg.dangerInjection === false ? '' : `\n${dangerLine(this.ctx.bot)}`
       // 人设基底用角色 systemPrompt（planner 角色缺省即 PLANNER_SYSTEM_PROMPT）
       const system = `${this.systemPrompt}\n\n${goalLine}\n任务状态: ${statusLine}${envLine}${dangerLine_}`

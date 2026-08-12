@@ -96,13 +96,21 @@ export function environmentSnapshot (bot) {
  * 环境摘要行（自动注入用；≤150 字符，压缩格式）。
  * 坐标 第N天 hh:mm 昼/夜 晴/雨 维度 朝向 玩家Top3（带坐标——LLM 需知道玩家位置
  * 才能执行 follow/goto 类指令；相对坐标=玩家与 Bot 的偏移，绝对值=世界坐标）
+ * @param {Record<string, any>} bot
+ * @param {number} [playerLimit]
+ * @param {{ info?: (msg: object, txt?: string) => void }|null} [logger] 可选——time 原始数据日志
+ *        （时间刻排查：mineflayer 26.1 time 包经 patch 多路 fallback 解析，
+ *         timeOfDay 来源错误时输出与实际游戏钟偏差不定）
  */
-export function environmentLine (bot, playerLimit = 3) {
+export function environmentLine (bot, playerLimit = 3, logger = null) {
   const parts = []
   const p = bot?.entity?.position
   if (p) parts.push(`坐标${fmtPos(p)}`)
   const t = bot?.time
-  if (t?.age !== undefined) parts.push(`第${Math.floor(t.age / 24000) + 1}天${formatTime(t.timeOfDay)}${t.isDay ? '昼' : '夜'}`)
+  if (t?.age !== undefined) {
+    logger?.info?.({ timeOfDay: t.timeOfDay, isDay: t.isDay, age: t.age, out: formatTime(t.timeOfDay) }, 'env-time')
+    parts.push(`第${Math.floor(t.age / 24000) + 1}天${formatTime(t.timeOfDay)}${t.isDay ? '昼' : '夜'}`)
+  }
   if (bot?.isRaining !== undefined) parts.push(bot.isRaining ? '雨' : '晴')
   const dim = bot?.game?.dimension
   if (dim) parts.push(dim.replace(/^minecraft:/, ''))
