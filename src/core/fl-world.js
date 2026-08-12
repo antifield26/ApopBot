@@ -41,7 +41,9 @@ export function installWorldSensing (ctx, bot) {
     // 最近伤害来源（fl-death 死亡播报读取——真实死因而非 LLM 编造；
     // 60s 新鲜窗口，超时视为无明确攻击者=环境伤害）
     ctx.lastDamageSource = { who, ts: Date.now() }
-    ctx.agent?.notifyEvent?.('attacked', `被 ${who} 攻击`)
+    // LLM 被动感知：伤害来源 + 剩余血量（下次对话注入；实时战斗响应走 fl-guard）
+    const hp = typeof bot.health === 'number' ? Math.round(bot.health) : '?'
+    ctx.agent?.notifyEvent?.('attacked', `被 ${who} 攻击（血量 ${hp}）`)
     // 危险区域被动记录：怪物攻击（source 非自己/非玩家——排除环境自伤与 PvP）
     // → 目击位置落记忆（explore 之外的威胁：combat 中/基地夜袭）
     if (source && source !== bot.entity && !source.username && bot.entity?.position) {

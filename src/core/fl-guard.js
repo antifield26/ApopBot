@@ -1,0 +1,74 @@
+// @ts-check
+// 受击响应（guard）：被怪物攻击 → 暂停任务 → combat 清理 → 范围清空后恢复。
+// 实时战斗响应必须脚本化——LLM 工具循环太慢（被打时等 LLM 决策不可行）；
+// LLM 感知由 fl-world 的 notifyEvent（被攻击/血量）承担（下次对话注入）。
+//
+// 触发链：entityHurt（hostile 源）→ 门（开关/已在清理/冷却）→ pauseAll →
+//   addTask combat（guard-response：aggroRange=radius + stopWhenNoTargets）→
+//   await startTask 的 run promise（combat 自然完成 = 范围内无目标）→
+//   移除 guard 任务 → resumeTask 暂停的任务。
+// 死亡交互：combat 中死亡 → fl-death pauseAll 暂停 combat+原任务 → 重生 resume →
+//   combat 继续到完成 → 本控制器恢复逻辑幂等（resumeTask 非 paused 是 no-op）。
+// 时长上限：combat 永不完成（怪物无限刷）→ 10 分钟强制恢复（防刷怪塔卡死）。
+// 冷却节流：combat 完成后 cooldownMs 内的再次受击不重复触发（防怪群连续攻击刷任务）。
+
+/**
+ * 挂载受击响应。
+ * @param {Record<string, any>} ctx 可变上下文（cfg.guard/tasks 实时读取）
+ * @param {import('mineflayer').Bot} bot
+ * @param {() => Record<string, any>} log 惰性取当前 logger
+ */
+export function installGuardResponse (ctx, bot, log) {
+  let guardActive = false
+  let lastTriggerAt = 0
+  const cfg = () => ctx.cfg?.guard ?? {}
+  bot.on('entityHurt', (entity, source) => {
+    if (entity !== bot.entity) return
+    if (!source || source === bot.entity || source.username) return // 只响应怪物攻击（玩家/环境自伤除外）
+    void trigger()
+  })
+  /** 受击响应主流程（串行 await——combat 完成才恢复，防并发触发）。 */
+  async function trigger () {
+    const g = cfg()
+    if (g.enabled === false) return
+    if (guardActive) return // 已在清理中（combat 运行）
+    const now = Date.now()
+    const cooldown = g.cooldownMs ?? 30000
+    if (now - lastTriggerAt < cooldown) return // 冷却节流
+    lastTriggerAt = now
+    const radius = g.radius ?? 32
+    const id = 'guard-response'
+    let paused = []
+    try {
+      paused = (await ctx.tasks?.pauseAll?.()) ?? []
+    } catch (err) {
+      log().warn({ err: err.message }, 'guard: pause failed')
+    }
+    guardActive = true
+    log().info({ paused, radius }, 'guard: 受击响应——暂停任务清理怪物')
+    try {
+      ctx.tasks?.addTask({ id, type: 'combat', options: { aggroRange: radius, attackRange: 3.5, stopWhenNoTargets: true, maxTargets: 0 }, notifyChat: false })
+      const runPromise = ctx.tasks?.startTask?.(id)
+      if (runPromise) {
+        // combat 自然完成（范围清空）→ resolve；10 分钟上限防无限刷
+        //（timer unref——测试/退出不被挂起的超时阻塞）
+        await Promise.race([runPromise, new Promise((resolve) => {
+          const t = setTimeout(resolve, 600000)
+          t.unref()
+        })])
+      }
+    } catch (err) {
+      // addTask id 冲突（上次异常中断残留 guard-response）等——本次跳过，
+      // finally 清理残留后下次受击正常
+      log().warn({ err: err.message }, 'guard: combat failed')
+    } finally {
+      guardActive = false
+      // 完成后清理 guard 任务（残留/完成统一清——异常中断路径幂等）
+      try { await ctx.tasks?.removeTask?.(id) } catch { /* 任务可能已移除 */ }
+      for (const pid of paused) {
+        ctx.tasks?.resumeTask(pid).catch(() => { /* 任务可能已结束 */ })
+      }
+      log().info('guard: 清理完成，任务已恢复')
+    }
+  }
+}

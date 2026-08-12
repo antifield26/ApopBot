@@ -293,6 +293,24 @@ test('v1.4.0: l2.roles 校验（非数组/重复/缺 primary/字段集/合法放
   assert.equal(withRoles.ok, true, withRoles.errors.join('; '))
 })
 
+test('v1.5.1: guard 受击响应三键——默认值/校验', () => {
+  const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
+  assert.equal(cfg.guard.enabled, true, '受击响应默认开')
+  assert.equal(cfg.guard.radius, 32, '清理范围默认 32 格')
+  assert.equal(cfg.guard.cooldownMs, 30000, '响应冷却默认 30s')
+  const base = { ...cfg }
+  for (const [patch, kw] of [
+    [{ guard: { enabled: 'yes' } }, 'guard.enabled'],
+    [{ guard: { radius: 0 } }, 'guard.radius'],
+    [{ guard: { radius: 100 } }, 'guard.radius'],
+    [{ guard: { cooldownMs: 500 } }, 'guard.cooldownMs']
+  ]) {
+    const { ok, errors } = validateConfig({ ...base, ...patch })
+    assert.equal(ok, false, JSON.stringify(patch))
+    assert.ok(errors.some(e => e.includes(kw)), `${kw} 未报错`)
+  }
+})
+
 test('v1.5.0: 技能学习三键——默认值/校验/ENV 数值化', () => {
   const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
   assert.equal(cfg.l2.skillEnabled, true, '技能学习默认开')

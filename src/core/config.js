@@ -100,7 +100,9 @@ const BUILTIN_DEFAULTS = {
   scheduleTimezone: 'Asia/Shanghai',
   // 仓库（storage）：背包满自动存入/卸货的固定箱子坐标（collect_blocks 的
   // autoDeposit 优先使用；store_items/fetch_items 原语默认目标）
-  storage: { chests: [] }
+  storage: { chests: [] },
+  // 受击响应（guard）：被怪物攻击 → 暂停任务 → combat 清理 → 范围清空后恢复
+  guard: { enabled: true, radius: 32, cooldownMs: 30000 }
 }
 
 // 环境变量映射：MCBOT_<KEY>，下划线命名 → 嵌套路径
@@ -461,6 +463,14 @@ export function validateConfig (cfg) {
       }
     }
   }
+  // 受击响应（guard）：enabled 布尔 / radius 1-64 / cooldownMs ≥1000
+  if (cfg.guard && typeof cfg.guard.enabled !== 'boolean') errors.push('guard.enabled 必须是布尔值')
+  if (cfg.guard && (!Number.isInteger(cfg.guard.radius) || cfg.guard.radius < 1 || cfg.guard.radius > 64)) {
+    errors.push('guard.radius 必须是 1-64 的整数（格）')
+  }
+  if (cfg.guard && (!Number.isInteger(cfg.guard.cooldownMs) || cfg.guard.cooldownMs < 1000)) {
+    errors.push('guard.cooldownMs 必须是 ≥1000 的整数（毫秒）')
+  }
   if (!Array.isArray(cfg.tasks)) errors.push('tasks 必须是数组')
 
   // 任务条目校验：id 非空且唯一、类型已知、scheduled 完成语义、options 形状
@@ -531,6 +541,7 @@ export function validateConfig (cfg) {
     'reconnect', 'ops', 'log', 'tasks', 'mineflayerPlugins', 'l2', 'chat', 'http', 'scheduleTimezone',
     'notify', // webhook 运维通知
     'storage', // 仓库坐标（autoDeposit/store_items 默认目标）
+    'guard', // 受击响应（怪物攻击时暂停任务优先清理）
     '_comment' // JSON 注释惯例（config.example.json 顶层使用；复制为 config.json 必须放行）
   ])
   for (const k of Object.keys(cfg)) {
