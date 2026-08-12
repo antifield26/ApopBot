@@ -26,6 +26,9 @@ export function installDeathHandling (ctx, bot, log, notifier) {
       return []
     })
     ctx.plugins?.follow?.stop?.()
+    // 中止进行中的 LLM 工具循环（!agent chat 的 maxSteps 循环可能跨死亡持续——
+    // 死亡状态下 LLM 继续执行 start/stop_task 等操作会破坏任务生命周期）
+    try { ctx.agent?.stop?.() } catch { /* 中止失败静默 */ }
     const pos = bot.entity?.position
     const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
     // 真实死因：fl-world entityHurt 记录的最近伤害来源（60s 新鲜窗口）——
@@ -62,7 +65,13 @@ export function installDeathHandling (ctx, bot, log, notifier) {
     }
     const pos = bot.entity?.position
     const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
-    sendChat(bot, `§a[bot] 已重生（${loc}），任务已恢复`).catch(() => { /* 聊天通道未就绪 */ })
-    notifier().send('respawn', `Bot 已重生（${loc}）`, '任务已恢复')
+    // 如实播报：ids 空（死亡时无运行任务）不发"任务已恢复"——误导排查
+    if (ids.length) {
+      sendChat(bot, `§a[bot] 已重生（${loc}），任务已恢复`).catch(() => { /* 聊天通道未就绪 */ })
+      notifier().send('respawn', `Bot 已重生（${loc}）`, `任务已恢复: ${ids.join(', ')}`)
+    } else {
+      sendChat(bot, `§a[bot] 已重生（${loc}）`).catch(() => { /* 聊天通道未就绪 */ })
+      notifier().send('respawn', `Bot 已重生（${loc}）`, '无暂停任务')
+    }
   })
 }
