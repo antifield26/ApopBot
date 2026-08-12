@@ -108,7 +108,8 @@ export function environmentLine (bot, playerLimit = 3, logger = null) {
   if (p) parts.push(`坐标${fmtPos(p)}`)
   const t = bot?.time
   if (t?.age !== undefined) {
-    logger?.info?.({ timeOfDay: t.timeOfDay, isDay: t.isDay, age: t.age, out: formatTime(t.timeOfDay) }, 'env-time')
+    // clocks/packetDebug=26.1 time 包诊断（协议 775 无 dayTime 字段——时间排查）
+    logger?.info?.({ timeOfDay: t.timeOfDay, isDay: t.isDay, age: t.age, clocks: t.clocks ?? null, packet: t.packetDebug ?? null, out: formatTime(t.timeOfDay) }, 'env-time')
     parts.push(`第${Math.floor(t.age / 24000) + 1}天${formatTime(t.timeOfDay)}${t.isDay ? '昼' : '夜'}`)
   }
   if (bot?.isRaining !== undefined) parts.push(bot.isRaining ? '雨' : '晴')
