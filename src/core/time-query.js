@@ -30,7 +30,7 @@ export function installTimeQuery (ctx, bot, log) {
   const query = () => {
     try {
       bot.chat('/minecraft:time query time')
-      log().info({ cmd: '/minecraft:time query time' }, 'time-query: 发起查询')
+      log().debug({ cmd: '/minecraft:time query time' }, 'time-query: 发起查询')
     } catch (err) {
       // 聊天通道未就绪/发送失败——记录以便排查（此路径曾吞错导致静默无回复）
       log().warn({ err: err?.message ?? String(err) }, 'time-query: 查询发送失败')
