@@ -44,7 +44,7 @@ export function installTimeQuery (ctx, bot, log) {
   // 不认识新键，渲染时数值丢失（"Clock minecraft:overworld is at  tick(s)"）。
   // 故直接在 _client 层解析原始 JSON（在 prismarine-chat 处理之前/之后均无妨——
   // 各自独立监听）。
-  bot._client.on('systemChat', (data) => {
+  bot._client?.on?.('systemChat', (data) => {
     try {
       const raw = data?.formattedMessage ?? data?.content
       if (typeof raw !== 'string') return

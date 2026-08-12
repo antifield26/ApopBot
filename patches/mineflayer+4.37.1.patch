@@ -323,10 +323,14 @@ diff --git a/node_modules/mineflayer/lib/plugins/chat.js b/node_modules/mineflay
 index 8f9e3c2..a1b2c3d 100644
 --- a/node_modules/mineflayer/lib/plugins/chat.js
 +++ b/node_modules/mineflayer/lib/plugins/chat.js
-@@ -133,7 +133,10 @@
+@@ -132,7 +132,9 @@ function inject (bot, options) {
+   })
+
    bot._client.on('systemChat', (data) => {
 -    const msg = ChatMessage.fromNotch(data.formattedMessage)
 +    // 26.1 协议：systemChat 包 content 是 anonymousNbt（旧版 formattedMessage 已移除）——
 +    // fromNotch 支持 chatPacketsUseNbtComponents（content 对象有 type 字段走 NBT 分支）
 +    const msg = ChatMessage.fromNotch(data.formattedMessage ?? data.content)
      const chatPositions = {
+       1: 'system',
+       2: 'game_info'
