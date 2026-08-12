@@ -1,0 +1,39 @@
+diff --git a/node_modules/prismarine-world/src/world.js b/node_modules/prismarine-world/src/world.js
+index 4f8a2e4..6e41268 100644
+--- a/node_modules/prismarine-world/src/world.js
++++ b/node_modules/prismarine-world/src/world.js
+@@ -57,18 +57,26 @@ class World extends EventEmitter {
+     return Promise.all(ps)
+   }
+ 
+-  async raycast (from, direction, range, matcher = null) {
++  raycast (from, direction, range, matcher = null) {
++    // 同步版（26.1 回归修复）：async getBlock 让同步调用者（pathfinder
++    // GoalLookAtBlock.isEnd / mineflayer blockAtCursor）拿到 Promise 恒 false——
++    // A* 永不收敛超时（collect_blocks 近距离寻路 "Took to long to decide path"）。
++    // 内存列路径直接读已加载 chunk（bot.world 无 storageProvider——纯内存）。
+     const iter = new RaycastIterator(from, direction, range)
+     let pos = from
+     while (pos) {
+       const position = new Vec3(pos.x, pos.y, pos.z)
+-      const block = await this.getBlock(position)
+-      if (block && (!matcher || matcher(block))) {
+-        const intersect = iter.intersect(block.shapes, position)
+-        if (intersect) {
+-          block.face = intersect.face
+-          block.intersect = intersect.pos
+-          return block
++      const column = this.getLoadedColumnAt(position)
++      const block = column ? column.getBlock(posInChunk(position)) : null
++      if (block) {
++        block.position = position.floored()
++        if (!matcher || matcher(block)) {
++          const intersect = iter.intersect(block.shapes, position)
++          if (intersect) {
++            block.face = intersect.face
++            block.intersect = intersect.pos
++            return block
++          }
+         }
+       }
+       pos = iter.next()
