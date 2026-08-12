@@ -28,12 +28,19 @@ export function installDeathHandling (ctx, bot, log, notifier) {
     ctx.plugins?.follow?.stop?.()
     const pos = bot.entity?.position
     const loc = pos ? `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}` : '未知位置'
-    sendChat(bot, `§c[bot] 已死亡（${loc}）——任务已暂停，自动重生中`).catch(() => { /* 聊天通道未就绪 */ })
+    // 真实死因：fl-world entityHurt 记录的最近伤害来源（60s 新鲜窗口）——
+    // 死亡播报用事实而非让 LLM 编造；无来源 = 环境伤害（摔/烧/溺水/苦力怕爆炸无实体源）
+    const src = ctx.lastDamageSource
+    const srcText = src && Date.now() - src.ts < 60000
+      ? `，被 ${src.who} 击杀`
+      : '（无明确攻击者，可能是环境伤害）'
+    sendChat(bot, `§c[bot] 已死亡（${loc}）${srcText}——任务已暂停，自动重生中`).catch(() => { /* 聊天通道未就绪 */ })
     // 死亡推送（webhook 独立于游戏聊天——无人值守时玩家可能不在线）
-    notifier().send('death', `Bot 死亡（${loc}）`, '任务已暂停，自动重生中')
-    // LLM 一句话播报（附加层——任何失败回退模板，不得阻塞重生）
+    notifier().send('death', `Bot 死亡（${loc}）`, `任务已暂停，自动重生中${srcText}`)
+    // LLM 一句话播报（附加层——任何失败回退模板，不得阻塞重生）。
+    // prompt 带真实伤害来源——LLM 基于事实总结，不再凭空猜测死因
     if (ctx.agent?.summarize) {
-      ctx.agent.summarize(`Bot 在 Minecraft 服务器死亡（坐标 ${loc}）。用一句话向服务器玩家播报（如可能的死因），简洁。`)
+      ctx.agent.summarize(`Bot 在 Minecraft 服务器死亡（坐标 ${loc}${srcText}）。用一句话向服务器玩家播报死因，简洁。`)
         .then((s) => {
           if (s) {
             sendChat(bot, `§c[bot] ${s}`).catch(() => {})
