@@ -203,7 +203,11 @@ export class ConnectionManager {
         if (exited) return
         exited = true
         process.exit(2)
-        setTimeout(() => process.kill(process.pid), 1000)
+        // 硬杀兜底：Windows 下 exit(2) 偶发不生效（事件循环被 flush 阻塞时
+        // 300ms 兜底 timer 不触发）——残留进程保持服务器连接，后续重启
+        // duplicate_login 连环撞车。unref：测试进程不被此 timer 拖住
+        const t = setTimeout(() => process.kill(process.pid), 1000)
+        t.unref()
       }
       try { this.log.flush(exitNow) } catch { /* logger stub 可能无 flush */ }
       setTimeout(exitNow, 300)

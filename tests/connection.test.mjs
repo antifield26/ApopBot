@@ -1,7 +1,13 @@
-import { test } from 'node:test'
+import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { ConnectionManager } from '../src/core/connection.js'
+
+// fatal 路径的硬杀兜底（process.kill 1000ms 延迟）在测试进程存活期间可能触发——
+// 文件级接管 kill 覆盖整个测试运行期（局部 mock 在 restore 后 timer 仍会触发真杀）
+const origKill = process.kill
+process.kill = () => {}
+after(() => { process.kill = origKill })
 
 /**
  * 轮询等待条件成立（替换固定 setTimeout——CI 慢机器/Node 版本差异下固定等待
@@ -170,7 +176,7 @@ test('spawn 超时 → 主动 quit → end 走重连路径（非 fatal）', asyn
 })
 
 test('断线分类：致命原因 → 不调度重连并 exit(2)', async () => {
-  // fatal 路径会 process.exit(2)：测试中接管 exit 防止杀掉测试进程
+  // fatal 路径会 process.exit(2) + process.kill 硬杀兜底：测试中接管防止杀掉测试进程
   const exitCodes = []
   const origExit = process.exit
   process.exit = (code) => { exitCodes.push(code) }
