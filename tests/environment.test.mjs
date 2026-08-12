@@ -22,17 +22,18 @@ test('directionFromYaw: 原版 yaw 约定（0=南，顺时针）', () => {
   assert.equal(directionFromYaw(NaN), '?')
 })
 
-test('environmentLine: 环境行含正确时间与昼夜（dayTime 来自 /time query 缓存）', () => {
+test('environmentLine: 环境行含正确昼夜（dayTime 来自 /time query 取模——精确时钟不准只显示昼/夜）', () => {
   const bot = {
     entity: { position: { x: 1, y: 64, z: 2 }, yaw: 0 },
-    time: { age: 24000, dayTime: 6000 }, // 12:00 昼
+    time: { age: 24000, dayTime: 6000 }, // 6000 昼
     isRaining: false,
     game: { dimension: 'minecraft:overworld' },
     blockAt: () => null,
     players: {}
   }
   const line = environmentLine(bot)
-  assert.ok(line.includes('第2天12:00昼'), line)
+  assert.ok(line.includes('第2天昼'), line)
+  assert.ok(!line.includes('12:00'), '不输出 hh:mm（/time set 偏移下不准确——用户决策不需要 Bot 返回时间）')
   assert.ok(line.includes('晴'), line)
   assert.ok(line.includes('overworld'), line)
 })

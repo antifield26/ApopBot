@@ -75,10 +75,11 @@ export function environmentSnapshot (bot) {
   const p = bot?.entity?.position
   if (p) {
     const t = bot?.time
-    // 同 environmentLine：dayTime 来自 /time query 缓存（26.1 无 dayTime 字段）
+    // 同 environmentLine：dayTime 来自 /time query 取模（26.1 无 dayTime 字段）；
+    // 取模对昼夜可靠、精确时钟不准（/time set 偏移）——只输出昼/夜
     const dayTime = t?.dayTime
     const when = t?.age !== undefined && Number.isInteger(dayTime) && dayTime >= 0 && dayTime < 24000
-      ? `第${Math.floor(t.age / 24000) + 1}天 ${formatTime(dayTime)} ${dayTime < 13000 ? '昼' : '夜'}`
+      ? `第${Math.floor(t.age / 24000) + 1}天${dayTime < 13000 ? '昼' : '夜'}`
       : '时间未知'
     parts.push(`位置[${fmtPos(p)} ${when}]`)
   }
@@ -110,13 +111,14 @@ export function environmentLine (bot, playerLimit = 3, logger = null) {
   if (p) parts.push(`坐标${fmtPos(p)}`)
   const t = bot?.time
   if (t?.age !== undefined) {
-    // 时间来源：/time query 缓存（bot.time.dayTime——26.1 协议无 dayTime 字段，
-    // age 与游戏钟差睡觉偏移不可推算，用户决策移除 age 近似改用命令查询）；
-    // 无缓存（查询失败/未就绪）= 时间未知，不伪造
+    // 时间来源：/minecraft:time query time（26.1 协议无 dayTime 字段，命令返回维度
+    // 时钟总刻）——取模 24000 得 dayTime。用户实测：取模对昼夜判断可靠，但
+    // /time set 的偏移使精确时钟不准——实际游玩不需要 Bot 返回时间，故只输出
+    // 第N天 + 昼/夜（不输出 hh:mm——不准的时间会误导 LLM）。
     const dayTime = t.dayTime
     if (dayTime !== undefined && Number.isInteger(dayTime) && dayTime >= 0 && dayTime < 24000) {
-      logger?.info?.({ dayTime, age: t.age, out: formatTime(dayTime) }, 'env-time')
-      parts.push(`第${Math.floor(t.age / 24000) + 1}天${formatTime(dayTime)}${dayTime < 13000 ? '昼' : '夜'}`)
+      logger?.info?.({ dayTime, age: t.age }, 'env-time')
+      parts.push(`第${Math.floor(t.age / 24000) + 1}天${dayTime < 13000 ? '昼' : '夜'}`)
     } else {
       logger?.info?.({ dayTime: t.dayTime ?? null, age: t.age }, 'env-time-pending')
       parts.push(`第${Math.floor(t.age / 24000) + 1}天?时间未知`)
