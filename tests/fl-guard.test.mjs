@@ -48,6 +48,7 @@ test('guard: 怪物攻击 → 暂停任务 + combat 清理 + 完成后恢复', a
   assert.equal(tasks.calls.addTask[0].type, 'combat')
   assert.deepEqual(tasks.calls.addTask[0].options, { aggroRange: 32, attackRange: 3.5, stopWhenNoTargets: true, maxTargets: 0 })
   assert.equal(tasks.calls.addTask[0].notifyChat, false, 'guard 任务静默创建')
+  assert.equal(tasks.calls.addTask[0].enabled, false, '禁用自动启动（防与显式 startTask 竞态——combat 未执行就被移除）')
   assert.deepEqual(tasks.calls.startTask, ['guard-response'])
   // combat 完成（范围清空）→ 移除 guard 任务 + 恢复暂停的任务
   tasks.combatDone()

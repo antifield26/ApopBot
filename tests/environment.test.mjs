@@ -37,6 +37,23 @@ test('environmentLine: 环境行含正确时间与昼夜', () => {
   assert.ok(line.includes('overworld'), line)
 })
 
+test('v1.5.1: environmentLine 玩家行带坐标（LLM 执行 follow/goto 类指令所需）', () => {
+  const bot = {
+    entity: { position: { x: 10, y: 64, z: 10 }, yaw: 0 },
+    time: { age: 0, timeOfDay: 0, isDay: true },
+    isRaining: false,
+    game: { dimension: 'minecraft:overworld' },
+    blockAt: () => null,
+    players: {
+      steve: { username: 'steve', entity: { position: { x: 20, y: 64, z: 30 } } },
+      alex: { username: 'alex', entity: null } // 无实体（远处/未加载）跳过坐标
+    }
+  }
+  const line = environmentLine(bot, 5)
+  assert.ok(line.includes('steve(20,64,30)'), line)
+  assert.ok(!line.includes('alex('), '无实体的玩家不带坐标')
+})
+
 // ---- dangerLine 危险注入（World Model 被动感知）----
 
 import * as discovery from '../src/core/discovery.js'

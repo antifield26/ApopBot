@@ -94,7 +94,8 @@ export function environmentSnapshot (bot) {
 
 /**
  * 环境摘要行（自动注入用；≤150 字符，压缩格式）。
- * 坐标 第N天 hh:mm 昼/夜 晴/雨 维度 朝向 玩家Top3
+ * 坐标 第N天 hh:mm 昼/夜 晴/雨 维度 朝向 玩家Top3（带坐标——LLM 需知道玩家位置
+ * 才能执行 follow/goto 类指令；相对坐标=玩家与 Bot 的偏移，绝对值=世界坐标）
  */
 export function environmentLine (bot, playerLimit = 3) {
   const parts = []
@@ -107,7 +108,12 @@ export function environmentLine (bot, playerLimit = 3) {
   if (dim) parts.push(dim.replace(/^minecraft:/, ''))
   parts.push(`朝${directionFromYaw(bot?.entity?.yaw)}`)
   const players = nearbyPlayers(bot, playerLimit)
-  if (players.length) parts.push(`玩家:${players.map(x => x.name).join(',')}`)
+  if (players.length) {
+    parts.push(`玩家:${players.map(x => {
+      const pp = x.entity?.position
+      return pp ? `${x.name}(${fmtPos(pp)})` : x.name
+    }).join(',')}`)
+  }
   return parts.length ? `环境: ${parts.join(' ')}` : ''
 }
 
