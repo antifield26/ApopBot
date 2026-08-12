@@ -99,6 +99,21 @@ test('chat: maxSteps 上限（工具调用无限循环时终止）', async () =>
   assert.ok(typeof reply === 'string')
 })
 
+test('chat: 任务状态注入——运行中任务在 system 可见（LLM 认知与核心层同步）', async () => {
+  const ctx = makeCtx() // tasks.getStatus 返回 [{ id: 'm1', state: 'running' }]
+  const { agent, provider } = makeAgent(ctx, [{ text: 'ok' }])
+  await agent.chat('steve', '看看任务')
+  assert.ok(provider.calls[0].system.includes('任务:'), 'system 应含任务状态行')
+  assert.ok(provider.calls[0].system.includes('m1'), '任务 id 应可见')
+})
+
+test('chat: 无活跃任务 → 不注入任务状态行（零成本）', async () => {
+  const ctx = makeCtx({ tasks: { getStatus: () => [], addTask: () => {}, removeTask: async () => {} } })
+  const { agent, provider } = makeAgent(ctx, [{ text: 'ok' }])
+  await agent.chat('steve', '看看')
+  assert.ok(!provider.calls[0].system.includes('任务:'), '无活跃任务不注入')
+})
+
 test('chat: cooldown 阻止连续请求', async () => {
   const ctx = makeCtx()
   const { agent } = makeAgent(ctx, [{ text: 'a' }, { text: 'b' }])

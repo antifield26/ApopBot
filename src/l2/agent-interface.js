@@ -174,6 +174,22 @@ function activeTaskTypes (tasks) {
 }
 
 /**
+ * 当前任务状态行（每工具轮注入——LLM 对任务状态的认知与核心层同步）。
+ * 起因：手动 follow off / stop_task 后 LLM 仍以为在跟随/任务运行中——
+ * 环境注入缺任务状态，LLM 只凭自己上次的工具调用结果推断。无活跃任务返回空串。
+ */
+function taskStatusLine (tasks) {
+  try {
+    const list = tasks?.getStatus?.() ?? []
+    const active = list.filter(t => ['init', 'running', 'paused'].includes(t.state))
+    if (!active.length) return ''
+    const parts = active.map(t => `${t.type}(${t.id})${t.state === 'paused' ? '已暂停' : '运行中'}`)
+    return `\n任务: ${parts.join(' ')}`
+  } catch { /* 任务状态数据异常——跳过状态行 */ }
+  return ''
+}
+
+/**
  * 技能注入（检索式）：活跃任务类型精确匹配 ≤2 条；无匹配回退最近 1 条
  *（与 experienceInjection 的 recent 兜底同构——"最近成功实践"新鲜度语义）。
  * skill 无 op 字段——op 检索属于经验教训段（同一轮 system 注入），两者互补。
@@ -580,6 +596,9 @@ export class AgentInterface {
           // 长期目标注入（v2）：当前目标+计划（≤120 字符；无目标跳过）
           (session?.goal?.text ? `\n当前目标: ${session.goal.text.slice(0, 80)}${session.goal.plan?.length ? `（计划: ${session.goal.plan.join('→').slice(0, 40)}）` : ''}${session.goal.setBy ? `，由 ${session.goal.setBy} 设置` : ''}` : '') +
           (this.cfg.envInjection === false ? '' : `\n${environmentLine(this.ctx.bot, 3, this.log)}`) +
+          // 任务状态注入（当前任务列表——LLM 认知与核心层同步：
+          // follow 被手动 off / stop_task 后 LLM 不再误以为在跟随/运行）
+          taskStatusLine(this.ctx.tasks) +
           // 退化状态注入（低血/饥饿/背包满/工具将坏——正常时空串零成本）
           (this.cfg.stateInjection === false ? '' : `\n${degenerateLine(this.ctx.bot)}`) +
           // 附近危险注入（无新鲜危险记录时零成本空串——世界记忆被动感知）

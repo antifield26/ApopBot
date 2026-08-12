@@ -50,9 +50,10 @@ const BUILTIN_DEFAULTS = {
     model: 'deepseek-v4-flash',
     cloudBaseUrl: 'https://api.deepseek.com/anthropic',
     cloudApiKeyEnv: 'ANTHROPIC_API_KEY',
-    // 默认 8——动作技能就位后真实链条（observe→act×3→reply）
-    // 打满上限前留有工具步给观察/反思；act 单步含 ≤8 动作数组
-    maxSteps: 8,
+    // 默认 15——实测 8 步在多动作任务（启动+观察+执行+确认）中极易耗尽，
+    // LLM 未及启动任务/回复即中断（"已达最大工具步数，任务中断"）；
+    // act 单步含 ≤8 动作数组，15 步 ≈ 120 动作预算（成本与收敛性平衡）
+    maxSteps: 15,
     cooldownMs: 5000,
     // 生成超时/长度（thinking 关闭：1024 tokens 足够动作数组+回复）
     cloudTimeoutMs: 60000,
