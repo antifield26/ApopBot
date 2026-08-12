@@ -22,6 +22,7 @@ import { installDeathHandling } from './fl-death.js'
 import { installPlayerTracking } from './fl-players.js'
 import { installMemoryInvalidation, installWorldSensing } from './fl-world.js'
 import { installGuardResponse } from './fl-guard.js'
+import { installTimeQuery } from './time-query.js'
 import { bindIdleWatcher } from './idle-watcher.js'
 
 // 测试钩子 re-export（动态 import 路径不变——测试零改动）
@@ -109,6 +110,7 @@ export function createFeatureLayerManager (ctx, logger) {
     installMemoryInvalidation(ctx, bot)
     installWorldSensing(ctx, bot)
     installGuardResponse(ctx, bot, log)
+    installTimeQuery(ctx, bot, log)
 
     log().info({ bot: ctx.cfg.username }, 'feature layer ready')
 

@@ -22,10 +22,10 @@ test('directionFromYaw: 原版 yaw 约定（0=南，顺时针）', () => {
   assert.equal(directionFromYaw(NaN), '?')
 })
 
-test('environmentLine: 环境行含正确时间与昼夜', () => {
+test('environmentLine: 环境行含正确时间与昼夜（dayTime 来自 /time query 缓存）', () => {
   const bot = {
     entity: { position: { x: 1, y: 64, z: 2 }, yaw: 0 },
-    time: { age: 24000, timeOfDay: 6000, isDay: true },
+    time: { age: 24000, dayTime: 6000 }, // 12:00 昼
     isRaining: false,
     game: { dimension: 'minecraft:overworld' },
     blockAt: () => null,
@@ -35,6 +35,20 @@ test('environmentLine: 环境行含正确时间与昼夜', () => {
   assert.ok(line.includes('第2天12:00昼'), line)
   assert.ok(line.includes('晴'), line)
   assert.ok(line.includes('overworld'), line)
+})
+
+test('v1.5.1: 无 dayTime 缓存（查询未就绪）→ 时间未知（不再用 age 近似）', () => {
+  const bot = {
+    entity: { position: { x: 1, y: 64, z: 2 }, yaw: 0 },
+    time: { age: 24000 }, // 只有 age——26.1 协议无 dayTime 字段
+    isRaining: false,
+    game: { dimension: 'minecraft:overworld' },
+    blockAt: () => null,
+    players: {}
+  }
+  const line = environmentLine(bot)
+  assert.ok(line.includes('时间未知'), line)
+  assert.ok(!line.includes('12:00'), '不得用 age 近似输出时间')
 })
 
 test('v1.5.1: environmentLine 玩家行带坐标（LLM 执行 follow/goto 类指令所需）', () => {

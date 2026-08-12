@@ -33,13 +33,13 @@ test('B1 修复：每次 spawn 全量重建功能层并挂新 bot 的 chat 监�
   assert.equal(ctx.bot, bot1)
   assert.ok(ctx.tasks, 'tasks 应已初始化')
   assert.ok(ctx.commands, 'commands 应已初始化')
-  assert.equal(bot1.listenerCount('chat'), 1, 'chat 监听应挂在 bot1 上')
+  assert.equal(bot1.listenerCount('chat'), 2, 'chat 监听应挂在 bot1 上（fl-chat + time-query）')
 
   const tasks1 = ctx.tasks
   await layer.rebuild(bot2)
   assert.equal(ctx.bot, bot2, 'ctx.bot 应指向新 bot')
   assert.notEqual(ctx.tasks, tasks1, 'tasks 应为新实例（旧实例已 stopAll 拆除）')
-  assert.equal(bot2.listenerCount('chat'), 1, 'chat 监听应挂在 bot2 上')
+  assert.equal(bot2.listenerCount('chat'), 2, 'chat 监听应挂在 bot2 上（fl-chat + time-query）')
   assert.equal(ctx.tasks.getStatus().length, 0, '重建后无残留任务')
 
   await layer.teardown()
