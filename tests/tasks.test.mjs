@@ -595,6 +595,21 @@ test('P1-6 修复：reload 后排队的 exclusive 任务重新入队并保持互
 
 // ---- U1：状态快照挂钩（ad-hoc 条目 + 计数器）----
 
+test('启动通知：ad-hoc 任务（LLM/命令新建）启动播报；config 装载不播报', async () => {
+  const messages = []
+  const bot = { chat: (m) => { messages.push(m) } }
+  const manager = new TaskManager({ tasks: [], chat: { maxLength: 256 } }, makeLogger(), { bot }, { setTasks: () => {}, setCounter: () => {} })
+  // config 任务装载 → 不播报（防重启刷屏）
+  await manager.load({ tasks: [{ id: 'cfg1', type: 'combat', enabled: true, options: { stopWhenNoTargets: true } }] })
+  await new Promise(r => setTimeout(r, 30))
+  assert.ok(!messages.some(m => m.includes('已启动')), `config 任务装载不播报: ${messages}`)
+  // ad-hoc 任务（start_task/命令新建）→ 播报启动
+  manager.addTask({ id: 'adhoc1', type: 'combat', options: { stopWhenNoTargets: true } })
+  await new Promise(r => setTimeout(r, 30))
+  assert.ok(messages.some(m => m.includes('[任务 adhoc1] 已启动')), `ad-hoc 任务应播报启动: ${messages}`)
+  await manager.stopAll()
+})
+
 test('U1: addTask 标记 adHoc 并同步快照（配置任务不写快照）', async () => {
   const bot = makeCombatBot()
   const synced = []

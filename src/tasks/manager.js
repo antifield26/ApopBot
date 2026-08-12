@@ -187,6 +187,14 @@ export class TaskManager {
     }
 
     this.log.info({ task: id, type: rec.entry.type }, 'starting task')
+    // 启动通知：ad-hoc 任务（LLM start_task/命令新建）启动即播报——用户可感知
+    // 指令已生效（此前只有终态通知：LLM 建的任务启动静默，!task 却可查造成
+    // "无提示"困惑）；config 任务重启装载不播报（避免启动刷屏）
+    if (rec.entry.adHoc && rec.entry.notifyChat !== false) {
+      sendChat(this.ctx.bot, `[任务 ${rec.entry.id}] 已启动（${rec.entry.type}）`, this.cfg.chat?.maxLength)
+        .catch(err => this.log.warn({ err: err.message }, '启动通知发送失败'))
+      this._notifier.send('task', `任务 ${rec.entry.id} (${rec.entry.type}) 已启动`)
+    }
     // exclusive 任务启动时登记移动仲裁器（!follow 据此拒绝冲突跟随）
     if (rec.task.exclusive) setExclusiveOwner(rec.entry.id)
     const p = rec.task.start()
