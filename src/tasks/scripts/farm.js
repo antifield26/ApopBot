@@ -16,7 +16,9 @@ export default {
   exclusive: true, // 与 chop/combat/breed/explore 互斥（都在动 pathfinder/collectBlock）
   naturalCompletion: true,
   maxActions: 100000,
-  defaultOptions: { growthCheckSeconds: 30, maxCycles: 1 },
+  // maxCycles 默认 3：收割失败（寻路/挖掘超时）有重试空间——
+  // 默认 1 轮时失败即结束 = "任务期间无动作后假 complete"（实测）
+  defaultOptions: { growthCheckSeconds: 30, maxCycles: 3 },
   /** init 校验。 */
   async init (task) {
     const o = task.options

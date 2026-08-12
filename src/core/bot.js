@@ -28,5 +28,12 @@ export function createBot (cfg) {
  * @returns {Promise<object>} 已装载的插件实例表
  */
 export function loadMineflayerPluginsAsync (bot, cfg, logger) {
-  return loadMineflayerPlugins(bot, cfg, logger)
+  return loadMineflayerPlugins(bot, cfg, logger).then((plugins) => {
+    // pathfinder A* 计算超时：默认 5000ms——26.1 复杂/远距离场景 5 秒算不出路径
+    //（实测 collect_blocks 远距离寻路 "Took to long to decide path to goal" →
+    // 任务软失败假完成）。15s 给足搜索预算（A* 分片 tickTimeout 不变——响应性
+    // 由 tick 分片保证，仅单次搜索的墙钟预算放宽）。
+    if (bot.pathfinder) bot.pathfinder.thinkTimeout = 15000
+    return plugins
+  })
 }
