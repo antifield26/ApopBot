@@ -42,7 +42,14 @@ function fatalExit (err, label) {
   // fatal 停服推送（无人值守时唯一感知通道；ctx.notifier 随 reload 更新）
   ctx.notifier?.send('fatal', `Bot 停止等人工（${label}）`, err?.message ?? String(err))
   let exited = false
-  const exitNow = () => { if (!exited) { exited = true; process.exit(2) } }
+  // 硬杀兜底（同 connection.js fatal 路径——Windows exit(2) 偶发不生效，
+  // 残留进程保持连接导致后续重启 duplicate_login）
+  const exitNow = () => {
+    if (exited) return
+    exited = true
+    process.exit(2)
+    setTimeout(() => process.kill(process.pid), 1000)
+  }
   try { logger.flush(exitNow) } catch { exitNow() }
   setTimeout(exitNow, 1000)
 }

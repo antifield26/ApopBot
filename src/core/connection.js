@@ -196,7 +196,15 @@ export class ConnectionManager {
       this._fatalExit = true
       // 退出前 flush pino transport（异步，直接 exit 会丢最后一条 fatal 日志）；300ms 兜底防卡死
       let exited = false
-      const exitNow = () => { if (!exited) { exited = true; process.exit(2) } }
+      // 硬杀兜底：实测 Windows 下 process.exit(2) 偶发不生效（flush 阻塞事件循环
+      // 时 300ms 兜底 timer 不触发）——残留进程保持服务器连接，后续重启
+      // duplicate_login 连环撞车
+      const exitNow = () => {
+        if (exited) return
+        exited = true
+        process.exit(2)
+        setTimeout(() => process.kill(process.pid), 1000)
+      }
       try { this.log.flush(exitNow) } catch { /* logger stub 可能无 flush */ }
       setTimeout(exitNow, 300)
       return
