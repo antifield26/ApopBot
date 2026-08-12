@@ -319,3 +319,14 @@ index c4843bb..d96f9f8 100644
  module.exports = {
  
    testedVersions,
+diff --git a/node_modules/mineflayer/lib/plugins/chat.js b/node_modules/mineflayer/lib/plugins/chat.js
+index 8f9e3c2..a1b2c3d 100644
+--- a/node_modules/mineflayer/lib/plugins/chat.js
++++ b/node_modules/mineflayer/lib/plugins/chat.js
+@@ -133,7 +133,10 @@
+   bot._client.on('systemChat', (data) => {
+-    const msg = ChatMessage.fromNotch(data.formattedMessage)
++    // 26.1 协议：systemChat 包 content 是 anonymousNbt（旧版 formattedMessage 已移除）——
++    // fromNotch 支持 chatPacketsUseNbtComponents（content 对象有 type 字段走 NBT 分支）
++    const msg = ChatMessage.fromNotch(data.formattedMessage ?? data.content)
+     const chatPositions = {

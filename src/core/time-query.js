@@ -7,13 +7,17 @@
 // 权限注意：`/time query` 在 vanilla 需 permission level 2（op）——Bot 非 op 时
 // 服务器拒绝，查询失败输出"时间未知"（不再用 age 近似——用户明确要求移除）。
 //
+// 命令选择：用 `/minecraft:time` 显式 namespace——服务器可能装插件（EssentialsX 类）
+// 覆盖 `/time`（实测 26.1 Paper + 插件环境下 `/time query` 返回插件帮助而非时间），
+// namespace 前缀调用原版命令绕过覆盖。
+//
 // 解析容错：服务器返回格式本地化（英文 "The time is 12345" / 中文 "时间是 12345"），
 // 用双模式正则；只接受 Server 来源消息（self 过滤已有 fl-chat，这里再过滤 username）。
 
 const QUERY_INTERVAL_MS = 30000
 
 /**
- * 挂载时间查询：定时执行 /time query daytime + 解析聊天返回缓存。
+ * 挂载时间查询：定时执行 /minecraft:time query daytime + 解析聊天返回缓存。
  * @param {Record<string, any>} ctx 可变上下文（bot/logger 实时读取）
  * @param {import('mineflayer').Bot} bot
  * @param {() => Record<string, any>} log 惰性取当前 logger
@@ -21,12 +25,17 @@ const QUERY_INTERVAL_MS = 30000
 export function installTimeQuery (ctx, bot, log) {
   const query = () => {
     try {
-      bot.chat('/time query daytime')
+      bot.chat('/minecraft:time query daytime')
     } catch { /* 聊天通道未就绪 */ }
   }
-  bot.on('chat', (username, message) => {
-    if (username !== 'Server') return
-    const m = /The time is (\d+)|时间是 (\d+)|时间为 (\d+)/.exec(String(message ?? ''))
+  // /time query 返回是系统消息（systemChat 通道）——bot.on('chat') 只收玩家聊天
+  //（26.1 协议：系统消息走 messagestr，sender 为 null；玩家消息 sender 为玩家名）
+  bot.on('messagestr', (msg, _position, _originalMsg, sender) => {
+    if (sender !== null && sender !== undefined) return // 玩家聊天不处理
+    const text = String(msg ?? '')
+    // 诊断：记录全部系统消息（权限拒绝/格式不匹配定位）——debug 级避免每 30s 刷屏
+    log().debug({ msg: text.slice(0, 120) }, 'time: 系统消息')
+    const m = /The time is (\d+)|时间是 (\d+)|时间为 (\d+)/.exec(text)
     if (m) {
       const dayTime = Number(m[1] ?? m[2] ?? m[3])
       if (Number.isInteger(dayTime) && dayTime >= 0 && dayTime < 24000) {
