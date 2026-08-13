@@ -327,6 +327,53 @@ test('mine 脚本: init 校验——未知方块类型报错（failed）', async
   assert.ok(task.lastError.includes('未知方块类型'), task.lastError)
 })
 
+test('mine 脚本: init 校验——畸形 area 报错（越区采集防御）', async () => {
+  const { bot } = makeCollectBot()
+  const ctx = makeCtx(bot)
+  const { default: mineScript } = await import('../src/tasks/scripts/mine.js')
+  const task = makeTask(mineScript, { blockTypes: ['iron_ore'], area: { x1: 0, x2: 10, z1: 0, z2: 10 } }, ctx)
+  await task.start()
+  assert.equal(task.state, 'failed')
+  assert.ok(task.lastError.includes('area 不完整'), task.lastError)
+})
+
+test('chop 脚本: init 校验——畸形 area 报错（越区采集防御）', async () => {
+  const { bot } = makeCollectBot()
+  const ctx = makeCtx(bot)
+  const { default: chopScript } = await import('../src/tasks/scripts/chop.js')
+  const task = makeTask(chopScript, { area: { x1: 0 } }, ctx)
+  await task.start()
+  assert.equal(task.state, 'failed')
+  assert.ok(task.lastError.includes('area 不完整'), task.lastError)
+})
+
+test('breed 脚本: 繁殖计数按喂食成功轮数（targetGone 判定不可达——fed 驱动）', async () => {
+  // 用最小 DSL 脚本直接验证修复语义：feed.fed >= 1 → breedings 计数
+  //（breed.js 的 targetGone 判定不可达——MC 成年体不消失——此前永不计数）
+  const { bot } = makeCombatBot()
+  // interact_entity 依赖：食物（种子）+ equip + 实体表（带 position）+ 写包通道
+  bot.inventory = { items: () => [{ name: 'wheat_seeds', count: 10 }] }
+  bot.equip = async () => {}
+  bot._client = { write: () => {} }
+  bot.entities = new Map([[1, { id: 1, name: 'cow', position: { x: 1, y: 64, z: 1 }, height: 1.3 }]])
+  const ctx = makeCtx(bot)
+  const miniBreed = {
+    id: 'mini-breed', exclusive: false, naturalCompletion: false, maxActions: 100,
+    script: { steps: [
+      { ctrl: 'loop', max: 3, body: [
+        { op: 'interact_entity', args: { filter: ['cow'], count: 1, useCooldownMs: 500 }, as: 'feed' },
+        { ctrl: 'if', cond: { type: 'result', ref: 'feed', field: 'fed', gte: 1 }, then: [
+          { ctrl: 'count', name: 'breedings', by: 1 }
+        ] }
+      ] },
+      { ctrl: 'return', value: 'completed' }
+    ] }
+  }
+  const task = makeTask(miniBreed, {}, ctx)
+  await task.start()
+  assert.equal(task.counters.breedings, 3, '每轮喂食成功（fed>=1）→ breedings 递增——fed 驱动（非 targetGone）')
+})
+
 test('chop 脚本: 缺省正则（/_log$|_wood$/）扫描全部原木', async () => {
   const { bot, collects } = makeCollectBot()
   const ctx = makeCtx(bot)

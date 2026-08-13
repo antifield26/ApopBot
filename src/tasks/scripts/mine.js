@@ -1,4 +1,5 @@
 // @ts-check
+import { isArea } from '../util.js'
 // 挖矿任务脚本：collectblock + pathfinder 在限定区域内挖掘指定方块。
 // 语义说明：
 // - init 校验（blockTypes 非空/插件/未知方块类型）→ scriptDef.init
@@ -17,6 +18,9 @@ export default {
   /** init 校验。 */
   async init (task) {
     const o = task.options
+    if (o.area !== undefined && !isArea(o.area)) {
+      throw new Error('mine 任务 options.area 不完整（可省略或给全 x1..z2）')
+    }
     if (!Array.isArray(o.blockTypes) || o.blockTypes.length === 0) {
       throw new Error('mine 任务需要 options.blockTypes（方块名数组，无命名空间前缀）')
     }

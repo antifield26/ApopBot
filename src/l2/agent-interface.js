@@ -45,6 +45,9 @@ const TOOL_RESULT_MAX_CHARS = 2000 // 工具结果回填截断上限（预算裁
 // 4×8=32 动作/轮
 const MAX_TOOL_CALLS_PER_ROUND = 4
 
+// 世界事件新鲜窗口（与 dangerLine 1 小时一致）——过期事件不注入
+const EVENT_FRESH_MS = 60 * 60 * 1000
+
 /**
  * 工具结果截断——优先保持 JSON 结构完整（顶层数组/对象截到最后一个完整元素，
  * 附 truncated 标记）；纯文本直接截。硬 slice 会把 observe_* 结构化结果切成
@@ -489,8 +492,10 @@ export class AgentInterface {
    * 按类型去重合并（高频事件只保最新状态），仅保留最近 3 条。
    */
   notifyEvent (type, text) {
-    const entry = `${type}:${String(text).slice(0, 60)}`
-    this.pendingEvents = this.pendingEvents.filter(e => !e.startsWith(`${type}:`))
+    // 带时间戳：注入时按新鲜窗口过滤（与 dangerLine 1 小时一致）——过期事件
+    // 永久注入会让 LLM 感知陈旧状态（如 3 小时前的受击误判"正被围攻"）
+    const entry = { type, text: `${type}:${String(text).slice(0, 60)}`, ts: Date.now() }
+    this.pendingEvents = this.pendingEvents.filter(e => e.type !== type)
     this.pendingEvents.push(entry)
     if (this.pendingEvents.length > 3) this.pendingEvents.shift()
   }
@@ -604,7 +609,13 @@ export class AgentInterface {
           // 附近危险注入（无新鲜危险记录时零成本空串——世界记忆被动感知）
           (this.cfg.dangerInjection === false ? '' : `\n${dangerLine(this.ctx.bot)}`) +
           // 世界事件注入（仅事件存在时输出——上次对话后发生了什么）
-          (this.pendingEvents.length ? `\n事件: ${this.pendingEvents.join('|')}` : '') + toolLog
+          (() => {
+            // 事件新鲜窗口过滤（1 小时——与 dangerLine 一致）；注入后剪除过期项
+            //（不消费全部——provider 失败时不丢新鲜事件）
+            const fresh = this.pendingEvents.filter(e => Date.now() - e.ts < EVENT_FRESH_MS)
+            if (fresh.length !== this.pendingEvents.length) this.pendingEvents = fresh
+            return fresh.length ? `\n事件: ${fresh.map(e => e.text).join('|')}` : ''
+          })() + toolLog
         // 上下文预算裁剪（provider 有窗口时）——fixed = system + 工具定义；
         // 超预算按序裁剪历史/工具结果/用户消息。窗口 null（云端/测试）→ 不裁剪
         const window = this.provider.contextWindow?.()
@@ -725,9 +736,13 @@ export class AgentInterface {
         this.summarize(`把以下对话历史压缩为一句中文摘要（保留玩家的要求、约定与关键事实）：\n${droppedText}`, 200)
           .then((s) => {
             if (!s) return
-            const v = { ...sessionValue, summary: s }
-            setSession(this.role, user, v)
-            this.sessionStore?.set(`${this.role}:${user}`, v)
+            // 写回前重读当前会话——summarize 是 fire-and-forget，期间可能已发生
+            // 新对话，旧快照整体覆盖会丢新 history/goal/calls；只合并 summary 字段
+            const cur = getSession(this.role, user)
+            if (!cur) return // 会话已 reset——不写回
+            cur.summary = s
+            setSession(this.role, user, cur)
+            this.sessionStore?.set(`${this.role}:${user}`, cur)
           })
           .catch(() => {})
       }

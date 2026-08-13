@@ -1,4 +1,5 @@
 // @ts-check
+import { isArea } from '../util.js'
 // 伐木任务脚本：区域内批量砍伐原木/木头。
 // 语义说明：
 // - init 校验（logTypes 显式 → 逐名校验未知方块；缺省 → 全部 /_log$|_wood$/）
@@ -15,6 +16,9 @@ export default {
   /** init 校验（显式 logTypes 校验未知方块）。 */
   async init (task) {
     const o = task.options
+    if (o.area !== undefined && !isArea(o.area)) {
+      throw new Error('chop 任务 options.area 不完整（可省略或给全 x1..z2）')
+    }
     if (!task.bot.registry?.blocksByName) throw new Error('chop 任务需要 bot.registry（minecraft-data 数据）')
     if (Array.isArray(o.logTypes) && o.logTypes.length > 0) {
       for (const name of o.logTypes) {

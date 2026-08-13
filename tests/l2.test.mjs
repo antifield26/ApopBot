@@ -166,6 +166,21 @@ test('chat: 超限工具调用（>4）——assistant 推送全部 tool_use（�
   assert.ok(pending.every(tr => tr.output.includes('未执行')), '超限调用回填未执行标记')
 })
 
+test('chat: 世界事件按 1 小时新鲜窗口过滤（过期事件不注入 system）', async () => {
+  const ctx = makeCtx()
+  const { agent, provider } = makeAgent(ctx, [{ text: 'ok' }])
+  agent.notifyEvent('combat', '被僵尸攻击')
+  // 置为过期（>1h）
+  agent.pendingEvents[0].ts = Date.now() - 61 * 60 * 1000
+  await agent.chat('steve', '看看')
+  assert.ok(!provider.calls[0].system.includes('事件:'), '过期事件不应注入')
+  assert.equal(agent.pendingEvents.length, 0, '过期事件注入后剪除')
+  // 新鲜事件注入
+  agent.notifyEvent('combat', '被僵尸攻击')
+  await agent.chat('steve', '看看')
+  assert.ok(provider.calls[1].system.includes('事件: combat:被僵尸攻击'), '新鲜事件应注入')
+})
+
 test('chat: cooldown 阻止连续请求', async () => {
   const ctx = makeCtx()
   const { agent } = makeAgent(ctx, [{ text: 'a' }, { text: 'b' }])

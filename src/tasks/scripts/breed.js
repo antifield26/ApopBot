@@ -6,9 +6,9 @@ import { isArea } from '../util.js'
 // - 无动物：stopWhenNoAnimals → 完成；否则 30s no-animal 等待
 // - 喂食（interact_entity count 2 + useCooldownMs 间隔 + 目标存在检查由原语处理）
 // - 无食物/目标消失（last ok:false）→ 30s 等待（no-food 语义）
-// - 繁殖成功判定：targetGone（成年个体被幼崽替换）→ breedings 计数
-// - maxBreedings 上限（默认 4）；等待幼崽生成 5s
-// - entityGone 由 interact_entity 的 targetGone 返回判定
+// - 繁殖进度：按喂食成功轮数计 breedings（targetGone 判定不可达——MC 成年体
+//   不消失；此前 maxBreedings 永不触发、任务永不自然完成）
+// - maxBreedings 上限（默认 4）；等待喂食冷却 5s
 
 export default {
   id: 'breed',
@@ -58,11 +58,13 @@ export default {
             { ctrl: 'if', cond: { type: 'result', ref: 'feed', field: 'fed', equals: 0 }, then: [
               { ctrl: 'wait', ms: 30000 } // 无食物（no-food 语义）
             ], else: [
-              // 繁殖成功（成年个体被幼崽替换）→ breedings 计数
-              { ctrl: 'if', cond: { type: 'result', ref: 'feed', field: 'targetGone', equals: true }, then: [
+              // 繁殖进度按喂食成功轮数计——targetGone 判定不可达（MC 成年体不
+              // 消失，幼崽在旁生成；interact_entity 仅目标中途消失才 true）——
+              // 此前 maxBreedings 永不触发、任务永不自然完成
+              { ctrl: 'if', cond: { type: 'result', ref: 'feed', field: 'fed', gte: 1 }, then: [
                 { ctrl: 'count', name: 'breedings', by: 1 }
               ] },
-              { ctrl: 'wait', ms: 5000 } // 等待幼崽生成/替换
+              { ctrl: 'wait', ms: 5000 } // 等待喂食冷却/幼崽生成
             ] }
           ] }
         ] }
