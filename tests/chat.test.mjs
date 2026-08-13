@@ -57,6 +57,19 @@ test('sendChat: 空/纯空白文本不发包（!say 无参或纯 §）', async (
   assert.deepEqual(sent, [], '不得发送空包')
 })
 
+test('M7: 并发 sendChat 串行化——多源长消息分片不交错', async () => {
+  const sent = []
+  const bot = { chat: (m) => sent.push(m) }
+  const a = 'A'.repeat(30)
+  const b = 'B'.repeat(30)
+  const p1 = sendChat(bot, a, 10) // 3 片
+  const p2 = sendChat(bot, b, 10) // 3 片
+  await Promise.all([p1, p2])
+  assert.equal(sent.length, 6)
+  assert.equal(sent.slice(0, 3).join(''), a, '第一条消息分片应连续（修复前跨消息交错混排）')
+  assert.equal(sent.slice(3).join(''), b, '第二条消息分片应连续')
+})
+
 test('stripColorCodes: 剥离 § 颜色码（Paper 26.1.2 非法字符踢出修复）', () => {
   assert.equal(stripColorCodes('§a[status] ok'), '[status] ok')
   assert.equal(stripColorCodes('§c权限不足'), '权限不足')

@@ -7,6 +7,10 @@ import { createNotifier } from '../core/notify.js'
 
 // 任务终态 LLM 总结的全局冷却（防多任务同时完成时刷屏）
 const SUMMARY_COOLDOWN_MS = 60000
+// 同任务终态通知的最小间隔：高频循环任务（farm stopWhenDone 30-60s 一轮）
+// 连续完成/停止会刷屏聊天与 webhook（Server酱类平台有硬限流）——节流到
+// ≥1 分钟一次；failed 永不节流（失败不可吞）
+const TASK_NOTIFY_MIN_INTERVAL_MS = 60000
 
 /** 递归按键名排序（热重载 diff 不因用户重排键序而误判变更）。 */
 function sortKeys (v) {
@@ -434,6 +438,13 @@ export class TaskManager {
   /** 完成/失败通知（scheduled 运行；notifyChat:false 关闭聊天；webhook 独立于 notifyChat——运维通道）。 */
   _notify (rec, state) {
     if (rec.entry.notifyChat === false) return
+    // 终态节流：同任务 60s 内重复完成/停止跳过（高频循环任务刷屏聊天与
+    // webhook）；failed 永不节流（失败不可吞——必须持续可见）
+    if (typeof state === 'string' && (state.startsWith('completed') || state.startsWith('stopped'))) {
+      const now = Date.now()
+      if (rec._lastNotifyAt && now - rec._lastNotifyAt < TASK_NOTIFY_MIN_INTERVAL_MS) return
+      rec._lastNotifyAt = now
+    }
     const counters = Object.keys(rec.task.counters).length
       ? ` ${JSON.stringify(rec.task.counters)}`
       : ''

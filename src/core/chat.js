@@ -12,6 +12,13 @@
 
 const INTER_MESSAGE_DELAY_MS = 300
 
+// 发送队列（模块级）：多源并发（任务通知/命令回复/LLM 回复/重连提示/
+// idle 播报/guard 播报）的长消息分片会交错混排——片间 300ms 只约束单条消息
+// 内间隔，跨消息无锁。串行化后每条消息的分片连续发送；队列失败不毒化后续
+//（sendQueue 接 catch 空分支）。
+/** @type {Promise<unknown>} */
+let sendQueue = Promise.resolve()
+
 // 发送日志（可观测性）：spam kick 排查需要知道"谁发了什么"——
 // index.js 启动时 registerChatLogger 注入一次，sendChat 内部记 info
 //（发送方/文本摘要/分片数）。未注册（测试/无 logger）时静默零成本。
@@ -73,10 +80,17 @@ export function chunkText (text, maxLength) {
  * @param {number} [maxLength] 默认 250（256 上限留冗余）
  * @returns {Promise<number>}
  */
-export async function sendChat (bot, text, maxLength = 250) {
-  if (!bot?.chat) return 0
+export function sendChat (bot, text, maxLength = 250) {
+  if (!bot?.chat) return Promise.resolve(0)
   const clean = stripColorCodes(text)
-  if (!clean.trim()) return 0 // 空/纯空白（!say 无参或纯 §）不发包——空消息行为未验证，避免触发服务端拒绝
+  if (!clean.trim()) return Promise.resolve(0) // 空/纯空白（!say 无参或纯 §）不发包——空消息行为未验证，避免触发服务端拒绝
+  const run = sendQueue.then(() => doSend(bot, clean, maxLength))
+  sendQueue = run.catch(() => {}) // 队列失败不毒化后续发送
+  return run
+}
+
+/** 发送队列串行段：分片 + 片间间隔（只在队列上下文中执行）。 */
+async function doSend (bot, clean, maxLength) {
   const chunks = chunkText(clean, maxLength)
   if (chatLogger) chatLogger({ chunks: chunks.length, text: clean.slice(0, 80) })
   for (let i = 0; i < chunks.length; i++) {

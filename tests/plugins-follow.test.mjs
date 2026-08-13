@@ -131,11 +131,13 @@ test('follow: entityGone 自动停止跟随', (t) => {
   assert.equal(bot.controls.forward, false)
 })
 
-test('C1 修复：目标消失提示走 sendChat（不含 §——Paper 踢出防护）', () => {
+test('C1 修复：目标消失提示走 sendChat（不含 §——Paper 踢出防护）', async () => {
   const bot = makeBot()
   const player = { id: 42, username: 'steve', position: new Vec3(5, 64, 0) }
   bot.follow.setTarget(player)
   bot.emit('entityGone', player)
+  // sendChat 经模块级串行队列（多源分片防交错）——发送延迟一个微任务
+  await new Promise(r => setImmediate(r))
   const msg = bot.messages.find(m => m.includes('已停止跟随'))
   assert.ok(msg, `应聊天提示: ${bot.messages}`)
   assert.ok(!msg.includes('§'), `发送内容不得含 §: ${msg}`)

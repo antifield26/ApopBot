@@ -545,6 +545,35 @@ test('U7 修复：任务终态经 LLM 一句话总结（附加层）+ 冷却防�
   await mgr.stopAll()
 })
 
+test('M7 修复：同任务终态通知 60s 节流（failed 永不节流）', async () => {
+  const messages = []
+  const bot = { chat: (m) => { messages.push(m) } }
+  const mgr = new TaskManager({ tasks: [], chat: { maxLength: 250 } }, makeLogger(), { bot })
+  mgr.addTask({ id: 'a1', type: 'afk', options: { intervalMinutes: 1 } })
+  await settle(3)
+  const rec = mgr.tasks.get('a1')
+  mgr._notify(rec, 'completed')
+  await settle(3)
+  assert.equal(messages.filter(m => m.includes('completed')).length, 1)
+  // 60s 内重复完成/停止 → 节流跳过（farm stopWhenDone 30-60s 一轮刷屏场景）
+  mgr._notify(rec, 'completed')
+  await settle(3)
+  assert.equal(messages.filter(m => m.includes('completed')).length, 1, '60s 内重复完成通知应被节流')
+  mgr._notify(rec, 'stopped (duration 1m)')
+  await settle(3)
+  assert.equal(messages.filter(m => m.includes('stopped')).length, 0, 'stopped 同样节流')
+  // failed 永不节流（失败不可吞）
+  mgr._notify(rec, 'failed: boom')
+  await settle(3)
+  assert.ok(messages.some(m => m.includes('failed: boom')), 'failed 不得节流')
+  // 间隔过后恢复
+  rec._lastNotifyAt = Date.now() - 61000
+  mgr._notify(rec, 'completed')
+  await settle(3)
+  assert.equal(messages.filter(m => m.includes('completed')).length, 2, '间隔过后恢复通知')
+  await mgr.stopAll()
+})
+
 test('U7 修复：无 agent 时总结静默跳过（任务流程不受影响）', async () => {
   const bot = { chat: (m) => { bot.messages.push(m) }, messages: [] }
   const mgr = new TaskManager({ tasks: [], chat: { maxLength: 250 } }, makeLogger(), { bot })
