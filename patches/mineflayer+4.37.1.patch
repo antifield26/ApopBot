@@ -215,14 +215,18 @@ diff --git a/node_modules/mineflayer/lib/plugins/time.js b/node_modules/mineflay
 index 0b9411d..df8f463 100644
 --- a/node_modules/mineflayer/lib/plugins/time.js
 +++ b/node_modules/mineflayer/lib/plugins/time.js
-@@ -13,9 +13,36 @@ function inject (bot) {
+@@ -13,9 +13,40 @@ function inject (bot) {
      age: null
    }
    bot._client.on('update_time', (packet) => {
 -    const time = longToBigInt(packet.time)
 -    const age = longToBigInt(packet.age)
 -    const doDaylightCycle = packet.tickDayTime !== undefined ? !!packet.tickDayTime : time >= 0n
-+    const clockUpdate = readClockUpdates(packet.clockUpdates)
++    // 26.1：clockUpdates 反序列化为对象数组 [{id,totalTicks,partialTick,rate}]——
++    // 旧 readClockUpdates 按原始 Buffer 逐字节解析恒 null → 回退 age 当 dayTime
++    const clockUpdate = Array.isArray(packet.clockUpdates)
++      ? packet.clockUpdates.find(c => c.id === 0) ?? null
++      : null
 +    const packetAge = packet.age ?? packet.gameTime ?? packet.time
 +    if (packetAge == null) return
 +
@@ -230,14 +234,14 @@ index 0b9411d..df8f463 100644
 +    const previousAge = bot.time.bigAge
 +    const previousTime = bot.time.bigTime
 +
-+    let packetTime = packet.time ?? clockUpdate?.time
++    let packetTime = packet.time ?? clockUpdate?.totalTicks
 +    const daylightBasis = packetTime ?? packet.gameTime ?? packet.age
 +    const packetDayTime = packetTime == null ? null : longToBigInt(packetTime)
 +    let doDaylightCycle
 +    if (packet.tickDayTime !== undefined) {
 +      doDaylightCycle = !!packet.tickDayTime
-+    } else if (clockUpdate?.tickRate !== undefined) {
-+      doDaylightCycle = clockUpdate.tickRate > 0
++    } else if (clockUpdate?.rate !== undefined) {
++      doDaylightCycle = clockUpdate.rate > 0
 +    } else if (packetDayTime != null) {
 +      doDaylightCycle = packetDayTime >= 0n
 +    } else {
@@ -255,55 +259,9 @@ index 0b9411d..df8f463 100644
      // When doDaylightCycle is false, we need to take the absolute value of time
      const finalTime = doDaylightCycle ? time : (time < 0n ? -time : time)
  
-@@ -33,6 +60,53 @@ function inject (bot) {
-   })
+@@ -34,5 +65,7 @@ function inject (bot) {
  }
  
-+function readClockUpdates (buffer) {
-+  if (!buffer || buffer.length === 0) return null
-+  let offset = 0
-+  const count = readVarInt(buffer, offset)
-+  offset = count.offset
-+
-+  for (let i = 0; i < count.value && offset < buffer.length; i++) {
-+    const type = readVarInt(buffer, offset)
-+    offset = type.offset
-+    const time = readVarLong(buffer, offset)
-+    offset = time.offset
-+    const tickRate = offset + 8 <= buffer.length ? buffer.readFloatBE(offset + 4) : undefined
-+    offset += 8
-+
-+    if (type.value === 0) return { time: time.value, tickRate }
-+  }
-+  return null
-+}
-+
-+function readVarInt (buffer, offset) {
-+  let value = 0
-+  let shift = 0
-+  let cursor = offset
-+  while (cursor < buffer.length) {
-+    const byte = buffer[cursor++]
-+    value |= (byte & 0x7f) << shift
-+    if ((byte & 0x80) === 0) return { value, offset: cursor }
-+    shift += 7
-+  }
-+  throw new Error('Invalid varint in update_time clockUpdates')
-+}
-+
-+function readVarLong (buffer, offset) {
-+  let value = 0n
-+  let shift = 0n
-+  let cursor = offset
-+  while (cursor < buffer.length) {
-+    const byte = buffer[cursor++]
-+    value |= BigInt(byte & 0x7f) << shift
-+    if ((byte & 0x80) === 0) return { value: BigInt.asIntN(64, value), offset: cursor }
-+    shift += 7n
-+  }
-+  throw new Error('Invalid varlong in update_time clockUpdates')
-+}
-+
  function longToBigInt (arr) {
 +  if (typeof arr === 'bigint') return BigInt.asIntN(64, arr)
 +  if (typeof arr === 'number') return BigInt.asIntN(64, BigInt(arr))
