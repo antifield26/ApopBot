@@ -31,6 +31,8 @@ export { _resetIdleWatcher } from './idle-watcher.js'
 
 export function createFeatureLayerManager (ctx, logger) {
   let pending = Promise.resolve()
+  // time-query 定时器 stop 句柄（teardown 清理——否则重连累积死定时器）
+  let timeQueryStop = null
   // 热重载会重建 logger——所有日志/组件构造一律运行时取 ctx.logger
   //（构造时捕获的初始 logger 会在重连后把任务日志写旧 transport）
   const log = () => ctx.logger ?? logger
@@ -54,6 +56,8 @@ export function createFeatureLayerManager (ctx, logger) {
       ctx.agent = null
     }
     ctx.commands = null
+    // time-query 定时器随功能层拆除（旧 bot 的查询闭包不再持有）
+    try { timeQueryStop?.(); timeQueryStop = null } catch { /* 幂等 */ }
   }
 
   async function doRebuild (bot) {
@@ -110,7 +114,7 @@ export function createFeatureLayerManager (ctx, logger) {
     installMemoryInvalidation(ctx, bot)
     installWorldSensing(ctx, bot)
     installGuardResponse(ctx, bot, log)
-    installTimeQuery(ctx, bot, log)
+    timeQueryStop = installTimeQuery(ctx, bot, log)
 
     log().info({ bot: ctx.cfg.username }, 'feature layer ready')
 

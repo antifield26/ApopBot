@@ -88,6 +88,11 @@ export function installTimeQuery (ctx, bot, log) {
     }
   })
   // 首查立即执行（上线后 1s——等待连接稳定），之后定时（unref——不拖进程退出）
-  setInterval(query, QUERY_INTERVAL_MS).unref?.()
-  setTimeout(query, 1000).unref?.()
+  const interval = setInterval(query, QUERY_INTERVAL_MS)
+  interval.unref?.()
+  const first = setTimeout(query, 1000)
+  first.unref?.()
+  // 停止句柄：feature-layer teardown 调用——否则每次重连累积死定时器
+  //（闭包持旧 bot 引用 + 事件监听，防 GC）
+  return () => { clearInterval(interval); clearTimeout(first) }
 }

@@ -18,8 +18,8 @@ function makeEnv () {
   // 26.1：messagestr 事件由 chat.js 转发，_client 是原始包层（fake 用同一 EventEmitter 挂 systemChat）
   bot._client = new EventEmitter()
   const ctx = { bot, logger: makeLogger() }
-  installTimeQuery(ctx, bot, () => ctx.logger)
-  return { bot, ctx }
+  const stop = installTimeQuery(ctx, bot, () => ctx.logger)
+  return { bot, ctx, stop }
 }
 
 test('time-query: Server 消息解析 → 缓存 dayTime 到 bot.time.dayTime', () => {
@@ -71,10 +71,17 @@ test('time-query: 26.1 _client JSON 通道——translate 新键数组解析（�
 
 test('time-query: 定时发起查询命令（/minecraft: 显式 namespace + 26.1 参数 time）', async () => {
   const { bot } = makeEnv()
-  // 首查 1s 后（QUERY_INTERVAL 30s 太长不测）——手动验证 chat 调用存在
+  // 首查 1s 后（QUERY_INTERVAL 15s 太长不测）——手动验证 chat 调用存在
   await new Promise((r) => setTimeout(r, 1500))
   assert.ok(bot.chatCalls.length >= 1, '上线后应发起 /time query')
   assert.equal(bot.chatCalls[0], '/minecraft:time query time')
+})
+
+test('time-query: stop 句柄清除定时器（重连不累积死定时器）', async () => {
+  const { bot, stop } = makeEnv()
+  stop() // 立即停止——首查（1s）与周期都应被清除
+  await new Promise((r) => setTimeout(r, 1200))
+  assert.equal(bot.chatCalls.length, 0, 'stop 后不应再发起查询')
 })
 
 test('time-query: 查询缓存驱动 environmentLine（集成——只输出昼夜）', () => {

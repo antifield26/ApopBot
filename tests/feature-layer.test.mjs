@@ -45,6 +45,18 @@ test('B1 修复：每次 spawn 全量重建功能层并挂新 bot 的 chat 监�
   await layer.teardown()
 })
 
+test('B1 修复：重建后旧 bot 的 time-query 定时器已停（只新 bot 收查询）', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot1 = new FakeBot()
+  await layer.rebuild(bot1)
+  await layer.rebuild(new FakeBot()) // 重建：旧定时器应被 teardown 清除
+  await new Promise(r => setTimeout(r, 1200))
+  assert.equal(bot1.messages.length, 0, '旧 bot 不再收到查询（定时器已清）')
+  assert.equal(ctx.bot.messages.some(m => m.startsWith('/minecraft:time')), true, '新 bot 正常发起查询')
+  await layer.teardown()
+})
+
 test('B1 修复：重建后新 bot 上命令可分发（真实 commands 注册表）', async () => {
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)
