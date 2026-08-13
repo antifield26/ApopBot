@@ -109,6 +109,8 @@ export function createActionExecutor (ctx, deps = {}) {
       } catch (err) { ctx.logger.warn({ err: err.message }, '审计写入失败') }
     }
     if (!Array.isArray(actions) || actions.length === 0) {
+      // 与文件头注释一致：解析期拒绝也写审计（此前空数组静默——自主行为追溯有空洞）
+      logRejected('rejected: 动作数组为空或格式错误')
       return { ok: false, results: [], failedAt: null, rejected: '动作数组为空或格式错误' }
     }
     if (actions.length > maxActionsPerCall) {

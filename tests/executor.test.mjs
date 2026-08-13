@@ -283,3 +283,16 @@ test('第 8 轮：validateParams 顶层类型检查（args 非对象拒绝）', 
   assert.equal(validateParams(schema, [1]).ok, false)
   assert.equal(validateParams(schema, { x: 1 }).ok, true)
 })
+
+test('L2 修复：空动作数组拒绝也写审计（与文件头注释一致——解析期拒绝无静默空洞）', async () => {
+  const auditEntries = []
+  const { map } = makePrims()
+  const ex = createActionExecutor(makeCtx(), {
+    primitives: map,
+    audit: { append: async (e) => { auditEntries.push(e) } }
+  })
+  const r = await ex.executeBatch([], { user: 'steve', source: 'llm' })
+  assert.equal(r.ok, false)
+  assert.ok(auditEntries.length >= 1, '空数组拒绝应写审计')
+  assert.ok(auditEntries[0].result.includes('动作数组为空'), auditEntries[0].result)
+})

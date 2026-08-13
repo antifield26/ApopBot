@@ -16,8 +16,6 @@
 
 import { withTimeout } from '../util/promise-timeout.js'
 
-export const TASK_STATES = Object.freeze(['created', 'init', 'running', 'paused', 'stopped', 'completed', 'failed'])
-
 // stop() 等待 run 协程退出的上限（防子类 _cancel 失效导致挂起）
 const STOP_WAIT_TIMEOUT_MS = 10000
 
