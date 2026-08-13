@@ -129,6 +129,29 @@ test('G1: 维度感知——recordResource 带维度，query 按维度过滤', (
   assert.equal(discovery.query('iron_ore', null, 5).length, 3)
 })
 
+test('M2 修复：同 chunk 跨维度记录独立去重——下界不被主世界吞并', () => {
+  // 主世界 chunk (10>>4, 8>>4) 记录钻石
+  assert.equal(discovery.recordResource('diamond_ore', { x: 10, y: 12, z: 8 }, 'overworld'), true)
+  // 下界相同 x/z chunk 记录石英——修复前 chunkKey 不含维度 → 命中主世界
+  // 记录只刷 ts 不新增 → 下界查询永远查不到石英
+  assert.equal(discovery.recordResource('nether_quartz_ore', { x: 10, y: 60, z: 8 }, 'nether'), true)
+  assert.equal(discovery.query('nether_quartz_ore', null, 5, 'nether').length, 1, '下界记录不应被吞并')
+  // 同名资源跨维度同 chunk 各自独立
+  assert.equal(discovery.recordResource('iron_ore', { x: 10, y: 60, z: 8 }, 'overworld'), true)
+  assert.equal(discovery.recordResource('iron_ore', { x: 10, y: 30, z: 8 }, 'nether'), true, '同 chunk 跨维度应新增而非刷 ts')
+  assert.equal(discovery.query('iron_ore', null, 5, 'overworld').length, 1)
+  assert.equal(discovery.query('iron_ore', null, 5, 'nether').length, 1)
+  // 同 chunk 同维度仍去重
+  assert.equal(discovery.recordResource('iron_ore', { x: 11, y: 31, z: 9 }, 'nether'), false, '同 chunk 同维度仍只刷 ts')
+  assert.equal(discovery.query('iron_ore', null, 5, 'nether').length, 1)
+  // 快照往返后两条独立记录保留
+  const snap = discovery.snapshot()
+  discovery._reset()
+  discovery.importSnapshot(snap)
+  assert.equal(discovery.query('iron_ore', null, 5, 'overworld').length, 1)
+  assert.equal(discovery.query('iron_ore', null, 5, 'nether').length, 1)
+})
+
 test('G1: 维度感知——快照往返保留维度，stats 统计维度分布', () => {
   discovery.recordResource('nether_gold_ore', { x: 5, y: 40, z: 5 }, 'nether')
   discovery.recordResource('coal_ore', { x: 5, y: 61, z: 5 }, 'overworld')

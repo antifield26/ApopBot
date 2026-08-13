@@ -4,8 +4,8 @@
 // 无空间记忆）；query_map 技能按需查询，不重复扫描（省算力省 token）。
 //
 // 容量边界（防 state.json 无限增长）：
-//   - resources：按 chunk 坐标 (x>>4, z>>4) 去重（同 chunk 命中只刷新 ts），
-//     每块名最多 16 条，全局 512 条，超限按 ts 淘汰最旧
+//   - resources：按 chunk 坐标（维度, x>>4, z>>4）去重（同 chunk 同维度命中只刷新
+//     ts），每块名最多 16 条，全局 512 条，超限按 ts 淘汰最旧
 //   - anchors：已访问锚点 256 条环形缓冲（淘汰最旧）
 // 持久化：attachStore(stateStore) 后每次修改 setMemory(snapshot())——复用 state.js
 // 的 5s 防抖 + exit 同步落盘；feature-layer 重建时 importSnapshot 回灌。
@@ -142,19 +142,22 @@ export function recordAnchor (pos, dimension = null) {
 }
 
 /**
- * 登记资源发现（chunk 坐标去重：同 chunk 已记录只刷新 ts 不新增）。
- * @returns {boolean} 是否是新记录（首次发现该 chunk 的该资源）
+ * 登记资源发现（chunk+维度去重：同 chunk 同维度已记录只刷新 ts 不新增）。
+ * @returns {boolean} 是否是新记录（首次发现该 chunk 该维度的该资源）
  */
 export function recordResource (name, pos, dimension = null) {
   if (!name || !pos) return false
   const list = state.resources[name] ?? (state.resources[name] = [])
-  const chunkKey = (pos) => `${Math.floor(pos.x) >> 4},${Math.floor(pos.z) >> 4}`
-  const key = chunkKey(pos)
+  // key 拼入维度：下界/末地与主世界存在相同 x/z 坐标，仅按 x/z 去重会跨维度
+  // 吞并——query 按维度过滤后吞并的记录永远查不到；旧记录（无维度字段）按
+  // 主世界（空 key）处理
+  const chunkKey = (r) => `${r.dimension ?? ''}:${Math.floor(r.x) >> 4},${Math.floor(r.z) >> 4}`
+  const key = chunkKey({ x: pos.x, z: pos.z, dimension })
   const existing = list.find(r => chunkKey(r) === key)
   if (existing) {
     existing.ts = now()
-    // 旧记录补维度（同 chunk 跨维度记录已不可能——chunkKey 按 x/z 去重，
-    // 维度不同则记录冲突；此处仅补旧数据缺失的维度）
+    // 旧记录补维度（key 已含维度，跨维度同 chunk 各自独立去重；
+    // 此处仅补旧数据缺失的维度字段）
     if (!existing.dimension && dimension) existing.dimension = dimension
     return false
   }
