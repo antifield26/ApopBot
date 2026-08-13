@@ -79,6 +79,10 @@ export class ConnectionManager {
     // 1. 同步创建 + 立即接线：连接失败事件（error/end）不会在插件装载期间丢失
     const bot = this._deps.createBot(this.cfg)
     this.bot = bot
+    // 新代际插件句柄置空：装载完成（代际守卫后）才赋入——重连期间 onSpawn
+    // 读到的旧代死 bot 句柄会让 !follow 在死 client 上抛错 → fatalExit 停服；
+    // 置空后消费点走"插件未启用"的明确报错路径（onPluginsReady 装载后补发）
+    this.plugins = null
     this.log = this.log.child({ bot: this.cfg.username })
     this._wireEvents(seq) // 内部同步注册 spawn 监听与超时兜底（必须先于插件装载，见 _wireEvents 注释）
 
@@ -94,9 +98,10 @@ export class ConnectionManager {
       // setControlState 于死 client 上抛错 → uncaughtException → fatalExit 停服
       if (seq !== this._connectSeq) return
       this.plugins = loaded
-      // 本机/快速握手时 spawn 先于插件装载触发——onSpawn 会读到空/旧代句柄。
-      // 装载完成后若 spawn 已先发生（state=CONNECTED），补发同步回调
-      //（消费点全部运行时读 ctx.plugins，无需二次 rebuild）。
+      // 本机/快速握手时 spawn 先于插件装载触发——onSpawn 读到的句柄是 connect
+      // 开始时置的 null（不再可能读到旧代死句柄）。装载完成后若 spawn 已先发生
+      //（state=CONNECTED），补发同步回调（消费点全部运行时读 ctx.plugins，无需
+      // 二次 rebuild）。
       if (this.state === STATE_CONNECTED) this.hooks.onPluginsReady?.(loaded)
     } catch (err) {
       if (seq !== this._connectSeq) return // 陈旧连接（已换代）的失败不再调度重连

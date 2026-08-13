@@ -282,3 +282,44 @@ test('第 8 轮：代际守卫（成功路径）——陈旧插件装载不得�
     await conn.disconnect() // 断言失败也必须清理（残留重连循环会挂住测试进程）
   }
 })
+
+test('M8 修复：插件装载窗口内 onSpawn 读到 null（不再持旧代死句柄）', async () => {
+  const bots = []
+  const spawns = []
+  let loadCount = 0
+  const conn = new ConnectionManager(
+    makeCfg({ reconnect: { baseMs: 50, maxMs: 200, factor: 2, jitter: 0, minGapMs: 0 } }),
+    makeLogger(),
+    { onSpawn: () => spawns.push(conn.plugins) },
+    {
+      createBot: () => {
+        const b = new FakeBot()
+        bots.push(b)
+        return b
+      },
+      loadMineflayerPlugins: async () => {
+        loadCount++
+        if (loadCount === 1) return { follow: { instance: 'bot1' } }
+        await new Promise(r => setTimeout(r, 100)) // connect#2 装载慢——制造窗口
+        return { follow: { instance: 'bot2' } }
+      }
+    }
+  )
+  try {
+    await conn.connect()
+    bots[0].emit('spawn') // connect#1：装载已完成
+    assert.deepEqual(spawns, [{ follow: { instance: 'bot1' } }], 'connect#1 spawn 读到本代插件')
+    // 断线 → 重连 connect#2（装载慢 100ms）
+    bots[0].emit('error', new Error('ECONNRESET'))
+    assert.ok(await pollUntil(() => bots.length >= 2), '应已建立第二个连接')
+    bots[1].emit('spawn') // spawn 先于装载完成（窗口内）
+    assert.equal(spawns[1], null, '装载窗口内 onSpawn 应读到 null（修复前为 bot1 代死句柄）')
+    // 装载完成后补发 onPluginsReady + 句柄为本代
+    const ready = []
+    conn.hooks.onPluginsReady = (p) => ready.push(p)
+    assert.ok(await pollUntil(() => ready.length >= 1), '装载完成应补发 onPluginsReady')
+    assert.equal(conn.plugins?.follow?.instance, 'bot2', '装载完成后句柄为本代')
+  } finally {
+    await conn.disconnect()
+  }
+})
