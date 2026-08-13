@@ -68,6 +68,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 - **语义聚合（v1.4.0）**：资源×危险区关联——`query_map {"blockName":"iron_ore"}` 每条返回附最近危险区距离（nearestDanger），`{"assess":"home"}` 位置安全评估（半径 64 内危险区 + safe 标记），`minSafeDist` 过滤危险区附近的资源点；四分支严格互斥
 - **多角色 Agent（v1.4.0）**：单 bot 多角色——恒有 primary（对话）+ planner（规划）两角色，`l2.roles` 配置自定义角色（独立人设/工具白名单/会话/冷却）；`!agent role list` / `!agent role <name> <action>` / `!agent <role> <action>` 便捷路由；各角色会话隔离，v1.3.0 旧会话自动迁移
 - **自主学习循环（v1.5.0）**：任务自然完成后 LLM 把成功实践提炼为结构化 skill（步骤+注意点）存库——后续对话按活跃任务类型自动注入"技能:"行（LLM 参考过往成功做法）；与失败教训经验库互补成完整学习闭环；`l2.skillEnabled` / `skillLearnCooldownMs` / `skillInjection` 可配
+- **受击响应（guard，v1.5.1）**：被怪物攻击（entityHurt 怪物源）时自动响应——非 exclusive 任务暂停、exclusive 任务停止（含排队中），启动战斗清理怪物（`guard.radius`/`cooldownMs` 可配），战斗结束后自动恢复被抢占的任务；死亡自动重置冷却（重生后首次受击立即响应，防被蹲守连环击杀）
 
 ## 快速开始（开发机）
 
@@ -98,7 +99,7 @@ powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Smoke
 npm test && npm run check:compat
 # Windows PC（需树莓派服务端在线；--host 指向服务端 IP）
 node scripts/check-compat.mjs --probe
-node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work          # 全步骤
+node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work          # 全步骤（mine 默认 SKIP，--dangerous 开启）
 node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --steps connect,spawn,chat   # 快速档
 ```
 
@@ -117,7 +118,7 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 
 - Bot 常驻 ~200-400MB RSS，已设低进程优先级（NSSM `BELOW_NORMAL_PRIORITY_CLASS`），不抢其它程序的 CPU
 - 内存预算：系统 ~2G + Bot ~0.4G + 余量充足——重程序按需关闭
-- 依赖安装 `--omit=dev`（deploy.ps1 默认）；`maxSteps: 8` × `maxActionsPerCall: 8` 防 LLM 工具循环；farm/chop/combat/breed/explore 互斥不并发
+- 依赖安装 `--omit=dev`（deploy.ps1 默认）；`maxSteps: 15` × `maxActionsPerCall: 8` 防 LLM 工具循环；farm/chop/combat/breed/explore 互斥不并发
 - Windows 无 cgroup 等价物：内存靠任务管理器观察
 
 ## 配置

@@ -199,18 +199,18 @@
 
 ## 缓做（有测试兜底后）
 
-### R1 任务类型单一来源（1 天内）
-manager.js `TASK_TYPES` + config.js `KNOWN_TASK_TYPES` + `NATURAL_COMPLETION_TYPES` 三处手工同步（目前靠一致性断言测试防漂移）。改法：`src/tasks/types.js` 导出 `{ name → { factory, naturalCompletion } }`，两处导入；`run_task` 技能的类型提示从注册表生成。风险低（纯搬移）。
+### R1 任务类型单一来源（已完成 ✓）
+~~manager.js `TASK_TYPES` + config.js `KNOWN_TASK_TYPES` + `NATURAL_COMPLETION_TYPES` 三处手工同步~~：已由 `src/tasks/types.js` 单一注册表完成（config.js 从注册表派生，一致性断言测试保留）。
 
 ### R2 任务公共代码消重（部分已完成，剩余可选）
 - ~~`_cancel` 三份重复~~：已完成（统一 stopPathfinding）
 - ~~breed._approach 手写轮询~~：已完成（统一 approachEntity，C2 迁移）
+- ~~`_isArea` 四份重复~~：已完成（统一至 tasks/util.js isArea）
 - NoChests 处理 + collect 重试三处重复（可提 `collectWithChestFallback`）
-- `_isArea` 四份重复（chop/combat/breed/farm → BaseTask 方法或 tasks/util.js）
 
 ### R3 后续可选增强（第四轮遗留观察）
-- L2 主动播报扩展：任务长 idle（waitingReason 持续 N 分钟）经 LLM 播报原因（U7 已做终态播报，idle 播报未做）
-- 死亡播报/任务总结的 webhook 推送模板（U10 已做事件推送，LLM 文案进 webhook 可后续加）
+- ~~L2 主动播报扩展：任务长 idle LLM 播报~~：已完成（G4 落地——idle-watcher 模块，10 分钟阈值 + 1 小时冷却）
+- 死亡播报/任务总结的 webhook 推送模板（U10 已做事件推送；任务终态 LLM 文案进 webhook 已完成——死亡 LLM 文案进 webhook 可后续加）
 
 ## 明确不做（及理由）
 

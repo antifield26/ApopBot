@@ -12,6 +12,7 @@
 | B6 剪羊毛/捡掉落物 | 待验收 | 羊 + 剪刀；鸡的掉落物 | `!agent act harvest_animals {"filter":"sheep"}` 剪毛；`{"filter":"chicken"}` 走近掉落物拾取 | | useEntityOn 原始包路径 |
 | C2 移动诊断日志 | 待验收 | 复现 issue #1 卡住场景 | 卡住时检查 bot.log 的「移动卡住诊断」条目（周围 3×3 方块/手持/落地态） | | 用于 issue #1 根因定位 |
 | follow 前方岩浆防御 | 待验收 | 目标隔岩浆 | `!follow <player>` 目标在岩浆对侧——bot 应绕行而非步入岩浆 | | |
+| G1 受击响应（guard） | 待验收 | 附近有怪物 + 任务运行中 | 运行 exclusive 任务（combat/farm）时引怪攻击 bot——任务应被抢占（停止/暂停），战斗清理后自动恢复；30s 冷却内重复受击不重复触发；死亡重生后首次受击立即响应 | | 非 exclusive 任务暂停、exclusive 停止（含排队中）；恢复时任务时长上限保留 |
 
 ## LLM 深化（提示注入面）
 

@@ -102,7 +102,7 @@ Get-Content logs\nssm-stderr.log -Encoding UTF8 -Tail 50  # 启动期 stderr（�
 
 - 依赖安装 `--omit=dev`（deploy.ps1 默认，省 dev 包）
 - Bot 已设 `BELOW_NORMAL_PRIORITY_CLASS`：其他程序优先；卡顿可 `nssm set minecraft-bot AppPriority NORMAL_PRIORITY_CLASS` 后 restart
-- `maxSteps: 8` / `maxActionsPerCall: 8` 保持默认（防 LLM 工具循环吃 CPU）；`l2.cooldownMs` 可调大（如 10000）降低请求负载；`l2.cloudTimeoutMs` 默认 60s
+- `maxSteps: 15` / `maxActionsPerCall: 8` 保持默认（防 LLM 工具循环吃 CPU）；`l2.cooldownMs` 可调大（如 10000）降低请求负载；`l2.cloudTimeoutMs` 默认 60s
 - 任务均为区域限定；farm/chop/combat/breed 为 exclusive 互斥（不会并发抢寻路/采集）
 - 无 MemoryMax 等价物：用任务管理器观察；LLM 推理在云端，本地负载主要是 Bot 自身
 

@@ -23,7 +23,7 @@ const EXPECTED = {
   'mineflayer-pathfinder': { kind: 'npm', version: '2.4.5' },
   'prismarine-chunk': { kind: 'npm', version: '1.41.0' },
   'prismarine-physics': { kind: 'npm', version: '1.11.1' },
-  // 26.1 raycast 同步化补丁（第 12 轮根因修复）——版本 pin + 哨兵见 PATCH_SENTINELS
+  // 26.1 raycast 同步化补丁——版本 pin + 哨兵见 PATCH_SENTINELS
   'prismarine-world': { kind: 'npm', version: '3.7.0' }
 }
 
@@ -31,24 +31,24 @@ const EXPECTED = {
 // patches/ 对应的补丁里，存在即证明 postinstall 的 patch-package 已应用
 const PATCH_SENTINELS = {
   // 多哨兵（嵌套数组）：version.js 验证 26.1.2 版本 pin；entities.js 验证
-  // use_entity 去门控（第 13 轮独立审查）——useEntityUsesEntityId 特性不存在，
-  // 旧门控是死代码，attackUsesOwnPacket 分支写独立 attack 包（哨兵字符串仅
-  // 存在于补丁后文件；回退旧门控 → 行消失 → check:compat FAIL）
+  // use_entity 去门控——useEntityUsesEntityId 特性不存在，旧门控是死代码，
+  // attackUsesOwnPacket 分支写独立 attack 包（哨兵字符串仅存在于补丁后文件；
+  // 回退旧门控 → 行消失 → check:compat FAIL）
   'mineflayer+4.37.1.patch': [
     ['node_modules/mineflayer/lib/version.js', "'26.1.2'"],
     ['node_modules/mineflayer/lib/plugins/entities.js', "write('attack', { entityId: target.id })"]
   ],
   'minecraft-protocol+1.66.2.patch': ['node_modules/minecraft-protocol/src/version.js', "'26.1.2'"],
-  // 半嵌挤回 + float32 余量（第 9 轮爬升根治）：computeOffsetX/Z 对"位置与方块
-  // 重叠的水平前进"挤回块外脱嵌；贴墙停在"块面 ± F32_EPS"（float32 上报不重叠，
-  // 消除 Paper 拉回循环与半嵌死锁）
+  // 半嵌挤回 + float32 余量：computeOffsetX/Z 对"位置与方块重叠的水平前进"
+  // 挤回块外脱嵌；贴墙停在"块面 ± F32_EPS"（float32 上报不重叠，消除 Paper
+  // 拉回循环与半嵌死锁）
   'prismarine-physics+1.11.1.patch': ['node_modules/prismarine-physics/lib/aabb.js', 'F32_EPS'],
-  // 执行器起跳中停 forward 修复（第 9 轮）：补丁第 4 个（第 11 轮补哨兵——
-  // 此前 EXPECTED/PATCH_SENTINELS 只覆盖 3/4，pathfinder 版本漂移且补丁恰好
-  // 仍能 apply 时 check:compat 全绿但爬升根治语义可能已变）
+  // 执行器起跳中停 forward 修复——此前 EXPECTED/PATCH_SENTINELS 只覆盖 3/4，
+  // pathfinder 版本漂移且补丁恰好仍能 apply 时 check:compat 全绿但爬升根治
+  // 语义可能已变
   'mineflayer-pathfinder+2.4.5.patch': ['node_modules/mineflayer-pathfinder/index.js', '爬升修复（第 9 轮）'],
-  // raycast 同步化（第 12 轮 A* 永不收敛超时根因修复）：async getBlock 让同步调用者
-  //（pathfinder GoalLookAtBlock.isEnd / mineflayer blockAtCursor）拿到 Promise 恒 false
+  // raycast 同步化：async getBlock 让同步调用者（pathfinder GoalLookAtBlock.isEnd /
+  // mineflayer blockAtCursor）拿到 Promise 恒 false
   'prismarine-world+3.7.0.patch': ['node_modules/prismarine-world/src/world.js', '同步版（26.1 回归修复）']
 }
 
@@ -179,7 +179,7 @@ async function main () {
       '需 prismarine-physics ≥ 1.11.0（官方已发布 26.1 特性标记，npm install 即可）')
   }
 
-  // 3.6 项目版本一致性（第六轮 C4：版本单一来源 = package.json，lockfile 交叉校验——
+  // 3.6 项目版本一致性（版本单一来源 = package.json，lockfile 交叉校验——
   // 此前 check-compat 持有 EXPECTED_VERSION 双处维护。package-lock.json 根 version 与
   // packages[""].version 两处漏改会被这里拦截，指引用 release.mjs）
   const pkgPath = path.join(ROOT, 'package.json')

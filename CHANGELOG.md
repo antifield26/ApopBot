@@ -3,6 +3,41 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 **版本单一来源 = package.json**（`node scripts/release.mjs [patch|minor|major]` bump，check:compat 交叉校验 package.json ↔ lockfile）。
 
+## [1.5.1] - 2026-08-13
+
+v1.5.0 之后的维护档：受击响应（guard）新功能 + 时间链路 + 协议补丁修正 + 全面审查修复（高/中/低危 26 项 + 测试缺口 + 文档对齐）。
+
+### 新增
+
+- **受击响应（guard）**：被怪物攻击（entityHurt 怪物源）自动响应——非 exclusive 任务暂停、exclusive 任务停止（含排队中），启动 combat 清理（`guard.radius`/`cooldownMs` 可配），范围清空后自动恢复被抢占的任务；死亡重置冷却（重生后首次受击立即响应，防被蹲守连环击杀）；玩家/环境/自伤源不触发
+- **时间链路（time-query）**：`/minecraft:time query` 命令查询替代 age 近似（26.1 协议无 dayTime 字段）——显式 namespace 防服务器插件覆盖、translate 新键数组解析、clockUpdates 对象数组反序列化（dayTime 不再被 world age 污染）；周期 30s→15s（防服务器 30s 无包 timeout 踢出）；weather 的 isRaining 由 rain_level_change level 驱动
+- **协议补丁修正**：use_entity 去门控改无条件新格式（`{target, hand, location(lpVec3 必填), sneaking}` + 独立 attack 包——修复补丁死代码与字段名错误）；prismarine-world 3.7.0 raycast 同步化补丁（A* 永不收敛超时根因）；check-compat 补第 5 个补丁哨兵
+
+### 修复（全面审查——高/中/低危 26 项）
+
+- **H1 时长上限持久化**：`rec.maxMinutes` 入口持久化——guard 抢占重启（restartStopped）不再丢时长上限（此前 pendingMaxMinutes 启动即消费置空 → 定时任务可无限运行）
+- **H2 排队任务通知断链**：exclusive 冲突排队的 scheduled 任务完成不再跳过 next 链/规划器通知（与直启路径行为统一）
+- **M1 任务链持久化**：next 任务补 adHoc 标记 + 写状态快照——重启/重连后链中间任务不再凭空消失
+- **M2 discovery 跨维度吞并**：chunkKey 拼入维度——下界/主世界同 chunk 资源不再互相吞并（query 按维度过滤后吞并记录永远查不到）
+- **M3 breed 计数虚报**：interact_entity 喂食冷却过滤（minFeedIntervalMs=300000，MC 繁殖冷却）——同只动物冷却内不重复喂食，breedings 计数不再零繁殖即"完成"
+- **M4 sleep 监听器泄漏**：abort 监听 finally 配对移除（farm 每晚睡觉每晚泄漏 1 个，数周后 abort 触发几十个无意义回调）
+- **M5 功能层重建失败半初始化**：doRebuild 失败 → ctx.bot 置空 + 残留拆除 + rebuildFails 入 /metrics（此前 /metrics 谎报、!agent 误导直到下次 spawn）
+- **M6 幽灵动作收敛**：raceAbort 竞速取消（dig/place/plant/collect，collect 附 cancelTask 真取消）+ equip 超时后手持校验 + 喂食片间等待可中断——超时/停止后底层动作不再被无界等待
+- **M7 聊天串行化 + 终态节流**：sendChat 模块级队列（多源分片不交错混排）；同任务终态通知 60s 节流（farm stopWhenDone 刷屏聊天与 webhook），failed 永不节流
+- **M8 插件装载窗口死句柄**：connect 时 plugins 置空——重连装载窗口内 !follow 不再在旧代死 client 上抛错 → fatalExit 停服
+- **M9 多角色 user 串扰**：follow_player 指代消解改读 per-action runtime.user——角色 A 的"跟随我"不再解析到角色 B 的调用者（删除 execUser 累积写）
+- **M10 reload 可测化**：热重载逻辑抽取 src/core/reload.js（依赖注入）——行为测试替换"读源码断言行序"守卫
+- **低危 16 项**：插件失败重连计数确定性单次（异步 end 不再恒 0）、空动作数组补审计、chunkText ≤0 死循环守卫、_internalWait setTimeout 溢出钳制、状态快照深拷贝、EADDRINUSE 退避重试（端点不再永久死亡）、!task start 反馈轮询、pretest 接入 check:compat、provider 中止抛 AbortError（stop 不再误报"处理出错"）、滚动摘要可重复触发（滚出窗口历史不再永久丢失）、TASK_STATES 死代码删除、哨兵目标文件缺失显式 FAIL、migrate-upstream 过时禁用、skills 缺 id 归一化（覆盖刷新生效）、fire-and-forget 显式 catch、smoke 监听清理
+
+### 测试
+
+- 648 项全绿（+39）：tasks/discovery/primitives/feature-layer/chat/connection/executor/reload/l2 回归测试 + 新测试文件 fl-death（此前零覆盖）/idle-watcher（此前零覆盖）/reload/primitives
+- check:compat 经 pretest 自动进 `npm test` 链（CI Node 24/26 矩阵覆盖）
+
+### 文档
+
+- 对齐 10 处文档与代码不一致：maxSteps 8→15（README/deploy）、补丁清单 4→5 + prismarine-world、use_entity 新格式描述、guard 功能补记（README/architecture/acceptance）、结构树更新（fl-* 拆分/reload/http-status/primitives/skills 等）、roadmap 缓做项勾销、注释规范补丁哨兵例外条款
+
 ## [1.5.0] - 2026-08-12
 
 LLM 自主学习循环（skill 库）+ 评估-修复（独立提交——自主学习 / 配置修复）：
