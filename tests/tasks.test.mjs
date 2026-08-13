@@ -231,6 +231,55 @@ test('B2 时长上限：runScheduled maxMinutes 到时强制停止', async () =>
   await mgr.stopAll()
 })
 
+test('guard 抢占：preemptForCombat 停 exclusive + 暂停非 exclusive；restartStopped 重启', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  await manager.load({
+    tasks: [
+      { id: 'e1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }, // exclusive 运行
+      { id: 'n1', type: 'afk', enabled: true, options: { intervalMinutes: 1 } } // 非 exclusive
+    ]
+  })
+  await settle(5)
+  const pre = await manager.preemptForCombat()
+  assert.ok(pre.stopped.includes('e1'), 'exclusive 任务被 stop')
+  assert.ok(pre.paused.includes('n1'), '非 exclusive 任务被 pause')
+  assert.equal(manager.tasks.get('e1').task.state, 'stopped')
+  assert.equal(manager.tasks.get('n1').task.state, 'paused')
+  // restartStopped 重启被抢占的 exclusive（时长上限回挂）
+  await manager.restartStopped(pre.stopped)
+  await settle(5)
+  assert.ok(['running', 'init'].includes(manager.tasks.get('e1').task.state), 'exclusive 任务应重启')
+  await manager.stopAll()
+})
+
+test('guard 抢占：ignorePaused——用户手动暂停的 exclusive 不挡 combat 启动', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  await manager.load({
+    tasks: [
+      { id: 'e1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }
+    ]
+  })
+  await settle(5)
+  // 手动暂停 e1（用户意图——guard 不应 stop 它）
+  await manager.pauseTask('e1')
+  assert.equal(manager.tasks.get('e1').task.state, 'paused')
+  // 默认语义：paused 仍挡（不带 ignorePaused → 排队）
+  const entry = manager._createEntry({ id: 'c1', type: 'combat', options: { stopWhenNoTargets: true } })
+  manager.tasks.set('c1', entry)
+  const p1 = await manager.startTask('c1', entry)
+  assert.equal(p1, null, 'paused exclusive 默认仍挡（排队——全局互斥语义保持）')
+  assert.ok(manager._pendingExclusive.some(r => r.entry.id === 'c1'), 'c1 排队')
+  // ignorePaused（仅 guard 受击抢占用）：paused 不挡 → combat 启动
+  const p2 = manager.startTask('c1', undefined, undefined, { ignorePaused: true })
+  assert.ok(p2 instanceof Promise, 'ignorePaused 下 paused exclusive 不挡 combat（返回 run promise 而非排队 null）')
+  await settle(3)
+  const s = manager.getStatus().find(t => t.id === 'c1')
+  assert.ok(['running', 'init', 'completed'].includes(s.state), `c1 应已启动（实际 ${s?.state}）`)
+  await manager.stopAll()
+})
+
 test('E 修复：scheduled exclusive 排队启动后仍到时停止（时长上限不丢）', async () => {
   const bot = makeCombatBot()
   const manager = new TaskManager({}, makeLogger(), { bot })

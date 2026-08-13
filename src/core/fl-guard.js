@@ -42,20 +42,26 @@ export function installGuardResponse (ctx, bot, log) {
     lastTriggerAt = now
     const radius = g.radius ?? 32
     const id = 'guard-response'
-    let paused = []
+    // 抢占：非 exclusive 任务 pause（战斗后 resume）；exclusive 任务 stop
+    //（在飞动作取消——此前 pauseAll 只置 paused，但 startTask 的 busy 判定含
+    // paused → guard combat 排队 → 被移除 → exclusive 任务运行中受击完全无响应）
+    let preempted = { paused: [], stopped: [] }
     try {
-      paused = (await ctx.tasks?.pauseAll?.()) ?? []
+      preempted = (await ctx.tasks?.preemptForCombat?.()) ?? { paused: [], stopped: [] }
     } catch (err) {
-      log().warn({ err: err.message }, 'guard: pause failed')
+      log().warn({ err: err.message }, 'guard: preempt failed')
     }
+    const paused = preempted.paused
     guardActive = true
-    log().info({ paused, radius }, 'guard: 受击响应——暂停任务清理怪物')
+    log().info({ paused, stopped: preempted.stopped, radius }, 'guard: 受击响应——抢占任务清理怪物')
     try {
       // enabled:false 禁用 addTask 自动启动——否则自动启动（fire-and-forget）与
       // 显式 startTask 竞态：任务 init 但 _runPromise 未赋值时 startTask 返回 null
       // → guard 跳过 await → 立即 removeTask（combat 未执行就被移除，实测）
       ctx.tasks?.addTask({ id, type: 'combat', options: { aggroRange: radius, attackRange: 3.5, stopWhenNoTargets: true, maxTargets: 0 }, notifyChat: false, enabled: false })
-      const runPromise = ctx.tasks?.startTask?.(id)
+      // ignorePaused：用户手动暂停的 exclusive 任务不挡 combat（preemptForCombat
+      // 已停掉/保持暂停的 running exclusive——战斗后由 restartStopped 恢复）
+      const runPromise = ctx.tasks?.startTask?.(id, undefined, undefined, { ignorePaused: true })
       if (runPromise) {
         // combat 自然完成（范围清空）→ resolve；10 分钟上限防无限刷
         //（timer unref——测试/退出不被挂起的超时阻塞）
@@ -72,6 +78,8 @@ export function installGuardResponse (ctx, bot, log) {
       guardActive = false
       // 完成后清理 guard 任务（残留/完成统一清——异常中断路径幂等）
       try { await ctx.tasks?.removeTask?.(id) } catch { /* 任务可能已移除 */ }
+      // 先重启被抢占的 exclusive 任务（战斗结束恢复原任务），再恢复暂停的任务
+      try { await ctx.tasks?.restartStopped?.(preempted.stopped) } catch { /* 重启失败已记日志 */ }
       for (const pid of paused) {
         ctx.tasks?.resumeTask(pid).catch(() => { /* 任务可能已结束 */ })
       }

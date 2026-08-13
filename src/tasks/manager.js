@@ -167,14 +167,18 @@ export class TaskManager {
    *   rec.pendingMaxMinutes，drain 启动时补挂——排队不再丢上限）
    * @returns {Promise<void>|null}
    */
-  async startTask (id, rec, maxMinutes) {
+  async startTask (id, rec, maxMinutes, opts = {}) {
     rec = rec ?? this.tasks.get(id)
     if (!rec) return null
     if (RUNNING_STATES.includes(rec.task.state)) return rec.task._runPromise ?? null
 
     if (rec.task.exclusive) {
+      // ignorePaused（仅 guard 受击抢占用）：用户手动暂停的 exclusive 任务不挡
+      // combat——paused 任务已被 guard 前的 preemptForCombat 停掉/保持暂停；
+      // 全局默认语义不变（paused 仍算 busy，防手动暂停后并发 exclusive 双驱动）
       const busy = [...this.tasks.values()].find(r =>
-        r !== rec && r.task.exclusive && RUNNING_STATES.includes(r.task.state))
+        r !== rec && r.task.exclusive &&
+        (opts.ignorePaused ? ['init', 'running'].includes(r.task.state) : RUNNING_STATES.includes(r.task.state)))
       if (busy) {
         // 排队而非静默拒绝：冲突任务终态后自动补启动（否则被拒任务永远停在 created）
         this.log.warn({ task: id, conflict: busy.entry.id }, 'exclusive 任务运行中，排队等待')
@@ -226,6 +230,47 @@ export class TaskManager {
       () => { releaseArbiter(); this._drainExclusive(); this._snapshotCounters(); this._notifyCompletion(rec) }
     )
     return p
+  }
+
+  /**
+   * 受击响应抢占（guard 用）：非 exclusive 任务 pause（战斗后 resume）；
+   * exclusive 任务 stop（终态 + 在飞动作取消——pause 不取消 collect，
+   * 战斗重叠窗口不可接受）。排队中的 exclusive（created）一并 stop
+   * （否则 drain 立即补启动 → combat 又被挡）。
+   * @returns {Promise<{ paused: string[], stopped: string[] }>}
+   */
+  async preemptForCombat () {
+    const paused = []
+    const stopped = []
+    for (const [id, rec] of this.tasks) {
+      if (rec.task.state !== 'init' && rec.task.state !== 'running') continue
+      if (rec.task.exclusive) {
+        await this.stopTask(id) // 含 _releaseArbiter + 排队过滤 + drain
+        stopped.push(id)
+      } else {
+        paused.push(id)
+        await rec.task.pause()
+      }
+    }
+    // 排队中的 exclusive（created）经 stopTask 的 drain 会补启动——同拦下，战斗后统一重启
+    for (const rec of [...this._pendingExclusive]) {
+      await this.stopTask(rec.entry.id)
+      stopped.push(rec.entry.id)
+    }
+    return { paused, stopped }
+  }
+
+  /**
+   * guard 战斗结束后重启被抢占的 exclusive 任务（时长上限经 pendingMaxMinutes 回挂）。
+   * @param {string[]} ids
+   */
+  async restartStopped (ids) {
+    for (const id of ids) {
+      const rec = this.tasks.get(id)
+      if (!rec || !['stopped', 'failed', 'completed'].includes(rec.task.state)) continue
+      this.startTask(id, rec, rec.pendingMaxMinutes ?? undefined)
+        .catch(err => this.log.error({ task: id, err: err.message }, 'guard 抢占后重启失败'))
+    }
   }
 
   /** 常驻任务终态通知：完成/失败不再静默（用户可感知"指令已生效/已结束"）。 */

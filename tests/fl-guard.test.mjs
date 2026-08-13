@@ -18,10 +18,12 @@ function makeTasks () {
   return {
     calls,
     combatDone,
-    pauseAll: async () => { calls.pauseAll++; return ['m1', 'e1'] }, // 暂停两个任务
+    // 抢占语义（v1.5.1+）：非 exclusive pause、exclusive stop
+    preemptForCombat: async () => { calls.preempt = (calls.preempt ?? 0) + 1; return { paused: ['m1'], stopped: ['e1'] } },
     addTask: (entry) => { calls.addTask.push(entry) },
-    startTask: async (id) => { calls.startTask.push(id); return combatPromise },
+    startTask: async (id, _rec, _maxMinutes, opts) => { calls.startTask.push({ id, opts }); return combatPromise },
     removeTask: async (id) => { calls.removeTask.push(id) },
+    restartStopped: async (ids) => { calls.restartStopped = (calls.restartStopped ?? []).concat(ids) },
     resumeTask: async (id) => { calls.resumeTask.push(id) }
   }
 }
@@ -42,19 +44,20 @@ test('guard: 怪物攻击 → 暂停任务 + combat 清理 + 完成后恢复', a
   const { bot, tasks } = makeEnv()
   bot.emit('entityHurt', bot.entity, hostileSource)
   await new Promise((r) => setTimeout(r, 10))
-  assert.equal(tasks.calls.pauseAll, 1, '受击应暂停全部任务')
+  assert.equal((tasks.calls.preempt ?? 0), 1, '受击应暂停全部任务')
   assert.equal(tasks.calls.addTask.length, 1)
   assert.equal(tasks.calls.addTask[0].id, 'guard-response')
   assert.equal(tasks.calls.addTask[0].type, 'combat')
   assert.deepEqual(tasks.calls.addTask[0].options, { aggroRange: 32, attackRange: 3.5, stopWhenNoTargets: true, maxTargets: 0 })
   assert.equal(tasks.calls.addTask[0].notifyChat, false, 'guard 任务静默创建')
   assert.equal(tasks.calls.addTask[0].enabled, false, '禁用自动启动（防与显式 startTask 竞态——combat 未执行就被移除）')
-  assert.deepEqual(tasks.calls.startTask, ['guard-response'])
-  // combat 完成（范围清空）→ 移除 guard 任务 + 恢复暂停的任务
+  assert.deepEqual(tasks.calls.startTask, [{ id: "guard-response", opts: { ignorePaused: true } }])
+  // combat 完成（范围清空）→ 移除 guard 任务 → 重启被抢占的 exclusive → 恢复暂停的任务
   tasks.combatDone()
   await new Promise((r) => setTimeout(r, 10))
   assert.deepEqual(tasks.calls.removeTask, ['guard-response'])
-  assert.deepEqual(tasks.calls.resumeTask, ['m1', 'e1'], '恢复暂停的任务')
+  assert.deepEqual(tasks.calls.restartStopped, ['e1'], '被抢占的 exclusive 任务应重启')
+  assert.deepEqual(tasks.calls.resumeTask, ['m1'], '恢复暂停的任务')
 })
 
 test('guard: 玩家/自伤源不触发', async () => {
@@ -63,7 +66,7 @@ test('guard: 玩家/自伤源不触发', async () => {
   bot.emit('entityHurt', bot.entity, bot.entity)
   bot.emit('entityHurt', bot.entity, null)
   await new Promise((r) => setTimeout(r, 10))
-  assert.equal(tasks.calls.pauseAll, 0, '玩家/PvP/环境自伤不触发守卫')
+  assert.equal((tasks.calls.preempt ?? 0), 0, '玩家/PvP/环境自伤不触发守卫')
   assert.equal(tasks.calls.addTask.length, 0)
 })
 
@@ -71,35 +74,35 @@ test('guard: 冷却内重复受击不触发；combat 运行中不重复', async 
   const { bot, tasks } = makeEnv()
   bot.emit('entityHurt', bot.entity, hostileSource)
   await new Promise((r) => setTimeout(r, 10))
-  assert.equal(tasks.calls.pauseAll, 1)
+  assert.equal((tasks.calls.preempt ?? 0), 1)
   // combat 运行中（未 resolve）再受击 → 跳过
   bot.emit('entityHurt', bot.entity, hostileSource)
   await new Promise((r) => setTimeout(r, 10))
-  assert.equal(tasks.calls.pauseAll, 1, '清理中不重复触发')
+  assert.equal((tasks.calls.preempt ?? 0), 1, '清理中不重复触发')
   // combat 完成后冷却内再受击 → 跳过
   tasks.combatDone()
   await new Promise((r) => setTimeout(r, 10))
   bot.emit('entityHurt', bot.entity, hostileSource)
   await new Promise((r) => setTimeout(r, 10))
-  assert.equal(tasks.calls.pauseAll, 1, '冷却内不重复触发')
+  assert.equal((tasks.calls.preempt ?? 0), 1, '冷却内不重复触发')
 })
 
 test('guard: 死亡重置冷却——重生后首次受击立即触发（怪物多时死亡循环场景）', async () => {
   const { bot, tasks } = makeEnv()
   bot.emit('entityHurt', bot.entity, hostileSource)
   await new Promise((r) => setTimeout(r, 10))
-  assert.equal(tasks.calls.pauseAll, 1)
+  assert.equal((tasks.calls.preempt ?? 0), 1)
   tasks.combatDone()
   await new Promise((r) => setTimeout(r, 10))
   // 冷却内受击被挡
   bot.emit('entityHurt', bot.entity, hostileSource)
   await new Promise((r) => setTimeout(r, 10))
-  assert.equal(tasks.calls.pauseAll, 1, '死亡前冷却内受击不触发')
+  assert.equal((tasks.calls.preempt ?? 0), 1, '死亡前冷却内受击不触发')
   // 死亡 → 冷却重置 → 受击立即触发
   bot.emit('death')
   bot.emit('entityHurt', bot.entity, hostileSource)
   await new Promise((r) => setTimeout(r, 10))
-  assert.equal(tasks.calls.pauseAll, 2, '死亡重置冷却——重生后首次受击立即触发战斗')
+  assert.equal((tasks.calls.preempt ?? 0), 2, '死亡重置冷却——重生后首次受击立即触发战斗')
   tasks.combatDone()
   await new Promise((r) => setTimeout(r, 10))
 })
@@ -108,7 +111,7 @@ test('guard: enabled=false 不响应', async () => {
   const { bot, tasks } = makeEnv({ cfg: { guard: { enabled: false, radius: 32, cooldownMs: 30000 } } })
   bot.emit('entityHurt', bot.entity, hostileSource)
   await new Promise((r) => setTimeout(r, 10))
-  assert.equal(tasks.calls.pauseAll, 0)
+  assert.equal((tasks.calls.preempt ?? 0), 0)
   assert.equal(tasks.calls.addTask.length, 0)
 })
 
@@ -116,7 +119,7 @@ test('guard: 无配置（cfg 无 guard 块）→ 默认启用', async () => {
   const { bot, tasks } = makeEnv({ cfg: {} })
   bot.emit('entityHurt', bot.entity, hostileSource)
   await new Promise((r) => setTimeout(r, 10))
-  assert.equal(tasks.calls.pauseAll, 1, '缺省配置按默认启用')
+  assert.equal((tasks.calls.preempt ?? 0), 1, '缺省配置按默认启用')
 })
 
 test('guard: addTask 冲突（残留）→ 本次跳过 + finally 清理残留（异常路径幂等）', async () => {
@@ -130,7 +133,8 @@ test('guard: addTask 冲突（残留）→ 本次跳过 + finally 清理残留�
   bot.emit('entityHurt', bot.entity, hostileSource)
   await new Promise((r) => setTimeout(r, 10))
   assert.deepEqual(tasks.calls.removeTask, ['guard-response'], 'finally 清理残留')
-  assert.deepEqual(tasks.calls.resumeTask, ['m1', 'e1'], '异常路径仍恢复任务')
+  assert.deepEqual(tasks.calls.restartStopped, ['e1'], '异常路径仍重启被抢占 exclusive')
+  assert.deepEqual(tasks.calls.resumeTask, ['m1'], '异常路径仍恢复任务')
   // 下次受击正常（残留已清；推进冷却）
   tasks.addTask = original
   ctx.cfg.guard.cooldownMs = 0
