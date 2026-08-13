@@ -670,6 +670,23 @@ test('addTask 携带 schedule——注册 cron 不立即启动（ad-hoc 定时�
   await mgr.stopAll()
 })
 
+test('任务链 next 透传 schedule——scheduled 链任务注册 cron 而非停在 created', async () => {
+  const bot = makeCombatBot()
+  const mgr = new TaskManager({ scheduleTimezone: 'UTC' }, makeLogger(), { bot }, null, () => null)
+  // 父任务自然完成（combat stopWhenNoTargets 一轮完成）→ next 带 schedule 注册 cron
+  mgr.addTask({
+    id: 'p1', type: 'combat', options: { stopWhenNoTargets: true },
+    next: { id: 'm1', type: 'combat', options: { stopWhenNoTargets: true }, schedule: '0 3 * * *' }
+  })
+  await settle(10)
+  const st = mgr.getStatus().find(t => t.id === 'm1')
+  assert.ok(st, 'next 任务应被注册')
+  assert.ok(st.nextRunAt instanceof Date, 'next 任务应注册 cron（有下次触发时间）')
+  assert.equal(st.state, 'created', 'scheduled next 任务注册而非启动')
+  assert.ok(mgr.tasks.get('m1').cron, 'cron 句柄应存在')
+  await mgr.stopAll()
+})
+
 test('自然完成触发 agent.onTaskCompleted（entry 链已启动则不触发）', async () => {
   const calls = []
   const bot = makeCombatBot()

@@ -260,7 +260,9 @@ export class TaskManager {
     }
     this.log.info({ from: rec.entry.id, next: next.id }, 'task chain: 自然完成，启动下一个任务')
     try {
-      const entry = { id: next.id, type: next.type, options: next.options ?? {} }
+      // next 条目必须透传 schedule：_createSchedule 读 rec.entry.schedule——
+      // 此前漏传导致 next 任务注册后 cron=null 且不启动，永久停在 created（静默失效）
+      const entry = { id: next.id, type: next.type, options: next.options ?? {}, ...(next.schedule ? { schedule: next.schedule } : {}) }
       const newRec = this._createEntry(entry)
       this.tasks.set(next.id, newRec) // 先入表再启动（exclusive 互斥判定依赖登记）
       if (next.schedule) {
