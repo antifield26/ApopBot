@@ -46,10 +46,16 @@ export function createStatusServer (getCfg, logger, getState) {
     logger.info({ port: cfg.http.port }, 'http status server listening on 127.0.0.1')
   }
 
-  function stop () {
+  async function stop () {
     if (!server) return
-    server.close()
+    const s = server
     server = null
+    // await close 完成再返回：热重载 stop→start 同端口时，close 未完成 listen
+    // 会 EADDRINUSE → error 处理器置 server=null → 端点永久死亡（C6/K 同源）
+    await new Promise((/** @type {(v?: unknown) => void} */ resolve) => {
+      s.close(() => resolve())
+      s.closeAllConnections?.() // keep-alive 连接不阻塞 close（本地短请求，罕见但防挂）
+    })
   }
 
   // 测试访问器

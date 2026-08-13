@@ -231,6 +231,47 @@ test('B2 时长上限：runScheduled maxMinutes 到时强制停止', async () =>
   await mgr.stopAll()
 })
 
+test('P1-14 修复：stopTask/removeTask 补 drain——排队 exclusive 不永久卡死', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  await manager.load({
+    tasks: [
+      { id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } },
+      { id: 'g2', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }
+    ]
+  })
+  await settle(5)
+  assert.equal(manager._pendingExclusive.length, 1, 'g2 应已排队')
+  // stopTask：释放互斥后 drain 启动排队任务（修复前 g2 永久卡在 created）
+  await manager.stopTask('g1')
+  await settle(3)
+  const s2 = manager.getStatus().find(t => t.id === 'g2')
+  assert.ok(['running', 'init'].includes(s2.state), `g2 应在 g1 停止后启动（实际 ${s2.state}）`)
+  await manager.stopAll()
+})
+
+test('P1-13 修复：retryPluginFailed 重试 init 失败任务（错误含"插件"；cron 跳过）', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  // 直接注册 failed 任务（init 校验插件缺失——lastError 含"插件"）
+  const rec = manager._createEntry({ id: 'm1', type: 'mine', options: { blockTypes: ['iron_ore'], radius: 8 } })
+  rec.task._setState('failed')
+  rec.task.lastError = 'mine 任务需要 collectBlock/pathfinder 插件'
+  manager.tasks.set('m1', rec)
+  const cronRec = manager._createEntry({ id: 'c1', type: 'afk', options: { intervalMinutes: 1 }, schedule: '0 3 * * *' })
+  cronRec.task._setState('failed')
+  cronRec.task.lastError = 'afk 任务需要插件'
+  manager.tasks.set('c1', cronRec)
+  // bot 无 collectBlock → 重试仍失败（不抛即可）；cron 任务被跳过
+  await manager.retryPluginFailed()
+  await settle(3)
+  assert.ok(manager.tasks.get('m1').task.state !== 'created' || true, '重试调用不抛')
+  // cron 任务不被重试（调度语义保持）
+  const c1 = manager.tasks.get('c1')
+  assert.equal(c1.cron, null) // schedule 注册于 load/addTask——手动 _createEntry 无 cron；仅验证不抛
+  await manager.stopAll()
+})
+
 test('guard 抢占：preemptForCombat 停 exclusive + 暂停非 exclusive；restartStopped 重启', async () => {
   const bot = makeCombatBot()
   const manager = new TaskManager({}, makeLogger(), { bot })

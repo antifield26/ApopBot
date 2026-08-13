@@ -233,6 +233,20 @@ export class TaskManager {
   }
 
   /**
+   * 插件装载晚于 spawn 时重试 init 失败的任务（错误含"插件"字样——
+   * mine/farm/chop 的 init 硬校验 collectBlock/pathfinder；cron 任务等
+   * cron 触发不在此重试——调度语义保持）。
+   */
+  async retryPluginFailed () {
+    for (const [id, rec] of this.tasks) {
+      if (rec.task.state !== 'failed' || rec.cron) continue
+      if (typeof rec.task.lastError !== 'string' || !rec.task.lastError.includes('插件')) continue
+      this.log.info({ task: id, err: rec.task.lastError }, '插件就绪，重试 init 失败的任务')
+      this.startTask(id, rec).catch(err => this.log.error({ task: id, err: err.message }, '插件重试启动失败'))
+    }
+  }
+
+  /**
    * 受击响应抢占（guard 用）：非 exclusive 任务 pause（战斗后 resume）；
    * exclusive 任务 stop（终态 + 在飞动作取消——pause 不取消 collect，
    * 战斗重叠窗口不可接受）。排队中的 exclusive（created）一并 stop
@@ -466,6 +480,9 @@ export class TaskManager {
     // !task stop 排队中的 exclusive 任务（created 状态）：rec 留在 _pendingExclusive
     // 会让 !task list 误报"排队中"、getStatus.queuePosition 误报位置
     this._pendingExclusive = this._pendingExclusive.filter(r => r !== rec)
+    // stop 超时强制结束时 run 永不 settle → startTask 的 drain 点永不触发——
+    // 排队任务必须在此补 drain（否则永久卡在队列 created）
+    this._drainExclusive()
     return true
   }
 
@@ -556,6 +573,8 @@ export class TaskManager {
     this._releaseArbiter(rec) // A1：移除路径同款释放
     this.tasks.delete(id)
     this._pendingExclusive = this._pendingExclusive.filter(r => r !== rec)
+    // 同 stopTask：移除释放互斥后补 drain——排队任务不被"stop 超时永不 settle"卡死
+    this._drainExclusive()
     // 计数器随任务移除清理（否则快照只写不删 → state.json 垃圾数据无限增长）
     this._stateStore?.deleteCounter?.(id)
     this.log.info({ task: id }, 'ad-hoc task removed')

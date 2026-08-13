@@ -181,12 +181,27 @@ test('热重载：stop 后改配置再 start（新端口生效）', async (t) =>
   const server = makeServer(makeState(), cfg)
   t.after(() => server.stop())
   const port1 = await waitForPort(server)
-  server.stop()
+  await server.stop()
   assert.equal(server.isRunning(), false)
   server.start() // 模拟 reload：同一 getCfg 闭包，端口仍是 0 → 新监听
   const port2 = await waitForPort(server)
   assert.ok(port2, '重启后应重新监听')
   assert.notEqual(port2, port1)
+})
+
+test('P1-15 修复：stop await close 完成——同端口立即重启不 EADDRINUSE', async (t) => {
+  const cfg = { http: { enabled: true, port: 0 } }
+  const server = makeServer(makeState(), cfg)
+  t.after(() => server.stop())
+  const port1 = await waitForPort(server)
+  // 同端口立即重启（stop await close 完成再 start——此前 close 未完成 listen
+  // 同端口 → EADDRINUSE → error 处理器置 server=null → 端点永久死亡）
+  cfg.http.port = port1
+  await server.stop()
+  server.start()
+  const r = await fetchJson(port1, '/health')
+  assert.equal(r.status, 200, '同端口重启后端点应存活')
+  assert.equal(server.isRunning(), true)
 })
 
 // C6/K 回归守卫：http 变更检测必须在 ctx.cfg 赋值之前计算——原实现比较在赋值后

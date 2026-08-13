@@ -95,6 +95,9 @@ const conn = new ConnectionManager(cfg, logger, {
     // spawn 先于插件装载完成时补发最新句柄——陈旧句柄绑定已断开的 client，
     // !follow 在其上 setControlState 会抛错（uncaughtException → fatalExit 停服）
     ctx.plugins = plugins
+    // 插件装载晚于 spawn：init 校验插件的配置任务（mine/farm/chop）失败后在此
+    // 重试——queue 保证排在 rebuild 之后（rebuild 是队列异步，直接调会与其竞争）
+    layer.queue(() => ctx.tasks?.retryPluginFailed?.()).catch(() => {})
   },
   onStateChange: (state) => {
     logger.info({ state }, 'connection state changed')
@@ -169,7 +172,7 @@ async function reload () {
 
   // HTTP 状态端点配置变化 → 重启监听（getCfg 闭包取最新配置）
   if (httpChanged) {
-    statusServer.stop()
+    await statusServer.stop() // await close 完成再 listen——同端口重启不 EADDRINUSE
     statusServer.start()
   }
 

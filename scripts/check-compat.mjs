@@ -22,7 +22,9 @@ const EXPECTED = {
   'mineflayer': { kind: 'npm', version: '4.37.1' },
   'mineflayer-pathfinder': { kind: 'npm', version: '2.4.5' },
   'prismarine-chunk': { kind: 'npm', version: '1.41.0' },
-  'prismarine-physics': { kind: 'npm', version: '1.11.1' }
+  'prismarine-physics': { kind: 'npm', version: '1.11.1' },
+  // 26.1 raycast 同步化补丁（第 12 轮根因修复）——版本 pin + 哨兵见 PATCH_SENTINELS
+  'prismarine-world': { kind: 'npm', version: '3.7.0' }
 }
 
 // 补丁哨兵（3.7）：node_modules 内必须存在补丁引入的标记行——它只出现在
@@ -44,7 +46,10 @@ const PATCH_SENTINELS = {
   // 执行器起跳中停 forward 修复（第 9 轮）：补丁第 4 个（第 11 轮补哨兵——
   // 此前 EXPECTED/PATCH_SENTINELS 只覆盖 3/4，pathfinder 版本漂移且补丁恰好
   // 仍能 apply 时 check:compat 全绿但爬升根治语义可能已变）
-  'mineflayer-pathfinder+2.4.5.patch': ['node_modules/mineflayer-pathfinder/index.js', '爬升修复（第 9 轮）']
+  'mineflayer-pathfinder+2.4.5.patch': ['node_modules/mineflayer-pathfinder/index.js', '爬升修复（第 9 轮）'],
+  // raycast 同步化（第 12 轮 A* 永不收敛超时根因修复）：async getBlock 让同步调用者
+  //（pathfinder GoalLookAtBlock.isEnd / mineflayer blockAtCursor）拿到 Promise 恒 false
+  'prismarine-world+3.7.0.patch': ['node_modules/prismarine-world/src/world.js', '同步版（26.1 回归修复）']
 }
 
 // 目标协议版本（与 mcVersion 对应；上游更新时在 docs/upstream-migration.md 说明）
