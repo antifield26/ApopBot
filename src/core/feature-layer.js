@@ -29,13 +29,15 @@ import { bindIdleWatcher } from './idle-watcher.js'
 export { _resetGreetState } from './fl-players.js'
 export { _resetIdleWatcher } from './idle-watcher.js'
 
-export function createFeatureLayerManager (ctx, logger) {
+export function createFeatureLayerManager (ctx, logger, deps = {}) {
   let pending = Promise.resolve()
   // time-query 定时器 stop 句柄（teardown 清理——否则重连累积死定时器）
   let timeQueryStop = null
   // 热重载会重建 logger——所有日志/组件构造一律运行时取 ctx.logger
   //（构造时捕获的初始 logger 会在重连后把任务日志写旧 transport）
   const log = () => ctx.logger ?? logger
+  // 测试注入：deps.createL2 覆盖重建路径的 L2 构造（默认零改动）
+  const createL2Impl = deps.createL2 ?? createL2
 
   /** 拆除当前功能层（幂等，逐项容错：旧 bot 可能已死）。 */
   async function teardown () {
@@ -103,7 +105,7 @@ export function createFeatureLayerManager (ctx, logger) {
     // 命令处理器闭包读取可变 ctx，dispatch 时总能拿到当前 bot
     ctx.commands = createCommandRegistry(ctx)
 
-    ctx.agent = createL2(ctx.cfg, ctx)
+    ctx.agent = createL2Impl(ctx.cfg, ctx)
 
     // 事件监听挂当前 bot 实例上（随重建/断线自然释放，无需 teardown 清理）。
     // 依赖序：commands 先于 chat（handler 分发读 ctx.commands）；
@@ -142,7 +144,19 @@ export function createFeatureLayerManager (ctx, logger) {
   function rebuild (bot) {
     pending = pending
       .then(() => doRebuild(bot))
-      .catch((err) => log().error({ err: err.message }, 'feature layer rebuild failed'))
+      .catch(async (err) => {
+        // 重建失败：ctx.bot 已指向新 bot 而 tasks/agent/commands 残缺——置空使
+        // 消费点报"未连接"而非半初始化状态（此前 /metrics 谎报 tasks:[]、
+        // !agent 报"L2 未启用"误导排障，直到下次 spawn 最长 5 分钟退避才恢复）；
+        // rebuildFails 计数入 /metrics（无人值守时唯一感知通道）；下次 spawn
+        // 自然重建，不做自动重试（失败多为配置性问题）
+        ctx.bot = null
+        ctx._rebuildFails = (ctx._rebuildFails ?? 0) + 1
+        log().error({ err: err.message }, 'feature layer rebuild failed')
+        // 半初始化残留拆除（tasks 可能已装载启动、cron 已挂）——teardown 幂等，
+        // 与断线/停止路径同语义
+        try { await teardown() } catch { /* 拆除失败不二次报错 */ }
+      })
     return pending
   }
 

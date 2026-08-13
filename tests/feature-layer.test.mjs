@@ -289,6 +289,29 @@ test('queue 串行化：重叠操作按序执行', async () => {
   await layer.teardown()
 })
 
+test('M5 修复：重建失败 → ctx.bot 置空 + 残留拆除 + rebuildFails 计数', async () => {
+  const ctx = makeCtx()
+  let failNext = true
+  const layer = createFeatureLayerManager(ctx, ctx.logger, {
+    createL2: () => {
+      if (failNext) { failNext = false; throw new Error('createL2 boom') }
+      return { stop: async () => {}, stub: true } // 第二次重建成功（轻量假 agent）
+    }
+  })
+  const bot1 = new FakeBot()
+  await layer.rebuild(bot1) // 内部 catch，不抛
+  assert.equal(ctx.bot, null, '重建失败后 ctx.bot 应置空（消费点报未连接而非半初始化谎报）')
+  assert.equal(ctx._rebuildFails, 1, 'rebuildFails 应计数（/metrics 观测通道）')
+  assert.equal(ctx.tasks, null, '半初始化残留应拆除（tasks 已装载启动）')
+  assert.equal(ctx.agent, null)
+  assert.equal(ctx.commands, null)
+  // 下次 spawn 自然重建成功
+  await layer.rebuild(new FakeBot())
+  assert.ok(ctx.bot, '下次 spawn 应自然重建成功')
+  assert.equal(ctx._rebuildFails, 1, '成功后计数保持（累计语义）')
+  await layer.teardown()
+})
+
 test('teardown 幂等（重复调用不抛）', async () => {
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)

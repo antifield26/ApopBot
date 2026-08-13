@@ -226,6 +226,7 @@ const stopWatch = watchConfig()
 const statusServer = createStatusServer(() => ctx.cfg, logger, () => ({
   conn: ctx.conn,
   bot: ctx.bot, // /metrics 坐标/血量/饱食度（运维看"卡在哪"）
+  rebuildFails: ctx._rebuildFails ?? 0, // 功能层重建失败计数（重建失败后 ctx.bot 置空——观测通道）
   discoveryStats: discovery.stats(), // 探索记忆统计
   tasks: ctx.tasks?.getStatus() ?? [],
   sessionCount: ctx.agent?.sessionCount?.() ?? 0,
