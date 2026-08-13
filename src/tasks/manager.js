@@ -291,17 +291,21 @@ export class TaskManager {
     }
   }
 
-  /** 常驻任务终态通知：完成/失败不再静默（用户可感知"指令已生效/已结束"）。 */
+  /**
+   * 常驻任务终态通知：完成/失败不再静默（用户可感知"指令已生效/已结束"）。
+   * cron 任务只跳过明文通知（scheduled 的明文由 runScheduled 负责）——链/规划器
+   * 通知不分路径：排队补启动（drain）与直启路径行为一致。
+   */
   _notifyCompletion (rec) {
-    if (rec.cron) return // scheduled 任务由 runScheduled 通知
-    if (rec.entry.notifyChat === false) return
+    const isScheduled = !!rec.cron
+    const allowNotify = rec.entry.notifyChat !== false && !isScheduled
     if (rec.task.state === 'completed') {
-      this._notify(rec, 'completed')
+      if (allowNotify) this._notify(rec, 'completed')
       // 配置链优先（链已启动则规划器跳过——避免双控制源并发 start_task）；
       // 无链时交给 LLM 规划器评估目标推进（自主行为，agent 内部有门控）
       if (!this._maybeStartNext(rec)) this._getAgent?.()?.onTaskCompleted?.(rec)
     } else if (rec.task.state === 'failed') {
-      this._notify(rec, `failed: ${rec.task.lastError ?? '未知原因'}`)
+      if (allowNotify) this._notify(rec, `failed: ${rec.task.lastError ?? '未知原因'}`)
     }
   }
 
@@ -419,10 +423,9 @@ export class TaskManager {
         return
       }
     }
+    // 明文通知保留在本函数；链/规划器由 startTask 挂的 _notifyCompletion 统一
+    // 负责（直启与排队补启动路径同源，不再重复调用）
     this._notify(rec, rec.task.state)
-    // 任务链：scheduled 自然完成同样接力 next（rec.task 已终态）；
-    // 无链时交给规划器（与 _notifyCompletion 同语义——链优先）
-    if (!this._maybeStartNext(rec)) this._getAgent?.()?.onTaskCompleted?.(rec)
   }
 
   /** 完成/失败通知（scheduled 运行；notifyChat:false 关闭聊天；webhook 独立于 notifyChat——运维通道）。 */

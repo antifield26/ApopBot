@@ -350,6 +350,47 @@ test('H1 修复：guard 抢占重启后时长上限仍生效（maxMinutes 持久
   await manager.stopAll()
 })
 
+test('H2 修复：排队启动的 scheduled 任务自然完成后仍接力 next 链', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({ scheduleTimezone: 'UTC' }, makeLogger(), { bot }, null, () => null)
+  await manager.load({
+    tasks: [
+      { id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } },
+      { id: 'g2', type: 'combat', schedule: '0 3 * * *', options: { stopWhenNoTargets: true }, notifyChat: false, next: { id: 'm1', type: 'combat', options: { stopWhenNoTargets: true }, notifyChat: false } }
+    ]
+  })
+  await settle(5)
+  await manager.runScheduled('g2') // g1 运行中 → g2 排队（exclusive 冲突）
+  assert.ok(manager._pendingExclusive.some(r => r.entry.id === 'g2'), 'g2 应排队')
+  // 停止 g1 → drain 启动 g2 → 无目标自然完成 → 修复前 _notifyCompletion 因 cron
+  // 提前 return → next 链不接力（直启路径 runScheduled 尾部却会接力，两路径不一致）
+  await manager.stopTask('g1')
+  await settle(8)
+  const m1 = manager.getStatus().find(t => t.id === 'm1')
+  assert.ok(m1, '排队的 scheduled 任务完成后应接力 next 链（修复前无 m1）')
+  await manager.stopAll()
+})
+
+test('H2 修复：排队启动的 scheduled 任务完成后触发规划器（无链时）', async () => {
+  const bot = makeCombatBot()
+  const agentCalls = []
+  const agent = { onTaskCompleted: async (rec) => { agentCalls.push(rec.entry?.id) } }
+  const manager = new TaskManager({ scheduleTimezone: 'UTC' }, makeLogger(), { bot }, null, () => agent)
+  await manager.load({
+    tasks: [
+      { id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } },
+      { id: 'g2', type: 'combat', schedule: '0 3 * * *', options: { stopWhenNoTargets: true }, notifyChat: false }
+    ]
+  })
+  await settle(5)
+  await manager.runScheduled('g2') // 排队
+  assert.ok(manager._pendingExclusive.some(r => r.entry.id === 'g2'), 'g2 应排队')
+  await manager.stopTask('g1')
+  await settle(8)
+  assert.ok(agentCalls.includes('g2'), '排队启动的 scheduled 任务完成应通知规划器（修复前收不到）')
+  await manager.stopAll()
+})
+
 test('E 修复：scheduled exclusive 排队启动后仍到时停止（时长上限不丢）', async () => {
   const bot = makeCombatBot()
   const manager = new TaskManager({}, makeLogger(), { bot })
