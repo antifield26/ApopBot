@@ -32,11 +32,21 @@ test('time-query: Server 消息解析 → 缓存 dayTime 到 bot.time.dayTime', 
   assert.equal(bot.time.isDay, false, '22222 >= 13000 夜')
 })
 
-test('time-query: 非法值不缓存（messagestr 只含系统消息——无 sender 过滤）', () => {
+test('time-query: 非法值不缓存', () => {
   const { bot } = makeEnv()
   bot.emit('messagestr', 'The time is abc', 'system', null, null)
   bot.emit('messagestr', '您没有权限执行此命令', 'system', null, null)
   assert.equal(bot.time.dayTime, undefined, '非法值不缓存')
+})
+
+test('time-query: 玩家聊天不污染 dayTime（playerChat 通道 sender 非 null——过滤）', () => {
+  const { bot } = makeEnv()
+  // playerChat handler emit：msg.toString(), 'chat', msg, data.sender, verified
+  bot.emit('messagestr', 'The time is 9999', 'chat', null, 'steve')
+  assert.equal(bot.time.dayTime, undefined, '玩家聊天（sender 非 null）不缓存')
+  // systemChat 通道（sender null）正常缓存
+  bot.emit('messagestr', 'The time is 11767', 'system', null, null)
+  assert.equal(bot.time.dayTime, 11767 % 24000, '系统消息正常缓存')
 })
 
 test('time-query: 26.1 总刻取模——大数值（totalTicks）→ dayTime = raw % 24000', () => {

@@ -2,17 +2,18 @@
 
 ## 背景
 
-本项目为 PaperMC 26.1.2（协议 775）的适配以 **4 个本地补丁**（`patches/`，patch-package
+本项目为 PaperMC 26.1.2（协议 775）的适配以 **5 个本地补丁**（`patches/`，patch-package
 承载）实现——依赖全部为官方 npm 版本（供应链干净、零 git 依赖）：
 
 | 包 | 版本 | 补丁 | 上游状态 |
 |---|---|---|---|
 | minecraft-data | 3.113.0（overrides 固定） | 无（官方已含 775 数据） | ✅ |
 | minecraft-protocol | 1.66.2（^） | ✅ PR #1487 适配（src/version.js 支持列表） | ⏳ 上游 PR open |
-| mineflayer | 4.37.1（^） | ✅ PR #3902 适配（lib/：bed 属性/entityVelocityIsLpVec3/use_entity 门控/attack 独立包/update_time clockUpdates） | ⏳ 上游 PR open |
+| mineflayer | 4.37.1（^） | ✅ PR #3902 适配（lib/：bed 属性/entityVelocityIsLpVec3/use_entity 新格式无条件/attack 独立包/update_time clockUpdates 对象数组） | ⏳ 上游 PR open |
 | mineflayer-pathfinder | 2.4.5（^） | ✅ 爬升根治（执行器起跳中保留 forward） | 项目本地修复 |
 | prismarine-chunk | 1.41.0（overrides 固定） | 无（官方已含 26.1） | ✅ |
 | prismarine-physics | 1.11.1（overrides 固定） | ✅ 爬升根治（半嵌挤回 + F32_EPS 贴墙余量） | 项目本地修复 |
+| prismarine-world | 3.7.0（^） | ✅ raycast 同步化（async 回归——A* 永不收敛超时根因修复） | 项目本地修复 |
 
 上游状态跟踪：https://github.com/PrismarineJS/mineflayer/issues/3893
 
@@ -50,9 +51,11 @@ node scripts/smoke.mjs --steps connect,spawn,move
 
 ## 26.1.2 适配的补丁外残留（上游合并后一并清理）
 
-- `use_entity` 旧格式（`useEntityUsesEntityId` feature=false）：项目层
-  `src/core/entity-actions.js` 的原始包按旧格式构造。上游合并新格式后 project 层
-  可切换回 `bot.attack/useEntity` 并删除 entity-actions.js（保守保留——部署机已验证）
+- `use_entity` 新格式（26.1：`{target, hand, location(lpVec3 必填), sneaking}`）：
+  补丁已让 mineflayer 原生路径（`bot.attack/useEntity`）写新格式；项目层
+  `src/core/entity-actions.js` 为独立封装（同格式——combat/breed 用）。
+  上游合并后删除补丁对应 hunk 即可（entity-actions.js 保留——封装含
+  攻击判定/arm_animation 等组合逻辑，非纯协议层）
 
 ## 降级开关（最坏情况）
 

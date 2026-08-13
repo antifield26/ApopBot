@@ -155,11 +155,11 @@ async function reload () {
     ctx.logger = logger
     ctx.conn.log = logger
   } else if (logChanged) {
-      // 仅 level 变化 → 只调 level 不重建 transport——重建后新旧两个 pino-roll
-      // 指向同一 bot.log，轮转 rename 时旧 fd 写被改名文件（丢行/坏 JSONL）
-      logger.level = newCfg.log.level
-      ctx.logger.level = newCfg.log.level
-      logger.info({ level: newCfg.log.level }, '日志级别变更（transport 复用）')
+    // 仅 level 变化 → 只调 level 不重建 transport——重建后新旧两个 pino-roll
+    // 指向同一 bot.log，轮转 rename 时旧 fd 写被改名文件（丢行/坏 JSONL）
+    logger.level = newCfg.log.level
+    ctx.logger.level = newCfg.log.level
+    logger.info({ level: newCfg.log.level }, '日志级别变更（transport 复用）')
   }
 
   // L2 配置变化 → 重建 agent（createL2 构造时持有冻结的 cfg.l2 引用；

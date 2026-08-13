@@ -163,7 +163,7 @@
     "model": "deepseek-v4-flash",
     "cloudBaseUrl": "https://api.deepseek.com/anthropic",
     "cloudApiKeyEnv": "ANTHROPIC_API_KEY",
-    "maxSteps": 8,
+    "maxSteps": 15,
     "cooldownMs": 5000,
     "cloudMaxContextWindow": 65536,
     "maxActionsPerCall": 8,
@@ -189,6 +189,7 @@
         "_comment": "无人值守规划器（受限工具集：观察 + start_task/set_goal）——恒创建，planEnabled 只门控自主推进，仍可 !agent role planner 手动对话"
       }
     ],
-    "_comment": "预设 DeepSeek（Anthropic 兼容端点——裸域名会补到 OpenAI 路由 404，必须带 /anthropic）。API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（默认 ANTHROPIC_API_KEY，可改 DEEPSEEK_API_KEY 等），绝不写进配置文件；cloudMaxContextWindow 是云端预算守卫（32k 上下文端点调低到 32768）；maxActionsPerCall 是单次 act 动作数组上限（每轮动作预算 = maxSteps × maxActionsPerCall）；thinking=disabled（默认）显式关思考且不传 reasoning_effort（DeepSeek 端点两者互斥 400），enabled 时按 effort（low/medium/high/max）注入；planEnabled=自主推进（任务自然完成且无配置链时 LLM 评估目标生成下一个任务），planCooldownMs=规划调用独立冷却，dangerInjection=附近危险区域被动注入（无新鲜记录时零成本）；skillEnabled=技能学习（任务完成后 LLM 把成功实践提炼为 skill 注入后续对话——自主学习循环），skillLearnCooldownMs=学习独立冷却（不共享 summarize 60s，完成时刻播报与学习不互饿），skillInjection=技能注入开关（活跃任务类型的过往成功实践，无匹配回退最近 1 条）；roles=多角色数组（缺省/空 = 内置 primary+planner 两角色；字段集 {name, enabled?, planEnabled?, systemPrompt?, tools?}——tools 为原语名白名单，可加自定义角色如 {name:'farmer', systemPrompt:'你是农场主', tools:['observe_crops']}）"
+    "_comment": "预设 DeepSeek（Anthropic 兼容端点——裸域名会补到 OpenAI 路由 404，必须带 /anthropic）。API key 只从环境变量 cloudApiKeyEnv 指定的变量读取（默认 ANTHROPIC_API_KEY，可改 DEEPSEEK_API_KEY 等），绝不写进配置文件；cloudMaxContextWindow 是云端预算守卫（32k 上下文端点调低到 32768）；maxActionsPerCall 是单次 act 动作数组上限（每轮动作预算 = maxSteps × maxActionsPerCall）；thinking=disabled（默认）显式关思考且不传 reasoning_effort（DeepSeek 端点两者互斥 400），enabled 时按 effort（low/medium/high/max）注入；planEnabled=自主推进（任务自然完成且无配置链时 LLM 评估目标生成下一个任务），planCooldownMs=规划调用独立冷却，dangerInjection=附近危险区域被动注入（无新鲜记录时零成本）；skillEnabled=技能学习（任务完成后 LLM 把成功实践提炼为 skill 注入后续对话——自主学习循环），skillLearnCooldownMs=学习独立冷却（不共享 summarize 60s，完成时刻播报与学习不互饿），skillInjection=技能注入开关（活跃任务类型的过往成功实践，无匹配回退最近 1 条）；roles=多角色数组（缺省/空 = 内置 primary+planner 两角色；字段集 {name, enabled?, planEnabled?, systemPrompt?, tools?}——tools 为原语名白名单，可加自定义角色如 {name:'farmer', systemPrompt:'你是农场主', tools:['observe_crops']}）",
+    "experienceCapacity": 100
   }
 }

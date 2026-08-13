@@ -74,8 +74,14 @@ export function installTimeQuery (ctx, bot, log) {
   }
 
   // 文本正则兜底（旧格式/其他 locale 渲染完整时）——解析逻辑与 JSON 通道共用。
-  // messagestr 事件只含系统消息（玩家聊天走 chat 事件）——无需 sender 过滤
-  bot.on('messagestr', (msg) => {
+  // 注意：mineflayer 的 playerChat handler 也 emit messagestr（sender 为玩家名）——
+  // 玩家说出"时间是 12345"会污染 dayTime；systemChat 通道 sender 为 null。
+  // tsc 事件签名仅 3 参数——用 rest 收集第 4 个（sender）
+  bot.on('messagestr', (...args) => {
+    const msg = args[0]
+    // playerChat 通道额外传 sender（第 4 参数）——tsc 元组仅 3 元素，cast 绕过
+    const sender = (/** @type {unknown[]} */ (args))[3] ?? null
+    if (sender !== null && sender !== undefined) return // 玩家聊天不处理
     const text = String(msg ?? '')
     // 诊断：记录全部系统消息（权限拒绝/格式不匹配定位）——debug 级避免每 30s 刷屏
     log().debug({ text: text.slice(0, 160) }, 'time: 系统消息')

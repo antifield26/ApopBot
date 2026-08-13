@@ -145,7 +145,7 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 
 mineflayer 正式版只支持到 1.21.11（协议 774）；26.1.2（775）上游 PR（#3902/#1487）未合并。本项目：
 - **全部官方 npm 版**：`mineflayer 4.37.1` / `minecraft-protocol 1.66.2` / `minecraft-data 3.113.0`（已含 775）/ `prismarine-chunk 1.41.0` / `prismarine-physics 1.11.1`（已含 26.1）
-- **26.1.2 适配 = 本地补丁**：`patches/` 的 patch-package 补丁（postinstall 自动应用，`npm ci` 零手工步骤）——供应链 100% 干净（零 git 依赖、npm audit 正常）。共 4 个：`minecraft-protocol`（775 协议）/ `mineflayer`（lib/ 26.1 适配）/ `mineflayer-pathfinder`（爬升根治——执行器起跳保留 forward）/ `prismarine-physics`（爬升根治——半嵌挤回 + float32 贴墙余量）
+- **26.1.2 适配 = 本地补丁**：`patches/` 的 patch-package 补丁（postinstall 自动应用，`npm ci` 零手工步骤）——供应链 100% 干净（零 git 依赖、npm audit 正常）。共 5 个：`minecraft-protocol`（775 协议）/ `mineflayer`（lib/ 26.1 适配）/ `mineflayer-pathfinder`（爬升根治——执行器起跳保留 forward）/ `prismarine-physics`（爬升根治——半嵌挤回 + float32 贴墙余量）/ `prismarine-world`（raycast 同步化——A* 永不收敛超时根因修复）
 - 门禁：`npm run check:compat`（含 3.7 补丁哨兵——补丁缺失/未应用即 FAIL）；上游合并后删补丁 + 更新版本号回切（见 docs/upstream-migration.md）
 
 ## 26.1.2 实测兼容性备忘（PaperMC 26.1.2 真机验证）
