@@ -321,6 +321,35 @@ test('guard 抢占：ignorePaused——用户手动暂停的 exclusive 不挡 co
   await manager.stopAll()
 })
 
+test('H1 修复：guard 抢占重启后时长上限仍生效（maxMinutes 持久化，重启不丢上限）', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  await manager.load({
+    tasks: [
+      { id: 'g1', type: 'combat', schedule: '0 3 * * *', options: { stopWhenNoTargets: false }, durationMinutes: 0.01, notifyChat: false }
+    ]
+  })
+  const rec = manager.tasks.get('g1')
+  assert.equal(rec.task.state, 'created', '未到触发时间不启动')
+  // 不 await：runScheduled 直启路径自带 withTimeout（到点/完成前不返回）
+  void manager.runScheduled('g1', 0.01)
+  await settle(3)
+  assert.equal(rec.task.state, 'running', 'scheduled 直启后应运行')
+  assert.equal(rec.maxMinutes, 0.01, '时长上限应入口持久化到 rec')
+  // guard 抢占：stop → restartStopped（修复前 pendingMaxMinutes 启动即消费置空，
+  // 重启后无上限 → 恒 running）
+  const pre = await manager.preemptForCombat()
+  assert.ok(pre.stopped.includes('g1'), 'exclusive 任务被 guard 抢占')
+  assert.equal(rec.task.state, 'stopped')
+  await manager.restartStopped(pre.stopped)
+  await settle(3)
+  assert.equal(rec.task.state, 'running', 'guard 抢占后应重启')
+  // 重启后到点仍须自动停止（修复前此处恒 running）
+  await new Promise(r => setTimeout(r, 800))
+  assert.equal(rec.task.state, 'stopped', '重启后时长上限仍应生效（到点自动停止）')
+  await manager.stopAll()
+})
+
 test('E 修复：scheduled exclusive 排队启动后仍到时停止（时长上限不丢）', async () => {
   const bot = makeCombatBot()
   const manager = new TaskManager({}, makeLogger(), { bot })
@@ -332,10 +361,11 @@ test('E 修复：scheduled exclusive 排队启动后仍到时停止（时长上�
   })
   await settle(5)
   assert.equal(manager._pendingExclusive.length, 1, 'g2 应已排队')
-  // 模拟 scheduled 触发：排队时挂时长上限（runScheduled 的 withTimeout 随函数栈丢弃）
+  // 模拟 scheduled 触发：排队时上限入口持久化到 rec.maxMinutes（runScheduled 的
+  // withTimeout 随函数栈丢弃，drain 启动时按 maxMinutes 补挂）
   await manager.runScheduled('g2', 0.01)
   const rec = manager.tasks.get('g2')
-  assert.equal(rec.pendingMaxMinutes, 0.01, '排队记录应保存时长上限')
+  assert.equal(rec.maxMinutes, 0.01, '排队记录应持久化时长上限')
   // 停止 g1 → drain 启动 g2（带上限）→ 0.6s 后到时停止
   await manager.stopTask('g1')
   await settle(2)
