@@ -205,3 +205,14 @@ test('C6/K 回归：httpChanged 计算在 ctx.cfg = newCfg 之前（热重载死
   assert.ok(httpIdx < assignIdx,
     `httpChanged（行 ${httpIdx + 1}）必须在赋值（行 ${assignIdx + 1}）之前——否则两侧恒等热重载永不生效`)
 })
+
+test('C6/K 回归：logRebuild 判定在 ctx.cfg = newCfg 之前（日志热重载死代码守卫）', () => {
+  const src = readFileSync(fileURLToPath(new URL('../src/index.js', import.meta.url)), 'utf8')
+  const lines = src.split('\n')
+  const logIdx = lines.findIndex(l => l.includes('const logRebuild'))
+  const assignIdx = lines.findIndex(l => /^\s*ctx\.cfg = newCfg$/.test(l))
+  assert.ok(logIdx !== -1, '应存在 logRebuild 判定')
+  assert.ok(assignIdx !== -1, '应存在 ctx.cfg 赋值语句（行首，非注释）')
+  assert.ok(logIdx < assignIdx,
+    `logRebuild（行 ${logIdx + 1}）必须在赋值（行 ${assignIdx + 1}）之前——否则 dir/pretty/rotate 变更静默失效`)
+})

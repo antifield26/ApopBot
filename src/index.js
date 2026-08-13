@@ -134,27 +134,29 @@ async function reload () {
 
   const logChanged = JSON.stringify(newCfg.log) !== JSON.stringify(ctx.cfg.log)
   const l2Changed = JSON.stringify(newCfg.l2) !== JSON.stringify(ctx.cfg.l2)
-  // http 变更检测必须在赋值前计算——赋值后两侧恒等，stop/start 永不执行
+  // 变更检测必须在赋值前计算——赋值后两侧恒等，判定永不成立（此前 log 重建
+  // 分支是死代码：dir/pretty/rotate 变更静默失效；http 已按此修复）
   const httpChanged = JSON.stringify(newCfg.http) !== JSON.stringify(ctx.cfg.http)
+  const logRebuild = logChanged && (
+    JSON.stringify(newCfg.log.rotate) !== JSON.stringify(ctx.cfg.log.rotate) ||
+    newCfg.log.pretty !== ctx.cfg.log.pretty ||
+    newCfg.log.dir !== ctx.cfg.log.dir)
   ctx.cfg = newCfg
   ctx.conn.updateCfg(newCfg)
   ctx.notifier = createNotifier(newCfg, logger) // webhook 配置随 reload 更新（fatalExit 使用）
 
-  if (logChanged) {
-    const rotateChanged = JSON.stringify(newCfg.log.rotate) !== JSON.stringify(ctx.cfg.log.rotate)
-    if (rotateChanged || newCfg.log.pretty !== ctx.cfg.log.pretty || newCfg.log.dir !== ctx.cfg.log.dir) {
-      logger.info({ level: newCfg.log.level }, '日志配置变化，重建 logger')
-      // 注：pino v9 transport worker 无法主动拆除，反复改日志配置会累积文件句柄（接受，文档化）
-      logger = createLogger(newCfg)
-      ctx.logger = logger
-      ctx.conn.log = logger
-    } else {
+  if (logRebuild) {
+    logger.info({ level: newCfg.log.level }, '日志配置变化，重建 logger')
+    // 注：pino v9 transport worker 无法主动拆除，反复改日志配置会累积文件句柄（接受，文档化）
+    logger = createLogger(newCfg)
+    ctx.logger = logger
+    ctx.conn.log = logger
+  } else if (logChanged) {
       // 仅 level 变化 → 只调 level 不重建 transport——重建后新旧两个 pino-roll
       // 指向同一 bot.log，轮转 rename 时旧 fd 写被改名文件（丢行/坏 JSONL）
       logger.level = newCfg.log.level
       ctx.logger.level = newCfg.log.level
       logger.info({ level: newCfg.log.level }, '日志级别变更（transport 复用）')
-    }
   }
 
   // L2 配置变化 → 重建 agent（createL2 构造时持有冻结的 cfg.l2 引用；
