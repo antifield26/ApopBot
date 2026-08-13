@@ -229,7 +229,10 @@ async function main () {
       }
       bot.on('message', onMessage)
       bot.chat('[smoke] ok')
-      setTimeout(() => reject(new Error('未收到自己的聊天回显')), STEP_TIMEOUT)
+      setTimeout(() => {
+        bot.removeListener('message', onMessage) // 超时路径清理（短生命周期进程，卫生性清理）
+        reject(new Error('未收到自己的聊天回显'))
+      }, STEP_TIMEOUT)
     }))
     if (!chatOk) process.exit(1)
   }

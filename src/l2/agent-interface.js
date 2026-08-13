@@ -710,8 +710,9 @@ export class AgentInterface {
         reply = `已达最大工具步数（${maxSteps}），请重试`
       }
       // 反思——本轮运行时失败 → 一句话总结教训 → 写入经验库
-      //（fire-and-forget：8s 上限，失败静默；60s 全局冷却复用 summarize 通道）
-      if (failures.length > 0) this._reflect(user, failures)
+      //（fire-and-forget：8s 上限，失败静默；60s 全局冷却复用 summarize 通道；
+      // 显式 catch 声明——不依赖内部 try/catch 覆盖所有路径的不变量）
+      if (failures.length > 0) this._reflect(user, failures).catch(() => {})
       // 回写会话：本轮 user 轮 + 最终 assistant 轮（纯文本，裁剪到上限）+ 工具操作记录
       history.push({ role: 'user', content: userMsg })
       history.push({ role: 'assistant', content: reply.slice(0, REPLY_MAX_CHARS) })

@@ -112,9 +112,10 @@ export function createL2 (cfg, ctx, deps = null) {
     // ---- 任务通道：planner 自主推进 + 技能学习并行（独立冷却互不阻塞）----
     onTaskCompleted: (rec) => {
       const p = (roles.get('planner')?.onTaskCompleted(rec) ?? Promise.resolve(false))
-      // 技能学习 fire-and-forget（v1.5.0 自主学习循环）——失败静默，不阻塞规划通道
+      // 技能学习 fire-and-forget（v1.5.0 自主学习循环）——失败静默，不阻塞规划通道；
+      // 显式 catch 声明（不依赖内部 catch 覆盖所有路径——unhandledRejection = 停服）
       const learner = roles.get('planner') ?? primary
-      if (learner?.learnFromTask) void learner.learnFromTask(rec)
+      if (learner?.learnFromTask) void learner.learnFromTask(rec).catch(() => {})
       return p
     },
     /** 技能学习（!agent 无入口；测试直接 await 用）。 */

@@ -25,7 +25,9 @@ export function installGuardResponse (ctx, bot, log) {
   bot.on('entityHurt', (entity, source) => {
     if (entity !== bot.entity) return
     if (!source || source === bot.entity || source.username) return // 只响应怪物攻击（玩家/环境自伤除外）
-    void trigger()
+    // 显式 catch：trigger 内部虽全防御，但进程对 unhandledRejection 是
+    // fatalExit 停服——fire-and-forget 不依赖"内部 catch 覆盖所有路径"的脆弱不变量
+    void trigger().catch(() => {})
   })
   // 死亡重置冷却：怪物多时死亡-重生循环中，重生后受击若仍在 30s 冷却窗口内会被
   // 挡住——"死亡重生后不进入战斗"（实测 17:00:18-17:00:44 被僵尸蹲守多次死亡

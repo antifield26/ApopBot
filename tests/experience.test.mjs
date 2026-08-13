@@ -460,3 +460,25 @@ test('skill 注入: 无匹配回退最近 1 条；skillInjection=false / 无 ski
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('L14 修复：loadSkills 缺 id 条目归一化 id——add 覆盖刷新不再失效', () => {
+  const { dir } = makeTmp()
+  try {
+    const file = path.join(dir, 'skills.json')
+    writeFileSync(file, JSON.stringify({
+      schemaVersion: 1,
+      items: [{ taskType: 'mine', name: '挖铁', summary: 's1', steps: ['a'] }]
+    }))
+    const s = createSkillsStore({ file, debounceMs: 100000 })
+    const loaded = s.recent(10)
+    assert.equal(loaded.length, 1)
+    assert.equal(loaded[0].id, 'mine:挖铁', '缺 id 条目应归一化 id（与 add 派生一致）')
+    // 覆盖刷新生效（修复前 add 按 id 找不到 → 重复实践堆积挤掉有效技能）
+    s.add({ taskType: 'mine', name: '挖铁', summary: 's2', steps: ['b'] })
+    assert.equal(s.size(), 1, '同 taskType+name 覆盖而非堆积')
+    assert.equal(s.recent(1)[0].summary, 's2')
+    assert.equal(s.recent(1)[0].usage, 2, 'usage 递增（覆盖刷新语义）')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -34,6 +34,10 @@ export function loadSkills (file = DEFAULT_FILE) {
       .filter(i => i && typeof i === 'object' && typeof i.taskType === 'string' && typeof i.name === 'string')
       .map(i => ({
         ...i,
+        // id 归一化（与 add 同款派生 ${taskType}:${name}）：旧文件/手改条目缺 id
+        // 时永远无法被覆盖刷新（add 按 id 查找）——重复实践会堆积到 FIFO 容量
+        // 挤掉有效技能
+        id: typeof i.id === 'string' ? i.id : `${i.taskType}:${i.name}`,
         steps: Array.isArray(i.steps) ? i.steps.filter(x => typeof x === 'string') : [],
         pitfalls: Array.isArray(i.pitfalls) ? i.pitfalls.filter(x => typeof x === 'string') : [],
         usage: Number.isInteger(i.usage) && i.usage > 0 ? i.usage : 1
