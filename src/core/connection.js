@@ -46,6 +46,7 @@ export class ConnectionManager {
     this._spawnPromise = null
     this._timeoutQuit = false // spawn 超时主动 quit → end 事件应走重连而非 fatal
     this._fatalExit = false // 致命原因已判定 → 后续 end 事件不得再调度重连（竞态守卫）
+    this._skipEndCount = false // 插件装载失败路径已显式计重连数——end 处理器跳过防双计
   }
 
   getStatus () {
@@ -73,6 +74,7 @@ export class ConnectionManager {
     const seq = ++this._connectSeq
     this._manuallyDisconnecting = false
     this._timeoutQuit = false // 每次全新尝试重置陈旧标记（避免误标后续正常断开）
+    this._skipEndCount = false // 同款重置：陈旧标记不得误标后续正常断开的 end
     this._setState(STATE_CONNECTING)
     this.log.info({ host: this.cfg.host, port: this.cfg.port, mcVersion: this.cfg.mcVersion }, 'connecting')
 
@@ -108,6 +110,14 @@ export class ConnectionManager {
       this.log.error({ err: err.message }, '插件装载失败，断开后重试')
       this.lastFailMs = Date.now()
       this.lastError = err.message
+      // 重连计数确定性单次：真实 mineflayer 的 end 异步到达时 state 已是
+      // RECONNECTING（end 处理器提前返回）→ 计数永不加；FakeBot 同步 end 时
+      // 由 end 处理器计数。kicked/error 已先触发（state 已 RECONNECTING）则
+      // 不重复计——同一连接尝试只计一次
+      if (this.state !== STATE_RECONNECTING) {
+        this.reconnectCount++
+        this._skipEndCount = true
+      }
       try { bot.quit() } catch { /* socket 可能已死 */ }
       this._scheduleReconnect()
       return
@@ -175,6 +185,11 @@ export class ConnectionManager {
       if (this._manuallyDisconnecting) return
       if (this._fatalExit) return
       if (this.state === STATE_RECONNECTING) return
+      // 插件装载失败路径已显式计数（quit 同步 end 时先于 _scheduleReconnect 到达）
+      if (this._skipEndCount) {
+        this._skipEndCount = false
+        return
+      }
       // spawn 超时主动 quit：这是网络问题而非致命原因，走重连
       if (this._timeoutQuit) {
         this._timeoutQuit = false

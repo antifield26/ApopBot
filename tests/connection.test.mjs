@@ -323,3 +323,28 @@ test('M8 修复：插件装载窗口内 onSpawn 读到 null（不再持旧代死
     await conn.disconnect()
   }
 })
+
+test('L1 修复：插件装载失败重连计数确定性单次（同步/异步 end 均恰 +1）', async () => {
+  // 异步 end（真实 mineflayer 语义：quit 后 end 下一 tick 到达）——
+  // 修复前 end 被 RECONNECTING 守卫提前返回，计数永不加（遥测/告警恒 0）
+  class AsyncEndBot extends FakeBot {
+    quit () {
+      this.quitCalls++
+      setImmediate(() => this.emit('end'))
+    }
+  }
+  const conn1 = new ConnectionManager(makeCfg(), makeLogger(), {}, {
+    createBot: () => new AsyncEndBot(),
+    loadMineflayerPlugins: async () => { throw new Error('boom') }
+  })
+  await conn1.connect()
+  await new Promise(r => setImmediate(r))
+  assert.equal(conn1.reconnectCount, 1, '异步 end 路径应恰计 1（修复前为 0）')
+  await conn1.disconnect()
+  // 同步 end（FakeBot 默认 quit 同步 emit）——显式计数 + 标记拦截后仍恰 1（不双计）
+  const { conn } = makeConn({ pluginError: new Error('plugin boom') })
+  await conn.connect()
+  await new Promise(r => setImmediate(r))
+  assert.equal(conn.reconnectCount, 1, '同步 end 路径应恰计 1（不双计）')
+  await conn.disconnect()
+})
