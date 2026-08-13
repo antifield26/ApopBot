@@ -374,6 +374,34 @@ test('breed 脚本: 繁殖计数按喂食成功轮数（targetGone 判定不可�
   assert.equal(task.counters.breedings, 3, '每轮喂食成功（fed>=1）→ breedings 递增——fed 驱动（非 targetGone）')
 })
 
+test('M3 回归：breed 繁殖冷却——同一动物冷却期内不再计数（修复前虚报完成）', async () => {
+  // 单只 cow + minFeedIntervalMs：修复前每轮 fed=1 → 计数 3（同只动物反复喂食
+  // 不产生繁殖，maxBreedings 虚报完成）；修复后首轮计 1，冷却期 fed=0 不计数
+  // 实体 id 用独立值——interact 的喂食冷却表是模块级状态，避免与后续真 breed
+  // 脚本测试（id 1 的 cow）互相污染
+  const { bot } = makeCombatBot()
+  bot.inventory = { items: () => [{ name: 'wheat_seeds', count: 10 }] }
+  bot.equip = async () => {}
+  bot._client = { write: () => {} }
+  bot.entities = new Map([[101, { id: 101, name: 'cow', position: { x: 1, y: 64, z: 1, distanceTo: () => 1 }, height: 1.3 }]])
+  const ctx = makeCtx(bot)
+  const miniBreed = {
+    id: 'mini-breed-cooldown', exclusive: false, naturalCompletion: false, maxActions: 100,
+    script: { steps: [
+      { ctrl: 'loop', max: 3, body: [
+        { op: 'interact_entity', args: { filter: ['cow'], count: 1, minFeedIntervalMs: 300000 }, as: 'feed' },
+        { ctrl: 'if', cond: { type: 'result', ref: 'feed', field: 'fed', gte: 1 }, then: [
+          { ctrl: 'count', name: 'breedings', by: 1 }
+        ] }
+      ] },
+      { ctrl: 'return', value: 'completed' }
+    ] }
+  }
+  const task = makeTask(miniBreed, {}, ctx)
+  await task.start()
+  assert.equal(task.counters.breedings, 1, '冷却期重复喂食不计繁殖——3 轮只计 1（修复前计 3）')
+})
+
 test('chop 脚本: 缺省正则（/_log$|_wood$/）扫描全部原木', async () => {
   const { bot, collects } = makeCollectBot()
   const ctx = makeCtx(bot)
