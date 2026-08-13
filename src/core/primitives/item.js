@@ -33,7 +33,14 @@ export function registerItem (register, _ctx) {
     handler: async (c, { itemName }) => {
       const item = c.bot.inventory?.items()?.find(it => it.name === itemName)
       if (!item) return `背包里没有 ${itemName}（observe_inventory 查看）`
-      await withTimeout(c.bot.equip(item, 'hand'), 10000, 'equip timeout') // 断线保护
+      try {
+        await withTimeout(c.bot.equip(item, 'hand'), 10000, 'equip timeout') // 断线保护
+      } catch (err) {
+        // equip 无取消 API：超时后底层可能已完成装备——按实际手持校验，一致
+        // 则视为成功（避免"幽灵装备"被误报失败后调用方重试造成双重副作用）
+        if (c.bot.heldItem?.name === itemName) return `已装备 ${itemName}`
+        throw err
+      }
       return `已装备 ${itemName}`
     }
   })

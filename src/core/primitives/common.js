@@ -25,3 +25,59 @@ export function checkActionCooldown (name) {
   lastActionAt.set(name, now)
 }
 
+/**
+ * 竞速取消：signal abort 时立即以 AbortError 拒绝（底层 promise 继续执行——
+ * 多数 mineflayer 动作无公开取消 API；调用方不再等待，残余副作用由底层自然
+ * 收敛）。onAbort 钩子供真可取消的动作（collectBlock.cancelTask）挂取消调用。
+ * 监听器 finally 配对移除（wait/fish/sleep 同款纪律——任务级 signal 生命周期
+ * 数天，不配对移除会累积泄漏）。
+ * @param {Promise<any>} promise 底层动作
+ * @param {AbortSignal|null|undefined} signal 任务级取消信号
+ * @param {string} [message] abort 时错误文案
+ * @param {(() => void)|null} [onAbort] abort 时同步调用的取消钩子（可抛，不影响中止语义）
+ * @returns {Promise<any>}
+ */
+export function raceAbort (promise, signal, message = '动作被中断', onAbort = null) {
+  if (!signal) return promise
+  if (signal.aborted) {
+    try { onAbort?.() } catch { /* 取消钩子失败不影响中止语义 */ }
+    return Promise.reject(new DOMException(message, 'AbortError'))
+  }
+  let listener = null
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      listener = () => {
+        try { onAbort?.() } catch { /* 取消钩子失败不影响中止语义 */ }
+        reject(new DOMException(message, 'AbortError'))
+      }
+      signal.addEventListener('abort', listener, { once: true })
+    })
+  ]).finally(() => {
+    if (listener) signal.removeEventListener('abort', listener)
+  })
+}
+
+/**
+ * 可中断睡眠：abort 时立即以 AbortError 拒绝（片间等待/冷却轮询用——
+ * stop 后不再空等片间间隔）。监听器 finally 配对移除。
+ * @param {number} ms
+ * @param {AbortSignal|null|undefined} signal
+ * @returns {Promise<void>}
+ */
+export function interruptibleSleep (ms, signal) {
+  if (!signal) return new Promise(r => setTimeout(r, ms))
+  if (signal.aborted) return Promise.reject(new DOMException('等待被中断', 'AbortError'))
+  let onAbort = null
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(resolve, ms)
+    onAbort = () => {
+      clearTimeout(t)
+      reject(new DOMException('等待被中断', 'AbortError'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  }).finally(() => {
+    if (onAbort) signal.removeEventListener('abort', onAbort)
+  })
+}
+

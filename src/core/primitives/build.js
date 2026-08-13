@@ -17,7 +17,7 @@ import * as discovery from '../discovery.js'
 import { isArea } from '../../tasks/util.js'
 import { findSurfaceBlocks } from '../movement.js'
 import { CROP_PLANT_MODE, SEED_BY_CROP } from '../crops.js'
-import { ACTION_COOLDOWN_MS, checkActionCooldown } from './common.js'
+import { ACTION_COOLDOWN_MS, checkActionCooldown, raceAbort } from './common.js'
 import { ensureMiningTool } from '../tool.js'
 import { autoDeposit } from '../storage.js'
 
@@ -40,7 +40,7 @@ export function registerBuild (register, _ctx) {
     guardText: '挖掘',
     timeoutMs: 30000,
     cooldownMs: ACTION_COOLDOWN_MS,
-    handler: async (c, { x, y, z }) => {
+    handler: async (c, { x, y, z }, runtime) => {
       if (!c.bot?.dig || !c.bot.canDigBlock) throw new Error('dig 能力不可用（插件缺失）')
       const block = c.bot.blockAt(new Vec3(x, y, z))
       if (!block) return `坐标 (${x},${y},${z}) 没有方块（区块未加载？）`
@@ -48,7 +48,9 @@ export function registerBuild (register, _ctx) {
         return `方块 ${block.name} 不可挖掘（距离过远或不可挖掘）——先 goto 靠近到 5 格内`
       }
       checkActionCooldown('dig')
-      await withTimeout(c.bot.dig(block), 30000, 'dig timeout') // 断线保护
+      // 竞速取消（mineflayer dig 无取消 API）：stop 后调用方立即返回不再等待
+      // ——底层挖掘残余由服务端自然收敛（同 tick 竞态，通常一瞬）
+      await raceAbort(withTimeout(c.bot.dig(block), 30000, 'dig timeout'), runtime?.signal, '挖掘被中断') // 断线保护
       // 地形记忆失效：挖除的方块从探索记忆删除——记忆只增不减会让
       // query_map 长期返回过期坐标
       discovery.removeResourceAt(x, y, z)
@@ -69,7 +71,7 @@ export function registerBuild (register, _ctx) {
     guardText: '放置',
     timeoutMs: 30000,
     cooldownMs: ACTION_COOLDOWN_MS,
-    handler: async (c, { x, y, z, face = 'up' }) => {
+    handler: async (c, { x, y, z, face = 'up' }, runtime) => {
       if (!c.bot?.placeBlock) throw new Error('place 能力不可用（插件缺失）')
       const off = { up: [0, -1, 0], down: [0, 1, 0], north: [0, 0, 1], south: [0, 0, -1], east: [-1, 0, 0], west: [1, 0, 0] }[face]
       if (!off) return `无效的 face: ${face}（up/down/north/south/east/west）`
@@ -80,7 +82,8 @@ export function registerBuild (register, _ctx) {
       if (!c.bot.heldItem) return '手里没有物品——先 equip <物品名>'
       checkActionCooldown('place')
       const itemName = c.bot.heldItem.name
-      await withTimeout(c.bot.placeBlock(refBlock, face), 30000, 'place timeout')
+      // 竞速取消（placeBlock 无取消 API）：stop 后不再等待放置结果
+      await raceAbort(withTimeout(c.bot.placeBlock(refBlock, face), 30000, 'place timeout'), runtime?.signal, '放置被中断')
       return `已放置 ${itemName} @ ${x},${y},${z}`
     }
   })
@@ -153,13 +156,21 @@ export function registerBuild (register, _ctx) {
         const firstBlock = batch[0] ? c.bot.blockAt(batch[0].position) : null
         if (firstBlock) await ensureMiningTool(c.bot, firstBlock.name, c.logger)
         try {
-          await withTimeout(c.bot.collectBlock.collect(batch, { chestLocations: chests }), 120000, 'collect timeout')
+          // 竞速取消 + collectBlock.cancelTask 真取消（挖到一半 stop 不再等整批
+          // 挖完才响应；batch 头部的 aborted 检查只覆盖批间窗口）
+          await raceAbort(
+            withTimeout(c.bot.collectBlock.collect(batch, { chestLocations: chests }), 120000, 'collect timeout'),
+            runtime?.signal,
+            'collect timeout',
+            () => c.bot.collectBlock.cancelTask?.()
+          )
           collected += batch.length
           // 地形记忆失效：收集成功的坐标从探索记忆删除（同 dig）
           for (const b of batch) {
             if (b?.position) discovery.removeResourceAt(b.position.x, b.position.y, b.position.z)
           }
         } catch (err) {
+          if (err?.name === 'AbortError') return { collected, stopped: true }
           if (err.code === 'NoChests') {
             // 自动存储——背包满时附近找箱子存物品再继续（避免 mine/chop/farm
             // 脚本背包满空转；存成功重试同一批，失败回退 inventoryFull 语义
@@ -272,9 +283,15 @@ export function registerBuild (register, _ctx) {
           if (!seeds) return { planted, noSeeds: true }
           try {
             await withTimeout(c.bot.equip(seeds, 'hand'), 10000, 'equip timeout')
-            await withTimeout(c.bot.placeBlock(soil, { x: 0, y: 1, z: 0 }), 30000, 'place timeout') // 种在方块上方
+            // 竞速取消：stop 后不再等待放置结果（残余放置由服务端自然收敛）
+            await raceAbort(
+              withTimeout(c.bot.placeBlock(soil, { x: 0, y: 1, z: 0 }), 30000, 'place timeout'), // 种在方块上方
+              runtime?.signal,
+              '种植被中断'
+            )
             planted++
           } catch (err) {
+            if (err?.name === 'AbortError') throw err // 中断上抛（executor 转 ok:false——不吞成"种植失败"重试）
             c.logger.warn({ err: err.message }, '种植失败（可能没有种子或位置不可用）')
             break
           }

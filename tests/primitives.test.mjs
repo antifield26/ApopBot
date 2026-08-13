@@ -83,6 +83,57 @@ function makeSleepBot () {
   return bot
 }
 
+// ---- M6：幽灵动作（竞速取消/事后校验） ----
+
+test('M6: raceAbort——abort 后立即拒绝且监听器清理（底层 promise 不被吞）', async () => {
+  const { raceAbort } = await import('../src/core/primitives/common.js')
+  const controller = new AbortController()
+  let resolveUnderlying
+  const underlying = new Promise(r => { resolveUnderlying = r })
+  const p = raceAbort(underlying, controller.signal, '动作被中断')
+  controller.abort()
+  await assert.rejects(p, { name: 'AbortError' })
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0, 'abort 后监听器清理')
+  // 底层继续执行不受影响（幽灵动作残余——调用方已返回，底层自然收敛）
+  let settled = false
+  underlying.then(() => { settled = true })
+  resolveUnderlying()
+  await new Promise(r => setImmediate(r))
+  assert.equal(settled, true, '底层 promise 仍会 settle（不被吞）')
+})
+
+test('M6: dig 原语 stop 后立即中断（不再等挖掘完成）', async () => {
+  const controller = new AbortController()
+  let resolveDig
+  const bot = {
+    dig: () => new Promise(r => { resolveDig = r }),
+    canDigBlock: () => true,
+    blockAt: () => ({ name: 'stone', type: 1 })
+  }
+  const h = createPrimitiveRegistry({}).get('dig').handler
+  const p = h({ bot, cfg: {}, logger: makeLogger() }, { x: 1, y: 64, z: 1 }, { signal: controller.signal })
+  await new Promise(r => setImmediate(r)) // handler 进入 dig 等待
+  controller.abort()
+  await assert.rejects(p, { name: 'AbortError' })
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0, 'abort 后监听器清理')
+  resolveDig() // 底层残余 settle（幽灵挖掘——服务端自然收敛）
+})
+
+test('M6: equip 超时后按手持校验——已装备视为成功（不误报失败引发重试双重副作用）', async () => {
+  const held = { name: 'iron_pickaxe' }
+  const bot = {
+    inventory: { items: () => [{ name: 'iron_pickaxe' }] },
+    equip: async () => { throw new Error('equip timeout') },
+    get heldItem () { return held }
+  }
+  const h = createPrimitiveRegistry({}).get('equip').handler
+  const r = await h({ bot }, { itemName: 'iron_pickaxe' })
+  assert.equal(r, '已装备 iron_pickaxe', '超时但手持已就位 → 视为成功')
+  // 手持未就位 → 原错误上抛
+  const bot2 = { ...bot, heldItem: null }
+  await assert.rejects(h({ bot: bot2 }, { itemName: 'iron_pickaxe' }), /equip timeout/)
+})
+
 test('M4: sleep 原语正常 wake/abort 路径均移除 abort 监听器（不泄漏）', async () => {
   const controller = new AbortController()
   const h = createPrimitiveRegistry({}).get('sleep').handler

@@ -16,6 +16,7 @@ import { nearbyEntities } from '../entities.js'
 import { createMovement } from '../movement.js'
 import { useEntityOn } from '../entity-actions.js'
 import { SEED_BY_CROP } from '../crops.js'
+import { interruptibleSleep } from './common.js'
 
 // 喂食时间表（模块级）：minFeedIntervalMs 冷却判定用。按实体 id 记录最近喂食
 // 时间——实体 id 由服务端复用，超过 1 小时未喂食的记录清除（防无限增长/陈旧
@@ -51,7 +52,7 @@ export function registerInteract (register, _ctx) {
     exclusiveClass: 'interact',
     guardText: '交互',
     timeoutMs: 30000,
-    handler: async (c, { filter, foodName, count = 2, useCooldownMs = 3000, minFeedIntervalMs = 0 }) => {
+    handler: async (c, { filter, foodName, count = 2, useCooldownMs = 3000, minFeedIntervalMs = 0 }, runtime) => {
       if (!c.bot?.entity?.position) throw new Error('位置不可用')
       const nowTs = Date.now()
       pruneFeedTs(nowTs)
@@ -94,7 +95,8 @@ export function registerInteract (register, _ctx) {
         // 且避免跨调用污染）
         if (minFeedIntervalMs > 0) lastFedTs.set(target.id, nowTs)
         fed++
-        if (i < count - 1) await new Promise(r => setTimeout(r, useCooldownMs))
+        // 片间等待可中断（stop 后不再空等片间间隔——3s/次 × count 上限 10）
+        if (i < count - 1) await interruptibleSleep(useCooldownMs, runtime?.signal)
       }
       if (fed === 0) {
         // 全冷却（脚本据此区分"冷却中"与"无食物"——冷却等待有明确残余时间）
