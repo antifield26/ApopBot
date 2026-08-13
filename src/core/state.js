@@ -87,13 +87,14 @@ export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logg
   })
 
   return {
-    /** ad-hoc 任务条目（快照恢复用；读副本防外部修改污染内存态） */
+    /** ad-hoc 任务条目（快照恢复用；深拷贝防外部修改污染内存态——
+     * 嵌套 options.area 等此前共享引用，读方改写会污染落盘数据） */
     get tasks () {
-      return last.tasks.map(t => ({ ...t, options: { ...(t.options ?? {}) } }))
+      return structuredClone(last.tasks)
     },
-    /** 任务计数器表 { taskId: counters } */
+    /** 任务计数器表 { taskId: counters }（同款深拷贝） */
     get counters () {
-      return { ...last.counters }
+      return structuredClone(last.counters)
     },
     /** 探索记忆快照（B1：discovery.js 用；深拷贝防外部修改污染内存态） */
     get memory () {
@@ -104,14 +105,15 @@ export function createStateStore ({ file = DEFAULT_FILE, debounceMs = 5000, logg
       last.memory = memory && typeof memory === 'object' ? JSON.parse(JSON.stringify(memory)) : {}
       store.schedule()
     },
-    /** 全量更新 ad-hoc 任务列表（manager 变更后调用）。 */
+    /** 全量更新 ad-hoc 任务列表（manager 变更后调用；深拷贝——读方后续改写
+     * 不回溯污染内存态）。 */
     setTasks (tasks) {
-      last.tasks = tasks.map(t => ({ ...t, options: { ...(t.options ?? {}) } }))
+      last.tasks = structuredClone(tasks)
       store.schedule()
     },
     /** 更新单任务计数器（任务终态时调用）。 */
     setCounter (id, counters) {
-      last.counters = { ...last.counters, [id]: { ...counters } }
+      last.counters = { ...last.counters, [id]: structuredClone(counters ?? {}) }
       store.schedule()
     },
     /** 删除单任务计数器（任务移除时清理，防快照无限增长）。 */

@@ -123,3 +123,15 @@ test('explore init: area 校验与必填 pathfinder', async () => {
   await expectFail(exploreScript, { area: { x1: 1 } }, makeCtx(), 'area')
   await expectFail(exploreScript, {}, makeCtx({ pathfinder: undefined }), 'pathfinder')
 })
+
+test('L4 修复：_internalWait 巨值钳制——setTimeout 溢出不再忙循环', async () => {
+  const ctx = makeCtx()
+  const task = new ScriptTask('afk', 'afk', { intervalMinutes: 1 }, ctx, afkScript)
+  await task.init()
+  const w = task._internalWait(2 ** 40, 'huge') // 溢出前 ~1ms 触发（忙循环刷 maxActions）
+  assert.equal(task.waitingReason, 'huge', '钳制后等待应挂起')
+  assert.equal(task._internalWaits.size, 1, '等待不应立即完成（修复前溢出为 ~1ms）')
+  task._wakeInternalWait()
+  await w
+  await task.stop()
+})

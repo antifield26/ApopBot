@@ -183,3 +183,19 @@ test('第 8 轮：非法 schemaVersion（0/负数/小数）按空态处理（不
     assert.deepEqual(out.tasks, [])
   }
 })
+
+test('L5 修复：tasks/counters 读副本深拷贝——嵌套 options 改写不污染内存态', (t) => {
+  const dir = makeTmpDir(t)
+  const store = createStateStore({ file: path.join(dir, 's.json'), debounceMs: 100000 })
+  store.setTasks([{ id: 'a1', type: 'mine', options: { blockTypes: ['iron_ore'], area: { x1: 0, x2: 10 } } }])
+  // 读副本改写嵌套对象——修复前 options.area 共享引用，改写直接污染落盘数据
+  const copy = store.tasks
+  copy[0].options.area.x2 = 9999
+  copy[0].options.blockTypes.push('diamond_ore')
+  assert.equal(store.tasks[0].options.area.x2, 10, '嵌套 area 不被外部改写污染')
+  assert.deepEqual(store.tasks[0].options.blockTypes, ['iron_ore'], '嵌套数组不被外部改写污染')
+  store.setCounter('a1', { mined: 3 })
+  const c = store.counters
+  c.a1.mined = 999
+  assert.equal(store.counters.a1.mined, 3, '计数器对象不被外部改写污染')
+})

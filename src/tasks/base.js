@@ -172,6 +172,10 @@ export class BaseTask {
    */
   async _internalWait (ms, reason = 'wait') {
     if (this._stopRequested) return
+    // setTimeout 溢出钳制：ms > 2^31-1 时溢出为 ~1ms → 无界忙循环刷到
+    // maxActions 上限任务失败（afk intervalMinutes schema 无 max 上限）；
+    // 钳制到 24.8 天留足余量（钳制后的等待可被 stop/pause 打断）
+    ms = Math.min(Math.max(0, Math.trunc(ms)), 0x7fffffff - 1000)
     this.waitingReason = reason
     this.waitingSince = this.waitingSince ?? Date.now() // 首次进入等待时记录
     const gen = this._runGen
