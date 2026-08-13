@@ -61,6 +61,52 @@ test('M3: interact_entity 默认不限冷却（LLM act 行为不变）', async (
   assert.equal(r2.cooldownMs, undefined, '默认路径不产生 cooldownMs 字段')
 })
 
+// ---- M9：多角色共享 executor 的 user 指代消解 ----
+
+test('M9: 多角色并发——follow_player 无 name 解析各自 runtime.user（不被交叉覆盖）', async () => {
+  const { createActionExecutor } = await import('../src/core/executor.js')
+  const targets = []
+  const bot = {
+    username: 'bot1',
+    players: {
+      alice: { username: 'alice', entity: { id: 1 } },
+      bob: { username: 'bob', entity: { id: 2 } }
+    }
+  }
+  const ctx = {
+    bot,
+    cfg: { l2: { maxActionsPerCall: 8 }, ops: ['alice', 'bob'], log: { dir: null } },
+    logger: makeLogger(),
+    plugins: { follow: { setTarget: (e) => targets.push(e), stop: () => {} } },
+    tasks: null,
+    conn: null,
+    _caller: null
+  }
+  const reg = new Map(createPrimitiveRegistry(ctx))
+  // 角色 A 的第一动作挂起（模拟工具循环 await 窗口）
+  let releaseSlow
+  const slowGate = new Promise(r => { releaseSlow = r })
+  reg.set('slow_op', {
+    schema: {},
+    permission: 'all',
+    exclusiveClass: 'flow',
+    guardText: '',
+    timeoutMs: 60000,
+    handler: async () => { await slowGate; return 'slow done' }
+  })
+  const executor = createActionExecutor(ctx, { primitives: reg, audit: null })
+  // 角色 A（alice）：[slow_op, follow_player 无 name]——修复前 A 的"跟随我"在
+  // B 的 act 覆盖共享 ctx._caller 后解析到 bob
+  const pA = executor.executeBatch([{ op: 'slow_op' }, { op: 'follow_player', args: {} }], { user: 'alice', source: 'llm' })
+  await new Promise(r => setImmediate(r)) // A 的 slow_op 挂起中
+  const rB = await executor.executeBatch([{ op: 'follow_player', args: { name: 'me' } }], { user: 'bob', source: 'llm' })
+  assert.ok(rB.results[0].result.includes('开始跟随 bob'), `B 应解析到自己: ${JSON.stringify(rB.results[0])}`)
+  releaseSlow()
+  const rA = await pA
+  assert.ok(rA.results[1].result.includes('开始跟随 alice'), `A 应解析到自己（修复前串到 bob）: ${JSON.stringify(rA.results[1])}`)
+  assert.deepEqual(targets, [{ id: 2 }, { id: 1 }], '目标顺序：B 先、A 后，各随各的调用者')
+})
+
 // ---- M4：sleep 原语 abort 监听器配对移除 ----
 
 function makeLogger () {

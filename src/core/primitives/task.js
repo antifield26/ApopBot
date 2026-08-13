@@ -165,7 +165,7 @@ export function registerTask (register, _ctx) {
     exclusiveClass: 'flow',
     guardText: '',
     timeoutMs: 10000,
-    handler: async (c, { name }) => {
+    handler: async (c, { name }, runtime) => {
       if (!c.plugins?.follow) throw new Error('follow 插件未启用（配置 mineflayerPlugins.follow=true 并重启）')
       if (name === 'off') {
         c.plugins.follow.stop()
@@ -175,10 +175,12 @@ export function registerTask (register, _ctx) {
       if (hasExclusiveActive()) {
         throw new Error(`exclusive 任务 ${getExclusiveOwner()} 运行中，无法跟随（任务结束后可试）`)
       }
-      // "跟随我"指代消解（executor 注入 user）：空/me/self/我 → 当前对话玩家
+      // "跟随我"指代消解：优先 per-action 不可变的 runtime.user（多角色共享
+      // executor 时 ctx._caller 会被其他角色的 act 在 await 中途覆盖——角色 A
+      // 的"跟随我"解析到角色 B 的调用者）；_caller 仅作无 runtime 的兼容兜底
       let targetName = name
       if (!name || ['me', 'self', '我', '自己'].includes(String(name).toLowerCase())) {
-        targetName = c._caller ?? (c.execUser ?? null)
+        targetName = runtime?.user ?? c._caller ?? null
         if (!targetName) return '无法确定要跟随谁（对话上下文缺失）'
       }
       const lower = targetName.toLowerCase()

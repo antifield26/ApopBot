@@ -24,8 +24,8 @@ export function createActionExecutor (ctx, deps = {}) {
   const primitives = deps.primitives ?? createPrimitiveRegistry(ctx)
   const audit = deps.audit === undefined ? createAuditLogger({ dir: ctx.cfg?.log?.dir, logger: ctx.logger }) : deps.audit
   const maxActionsPerCall = ctx.cfg?.l2?.maxActionsPerCall ?? 8
-  // follow_player 的"跟随我"指代消解（executor 注入 user——经 ctx._caller 交给 handler）
-  let execUser = null
+  // follow_player 的"跟随我"指代消解：handler 优先读 runtime.user（per-action
+  // 不可变），ctx._caller 仅作兼容兜底——见 runAction 的注释
   // per-op 调用计数（/metrics 观测——LLM/脚本/命令三源合计；audit 有全量日志可作源）
   const actionCounts = new Map()
   const actionStats = () => Object.fromEntries(actionCounts)
@@ -71,9 +71,11 @@ export function createActionExecutor (ctx, deps = {}) {
       // 冷却由原语 handler 内部自理（"只对实际执行生效"——业务性校验失败不占，
       // 见 primitives.js dig/place/attack）
       // 执行（withTimeout 兜底 + runtime.signal 贯通）
+      // ctx._caller 是共享可变字段（多角色共享 executor）——只作 handler 未取
+      // runtime.user 的兼容兜底；角色 A 的 handler await 中途角色 B 的 act 会
+      // 覆盖它，指代消解一律优先 per-action 的 runtime.user（见 task.js）
       const prevCaller = ctx._caller
-      ctx._caller = user ?? execUser
-      execUser = user ?? execUser
+      ctx._caller = user
       let result
       try {
         result = await withTimeout(p.handler(ctx, args ?? {}, { signal, user, taskId }), p.timeoutMs, `${op} timeout`)
@@ -158,7 +160,7 @@ export function createActionExecutor (ctx, deps = {}) {
     return r.results[0]
   }
 
-  return { executeBatch, executeOne, primitives, setExecUser: (u) => { execUser = u }, audit, actionStats }
+  return { executeBatch, executeOne, primitives, audit, actionStats }
 }
 
 /** 极简 JSONSchema 校验（type + required + min/max）。 */
