@@ -118,6 +118,10 @@ test('roles: 会话隔离——primary:steve 与 planner:steve 独立', async ()
     { text: '规划器回复', toolCalls: [] },
     { text: '规划器回复2', toolCalls: [] }
   ])
+  // 清空跨测试累积的会话（模块级 SESSIONS 共享——否则历史超窗触发滚动摘要
+  // 产生额外 provider 调用，污染调用计数断言）
+  registry.reset('steve')
+  registry.planner.reset('steve')
   await registry.chat('steve', '你好')
   await registry.planner.chat('steve', '你是什么角色？')
   await registry.planner.chat('steve', '再说一次')
