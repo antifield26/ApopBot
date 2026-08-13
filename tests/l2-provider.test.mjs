@@ -200,3 +200,20 @@ test('C10: CloudProvider contextWindow 返回 cloudMaxContextWindow（缺省 655
   const p2 = createProvider({ l2: { ...l2Base, cloudMaxContextWindow: 32768 } }, makeLogger())
   assert.equal(p2.contextWindow(), 32768, '配置 32768 生效')
 })
+
+test('L9 修复：退避等待中止 → 抛 AbortError（chat 层认 name 不再误报"处理出错"）', async () => {
+  // fetch 恒网络错误 → 进入 500ms 退避等待 → 等待窗口内 abort
+  mockFetch(async () => { throw new Error('ECONNREFUSED') })
+  const l2 = { ...l2Base, cloudBaseUrl: 'https://api.anthropic.com/v1/messages' }
+  process.env.ANTHROPIC_API_KEY = 'sk-test'
+  try {
+    const p = createProvider({ l2 }, makeLogger())
+    const controller = new AbortController()
+    const pending = p._post({}, controller.signal)
+    setTimeout(() => controller.abort(), 50) // 落在退避等待窗口
+    await assert.rejects(pending, (err) => err?.name === 'AbortError', '中止应抛 AbortError（修复前为普通 Error → 误报故障）')
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY
+    restoreFetch()
+  }
+})

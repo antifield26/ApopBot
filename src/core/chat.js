@@ -52,6 +52,9 @@ export function stripColorCodes (text) {
  * @returns {string[]}
  */
 export function chunkText (text, maxLength) {
+  // 防御：maxLength ≤ 0/非有限值时 while 恒真且 cut 恒 0 → 死循环（生产配置
+  // 32-256 校验挡住，此为导出纯函数的自防御）
+  if (maxLength <= 0 || !Number.isFinite(maxLength)) return [text]
   if (text.length <= maxLength) return [text]
   const chunks = []
   let rest = text

@@ -103,3 +103,10 @@ test('registry 速率限制：op 命令冷却期内静默丢弃', async () => {
   await registry.dispatch('!secret', { sender: 'op1', ctx })
   assert.equal(calls.length, 2)
 })
+
+test('L3 修复：chunkText maxLength ≤ 0/非有限值防御（不再死循环）', () => {
+  const long = 'x'.repeat(100)
+  assert.deepEqual(chunkText(long, 0), [long], 'maxLength 0 不应死循环')
+  assert.deepEqual(chunkText(long, -1), [long], '负值不应死循环')
+  assert.deepEqual(chunkText(long, Infinity), [long], '非有限值不应死循环')
+})

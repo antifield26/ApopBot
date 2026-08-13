@@ -160,7 +160,7 @@ class CloudProvider {
       if (!signal) { await new Promise(r => setTimeout(r, ms)); return }
       /** @type {Promise<void>} */
       const delay = new Promise((resolve, reject) => {
-        const onAbort = () => { clearTimeout(t); reject(new Error('请求已中止')) }
+        const onAbort = () => { clearTimeout(t); reject(new DOMException('请求已中止', 'AbortError')) }
         const t = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve() }, ms)
         signal.addEventListener('abort', onAbort, { once: true })
       })
@@ -168,7 +168,9 @@ class CloudProvider {
     }
     let lastErr = null
     for (let attempt = 0; attempt <= 2; attempt++) {
-      if (signal?.aborted) throw new Error('请求已中止')
+      // AbortError 语义（agent-interface 的 chat 只认 err.name==='AbortError'——
+      // 普通 Error('请求已中止') 会被误报"处理出错"而非干净的"请求已中止"）
+      if (signal?.aborted) throw new DOMException('请求已中止', 'AbortError')
       let res
       try {
         res = await fetch(this.baseUrl, {

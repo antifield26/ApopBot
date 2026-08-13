@@ -1259,3 +1259,30 @@ test('P2: chat 的 system 含【探索记忆】章节（记忆层整体描述）
   assert.ok(sys.includes('【探索记忆】'), '应含记忆章节')
   assert.ok(sys.includes('query_map 四分支'), '应含四分支说明')
 })
+
+test('L10 修复：滚动摘要可重复触发——滚出窗口的历史不再永久丢失', async () => {
+  _resetSummarizeCooldown()
+  const ctx = makeCtx()
+  // MAX_HISTORY_MESSAGES=10，每轮 +2——6 轮后开始超窗（dropped=2）
+  const script = Array.from({ length: 30 }, (_, i) => ({ text: `第${i}轮回复`, toolCalls: [] }))
+  const { agent, provider } = makeAgent(ctx, script)
+  const isSummarizeCall = (c) => c.messages?.some(m => String(m.content ?? '').includes('压缩为一句中文摘要'))
+  for (let i = 0; i < 6; i++) {
+    await agent.chat('steve', `消息${i}`)
+    await new Promise(r => setImmediate(r)) // 摘要 fire-and-forget 落盘
+  }
+  assert.equal(provider.calls.filter(isSummarizeCall).length, 1, '首次超窗应触发摘要')
+  // 修复前 summary 存在即永不触发——滚出的新历史永久丢失
+  _resetSummarizeCooldown()
+  await agent.chat('steve', '消息6')
+  await new Promise(r => setImmediate(r))
+  assert.equal(provider.calls.filter(isSummarizeCall).length, 2, '继续滚动应再次触发摘要（修复前恒 1）')
+  // 再次触发的 prompt 应携带已有摘要（合并保持完整）
+  const lastSummary = provider.calls.filter(isSummarizeCall).at(-1)
+  assert.ok(isSummarizeCall(lastSummary) && lastSummary.messages.some(m => String(m.content).includes('已有摘要')), '再次压缩应并入已有摘要')
+  // 冷却期内不重复 LLM 调用（summarize 节流仍生效）
+  await agent.chat('steve', '消息7')
+  await new Promise(r => setImmediate(r))
+  assert.equal(provider.calls.filter(isSummarizeCall).length, 2, '60s 冷却内不重复压缩')
+  _resetSummarizeCooldown()
+})

@@ -725,15 +725,19 @@ export class AgentInterface {
       setSession(this.role, user, sessionValue)
       // 落盘（2s 防抖 + exit flush）——重启/重连后多轮上下文不丢
       this.sessionStore?.set(`${this.role}:${user}`, sessionValue)
-      // 对话滚动摘要（v2）：被 slice 丢掉的旧轮非空且尚无摘要 → fire-and-forget
-      // LLM 压缩（复用 summarize 60s 冷却天然节流；成功晚于本轮落盘——补写）
+      // 对话滚动摘要（v2）：有被 slice 丢掉的旧轮 → fire-and-forget LLM 压缩
+      //（复用 summarize 60s 冷却天然节流——冷却期内 summarize 是廉价 no-op；
+      // 成功晚于本轮落盘——补写）。此前只生成一次，之后滚出窗口的历史永久
+      // 丢失（长对话早期约定/事实不可恢复）；现每轮触发、冷却节流，已有摘要
+      // 并入 prompt 合并保持完整
       const dropped = history.slice(0, -MAX_HISTORY_MESSAGES)
-      if (dropped.length > 0 && !sessionValue.summary && this.summarize) {
+      if (dropped.length > 0 && this.summarize) {
         const droppedText = dropped
           .map(m => `${m.role}: ${String(m.content ?? '').slice(0, 150)}`)
           .join('\n')
           .slice(0, 500)
-        this.summarize(`把以下对话历史压缩为一句中文摘要（保留玩家的要求、约定与关键事实）：\n${droppedText}`, 200)
+        const prevLine = sessionValue.summary ? `\n已有摘要（请合并保持完整）：${sessionValue.summary}` : ''
+        this.summarize(`把以下对话历史压缩为一句中文摘要（保留玩家的要求、约定与关键事实）：\n${droppedText}${prevLine}`, 200)
           .then((s) => {
             if (!s) return
             // 写回前重读当前会话——summarize 是 fire-and-forget，期间可能已发生
