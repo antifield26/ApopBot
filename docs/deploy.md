@@ -3,7 +3,7 @@
 ## 拓扑
 
 ```
-树莓派 5 8G (LAN 192.168.3.93)            Windows PC
+树莓派 5 8G             Windows PC
 ├── PaperMC 26.1.2 服务端                 ├── Bot —— NSSM 服务 minecraft-bot
 │   └── systemd/minecraft-server.service
 │   └── 白名单: mcbot / mcbot-test           └── deploy.ps1 一键部署
