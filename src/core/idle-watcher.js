@@ -9,10 +9,15 @@ const IDLE_POLL_MS = 60000 // 每分钟检查一次
 const IDLE_THRESHOLD_MS = 10 * 60000 // waitingReason 持续 10 分钟才播报
 const IDLE_REANNOUNCE_MS = 60 * 60000 // 同一任务同原因至少 1 小时才再播报
 const idleWatcher = { bot: null, ctx: null, announced: new Map() }
-setInterval(() => {
+
+/**
+ * 单次检查（interval 驱动；导出供测试直接驱动——60s 周期不便于测试）。
+ * @param {number} [nowTs] 测试注入时间戳（冷却/阈值判定可控）
+ */
+export function _idleTick (nowTs = Date.now()) {
   const { bot, ctx } = idleWatcher
   if (!bot || !ctx?.tasks || !ctx.agent?.summarize) return
-  const now = Date.now()
+  const now = nowTs
   for (const t of ctx.tasks.getStatus()) {
     if (t.state !== 'running' || !t.waitingReason || !t.waitingSince) continue
     const key = `${t.id}:${t.waitingReason}`
@@ -29,7 +34,8 @@ setInterval(() => {
         .catch(() => {})
     }
   }
-}, IDLE_POLL_MS).unref?.()
+}
+setInterval(() => _idleTick(), IDLE_POLL_MS).unref?.()
 
 /** 测试钩子：清空 idle 播报去重表（跨用例共享）。 */
 export function _resetIdleWatcher () {

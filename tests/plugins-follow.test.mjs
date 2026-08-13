@@ -264,3 +264,22 @@ test('follow: 已跟上（dist ≤ REACH）→ 清除残留寻路 goal（防 pat
   assert.equal(bot.setGoalCalls.at(-1), null, '已跟上时必须清寻路 goal')
   assert.equal(bot.controls.forward, false, '已跟上应停下')
 })
+
+test('follow: 切换目标立即重建 goal（lastGoalPos 重置——不残留旧目标的重算冷却）', (t) => {
+  useMockTimers(t)
+  const bot = makeBot(new Vec3(0, 64, 0), solidAhead) // 前方实心 → 卡住后切寻路绕行
+  const a = { id: 1, position: new Vec3(10, 64, 0) } // 远处（>DIRECT_RANGE）→ 寻路模式
+  const b = { id: 2, position: new Vec3(10, 64, 10) }
+  bot.follow.setTarget(a)
+  mock.timers.tick(500) // 建立 A 的 goal（lastGoalTime 已记录）
+  const goalCallsAfterA = bot.setGoalCalls.filter(g => g !== null).length
+  assert.ok(goalCallsAfterA >= 1, 'A 的 goal 应已建立')
+  // 冷却期（1.5s）内切换目标：B 的 goal 必须立即建立——lastGoalPos 重置使
+  // 首 tick 无条件重建（修复缺失场景：切换后残留冷却阻塞新目标寻路）
+  mock.timers.tick(200)
+  bot.follow.setTarget(b)
+  mock.timers.tick(500)
+  const goalCallsAfterB = bot.setGoalCalls.filter(g => g !== null).length
+  assert.ok(goalCallsAfterB > goalCallsAfterA, `切换目标应立即重建 goal（实际 ${goalCallsAfterA} → ${goalCallsAfterB}）`)
+  bot.follow.stop()
+})
