@@ -101,19 +101,31 @@ export function registerMove (register, _ctx) {
       try {
         await withTimeout(c.bot.sleep(bed), 15000, 'sleep timeout')
         // 等天亮（wake 事件——白天自动唤醒/被吵醒提前返回）；listener 配对移除
+        /** @type {(() => void)|null} */
+        let onAbort = null
         /** @type {Promise<void>} */
         const wake = new Promise((resolve, reject) => {
           const t = setTimeout(() => { if (onWake) c.bot.removeListener('wake', onWake); resolve() }, timeoutMs ?? 300000)
           onWake = () => { clearTimeout(t); resolve() }
           c.bot.once('wake', onWake)
-          if (runtime?.signal?.aborted) {
+          // abort 监听必须 finally 配对移除（flow.js wait/fish 同款纪律）——
+          // 任务级 signal 生命周期数天（farm 每晚睡觉），正常 wake/超时路径
+          // 不移除会每晚泄漏一个监听器，数周后 abort 时一次性触发几十个无意义回调
+          if (!runtime?.signal) return
+          if (runtime.signal.aborted) {
+            clearTimeout(t); c.bot.removeListener('wake', onWake); reject(new Error('等待被中断'))
+            return
+          }
+          onAbort = () => {
             clearTimeout(t); c.bot.removeListener('wake', onWake); reject(new Error('等待被中断'))
           }
-          runtime?.signal?.addEventListener('abort', () => {
-            clearTimeout(t); c.bot.removeListener('wake', onWake); reject(new Error('等待被中断'))
-          }, { once: true })
+          runtime.signal.addEventListener('abort', onAbort, { once: true })
         })
-        await wake
+        try {
+          await wake
+        } finally {
+          if (onAbort) runtime?.signal?.removeEventListener('abort', onAbort)
+        }
         return { slept: true }
       } catch (err) {
         if (err?.message?.includes('中断')) throw err

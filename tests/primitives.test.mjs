@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
+import { getEventListeners } from 'node:events'
 import { createPrimitiveRegistry } from '../src/core/primitives/index.js'
 
 // 动作原语层直测（不经 executor 管线）：registry 由工厂创建，handler 直接调用。
@@ -57,4 +59,46 @@ test('M3: interact_entity 默认不限冷却（LLM act 行为不变）', async (
   const r2 = await h({ bot }, { filter: ['cow'], count: 1 })
   assert.equal(r2.fed, 1, 'minFeedIntervalMs=0 时同只动物可重复喂')
   assert.equal(r2.cooldownMs, undefined, '默认路径不产生 cooldownMs 字段')
+})
+
+// ---- M4：sleep 原语 abort 监听器配对移除 ----
+
+function makeLogger () {
+  return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }
+}
+
+/** sleep 原语 fake bot：pathfinder.goto 立即成功 + wake 事件手动触发。 */
+function makeSleepBot () {
+  const bot = new EventEmitter()
+  bot.entity = { position: { x: 0, y: 64, z: 0 } }
+  bot.time = { isDay: false }
+  bot.sleep = async () => {}
+  bot.findBlocks = () => [{ x: 1, y: 64, z: 1 }]
+  bot.blockAt = () => ({ name: 'red_bed' })
+  bot.pathfinder = {
+    setGoal: () => {},
+    stop: () => { setImmediate(() => bot.emit('path_stop')) },
+    goto: () => Promise.resolve()
+  }
+  return bot
+}
+
+test('M4: sleep 原语正常 wake/abort 路径均移除 abort 监听器（不泄漏）', async () => {
+  const controller = new AbortController()
+  const h = createPrimitiveRegistry({}).get('sleep').handler
+  // 正常 wake 路径：wake 事件触发后 abort 监听器必须归零（修复前残留——任务级
+  // signal 生命周期数天，farm 每晚睡觉每晚泄漏 1 个）
+  const bot = makeSleepBot()
+  const p1 = h({ bot, cfg: {}, logger: makeLogger() }, { timeoutMs: 30000 }, { signal: controller.signal })
+  await new Promise(r => setImmediate(r)) // handler 进入 wake 等待（goto 已同步成功）
+  bot.emit('wake')
+  const r1 = await p1
+  assert.deepEqual(r1, { slept: true })
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0, '正常 wake 后 abort 监听器应移除')
+  // abort 路径：中止后监听器同样归零（once 自清 + finally 幂等）
+  const p2 = h({ bot, cfg: {}, logger: makeLogger() }, { timeoutMs: 30000 }, { signal: controller.signal })
+  await new Promise(r => setImmediate(r))
+  controller.abort()
+  await assert.rejects(p2, /中断/)
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0, 'abort 后监听器也应清理')
 })
