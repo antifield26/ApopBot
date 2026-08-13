@@ -329,9 +329,12 @@ export class TaskManager {
     try {
       // next 条目必须透传 schedule：_createSchedule 读 rec.entry.schedule——
       // 此前漏传导致 next 任务注册后 cron=null 且不启动，永久停在 created（静默失效）
-      const entry = { id: next.id, type: next.type, options: next.options ?? {}, ...(next.schedule ? { schedule: next.schedule } : {}) }
+      // adHoc:true——链任务与 addTask 同形态（可被 !task remove 移除；写状态快照
+      // 跨重启保留，否则运行中的任务链重启后中间任务凭空消失）
+      const entry = { id: next.id, type: next.type, options: next.options ?? {}, adHoc: true, ...(next.schedule ? { schedule: next.schedule } : {}) }
       const newRec = this._createEntry(entry)
       this.tasks.set(next.id, newRec) // 先入表再启动（exclusive 互斥判定依赖登记）
+      this._syncStateTasks() // 链任务入快照（重启/重连后恢复）
       if (next.schedule) {
         this._createSchedule(newRec)
       } else {

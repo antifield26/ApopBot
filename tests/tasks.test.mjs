@@ -350,6 +350,21 @@ test('H1 修复：guard 抢占重启后时长上限仍生效（maxMinutes 持久
   await manager.stopAll()
 })
 
+test('M1 修复：任务链 next 条目标记 adHoc 并写入状态快照（重启不丢链）', async () => {
+  const bot = makeCombatBot()
+  const synced = []
+  const store = { setTasks: (tasks) => { synced.push(tasks) }, setCounter: () => {} }
+  const manager = new TaskManager({ tasks: [], chat: { maxLength: 250 } }, makeLogger(), { bot }, store, () => null)
+  manager.addTask({ id: 'p1', type: 'combat', options: { stopWhenNoTargets: true }, notifyChat: false, next: { id: 'm1', type: 'combat', options: { stopWhenNoTargets: true }, notifyChat: false } })
+  await settle(10)
+  const m1 = manager.tasks.get('m1')
+  assert.ok(m1, 'next 任务应被注册')
+  assert.equal(m1.entry.adHoc, true, '链任务应标记 adHoc（与 addTask 同形态——修复前重启后链中间任务消失）')
+  const lastSync = synced.at(-1)
+  assert.ok(lastSync.some(e => e.id === 'm1'), '链任务应写入状态快照（重启后恢复）')
+  await manager.stopAll()
+})
+
 test('H2 修复：排队启动的 scheduled 任务自然完成后仍接力 next 链', async () => {
   const bot = makeCombatBot()
   const manager = new TaskManager({ scheduleTimezone: 'UTC' }, makeLogger(), { bot }, null, () => null)
