@@ -100,32 +100,43 @@ index 507a618..08cbaf5 100644
  
    let fireworkEntityName
    if (bot.supportFeature('fireworkNamePlural')) {
-@@ -900,6 +915,25 @@ function inject (bot) {
+@@ -900,22 +915,20 @@ function inject (bot) {
  
    function useEntity (target, leftClick, x, y, z) {
      const sneaking = bot.getControlState('sneak')
-+    if (bot.supportFeature('useEntityUsesEntityId')) {
-+      if (leftClick === 1 && bot.supportFeature('attackUsesOwnPacket')) {
-+        bot._client.write('attack', { entityId: target.id })
-+        return
-+      }
-+
-+      bot._client.write('use_entity', {
-+        entityId: target.id,
-+        hand: 0,
-+        location: {
-+          x: x ?? 0,
-+          y: y ?? 0,
-+          z: z ?? 0
-+        },
-+        usingSecondaryAction: sneaking
-+      })
+-    if (x && y && z) {
+-      bot._client.write('use_entity', {
+-        target: target.id,
+-        mouse: leftClick,
+-        x,
+-        y,
+-        z,
+-        sneaking
+-      })
+-    } else {
+-      bot._client.write('use_entity', {
+-        target: target.id,
+-        mouse: leftClick,
+-        sneaking
+-      })
+-    }
++    // 26.1（本项目补丁）：useEntityUsesEntityId 特性不存在（恒 false）——旧门控分支
++    // 是死代码；attackUsesOwnPacket=true → 独立 attack 包（正式攻击通道）；
++    // 其余统一新式 use_entity {target, hand, location(lpVec3 必填), sneaking}
++    if (leftClick === 1 && bot.supportFeature('attackUsesOwnPacket')) {
++      bot._client.write('attack', { entityId: target.id })
 +      return
 +    }
 +
-     if (x && y && z) {
-       bot._client.write('use_entity', {
-         target: target.id,
++    bot._client.write('use_entity', {
++      target: target.id,
++      hand: 0,
++      location: { x: x ?? 0, y: y ?? 0, z: z ?? 0 },
++      sneaking
++    })
+   }
+ 
+   function fetchEntity (id) {
 diff --git a/node_modules/mineflayer/lib/plugins/inventory.js b/node_modules/mineflayer/lib/plugins/inventory.js
 index 0636faa..8c6224f 100644
 --- a/node_modules/mineflayer/lib/plugins/inventory.js
@@ -148,44 +159,45 @@ index 0636faa..8c6224f 100644
    }
  
    function deactivateItem () {
-@@ -243,6 +247,16 @@ function inject (bot, { hideErrors }) {
+@@ -243,25 +247,29 @@ function inject (bot, { hideErrors }) {
    async function activateEntity (entity) {
      // TODO: tell the server that we are not sneaking while doing this
      await bot.lookAt(entity.position.offset(0, 1, 0), false)
-+    if (bot.supportFeature('useEntityUsesEntityId')) {
-+      bot._client.write('use_entity', {
-+        entityId: entity.id,
-+        hand: 0,
-+        location: { x: 0, y: 0, z: 0 },
-+        usingSecondaryAction: false
-+      })
-+      return
-+    }
-+
++    // 26.1（本项目补丁）：useEntityUsesEntityId 死代码门控移除——统一新式
++    // use_entity {target, hand, location(lpVec3 必填), sneaking}
      bot._client.write('use_entity', {
        target: entity.id,
-       mouse: 0, // interact with entity
-@@ -254,6 +268,20 @@ function inject (bot, { hideErrors }) {
+-      mouse: 0, // interact with entity
+-      sneaking: false,
+-      hand: 0 // interact with the main hand
++      hand: 0,
++      location: { x: 0, y: 0, z: 0 },
++      sneaking: false
+     })
+   }
+ 
    async function activateEntityAt (entity, position) {
      // TODO: tell the server that we are not sneaking while doing this
      await bot.lookAt(position, false)
-+    if (bot.supportFeature('useEntityUsesEntityId')) {
-+      bot._client.write('use_entity', {
-+        entityId: entity.id,
-+        hand: 0,
-+        location: {
-+          x: position.x - entity.position.x,
-+          y: position.y - entity.position.y,
-+          z: position.z - entity.position.z
-+        },
-+        usingSecondaryAction: false
-+      })
-+      return
-+    }
-+
++    // 同 activateEntity：新式 use_entity（location 为相对偏移——lpVec3 必填）
      bot._client.write('use_entity', {
        target: entity.id,
-       mouse: 2, // interact with entity at
+-      mouse: 2, // interact with entity at
+-      sneaking: false,
+-      hand: 0, // interact with the main hand
+-      x: position.x - entity.position.x,
+-      y: position.y - entity.position.y,
+-      z: position.z - entity.position.z
++      hand: 0,
++      location: {
++        x: position.x - entity.position.x,
++        y: position.y - entity.position.y,
++        z: position.z - entity.position.z
++      },
++      sneaking: false
+     })
+   }
+ 
 diff --git a/node_modules/mineflayer/lib/plugins/physics.js b/node_modules/mineflayer/lib/plugins/physics.js
 index cecae69..eedc712 100644
 --- a/node_modules/mineflayer/lib/plugins/physics.js
