@@ -206,3 +206,50 @@ test('P1-15 修复：stop await close 完成——同端口立即重启不 EADDR
 // C6/K 回归（httpChanged/logRebuild 判定必须在 ctx.cfg 赋值之前——否则两侧恒等
 // 热重载死代码）：随 reload 抽取（M10）已由 tests/reload.test.mjs 行为测试覆盖
 //（"HTTP 变化 → stop+start" / "log dir 变化 → setLogger"），源码顺序守卫删除。
+
+test('L6 修复：EADDRINUSE 退避重试——端口释放后自动恢复监听（不再永久死亡）', async (t) => {
+  // 先占住一个端口
+  const blocker = http.createServer((req, res) => { res.end('blocker') })
+  await new Promise((resolve) => blocker.listen(0, '127.0.0.1', resolve))
+  const blockedPort = blocker.address().port
+  // status server 指向同一端口（注入小退避基数加速测试）
+  const server = createStatusServer(
+    () => ({ http: { enabled: true, port: blockedPort } }),
+    makeLogger(),
+    () => makeState(),
+    { retryBaseMs: 30, retryMaxMs: 120 }
+  )
+  server.start()
+  t.after(() => server.stop())
+  await new Promise(r => setTimeout(r, 100)) // EADDRINUSE 已发生、重试已调度
+  assert.equal(server.isRunning(), false, '监听失败期间 isRunning 应为 false（此前置 null 后永久）')
+  // 释放端口 → 退避重试自动恢复
+  await new Promise((resolve) => blocker.close(resolve))
+  let port = null
+  const deadline = Date.now() + 3000
+  while (Date.now() < deadline && port === null) {
+    await new Promise(r => setTimeout(r, 50))
+    port = server.port()
+  }
+  assert.ok(port, '端口释放后应自动恢复监听（修复前端点永久死亡）')
+  const r = await fetchJson(port, '/health')
+  assert.equal(r.status, 200)
+})
+
+test('L6 修复：stop() 取消退避重试（stop 后旧重试不竞争新 start）', async () => {
+  const blocker = http.createServer((req, res) => { res.end('blocker') })
+  await new Promise((resolve) => blocker.listen(0, '127.0.0.1', resolve))
+  const blockedPort = blocker.address().port
+  const server = createStatusServer(
+    () => ({ http: { enabled: true, port: blockedPort } }),
+    makeLogger(),
+    () => makeState(),
+    { retryBaseMs: 30, retryMaxMs: 120 }
+  )
+  server.start()
+  await new Promise(r => setTimeout(r, 50)) // EADDRINUSE 已发生
+  await server.stop() // 取消重试
+  await new Promise(r => setTimeout(r, 200)) // 重试窗口内保持关闭
+  assert.equal(server.isRunning(), false, 'stop 后重试不得恢复监听')
+  await new Promise((resolve) => blocker.close(resolve))
+})

@@ -6,8 +6,12 @@
 
 import http from 'node:http'
 
-export function createStatusServer (getCfg, logger, getState) {
+export function createStatusServer (getCfg, logger, getState, { retryBaseMs = 5000, retryMaxMs = 30000 } = {}) {
   let server = null
+  // EADDRINUSE 退避重试（retryBaseMs 起每档翻倍、retryMaxMs 封顶；stop()/
+  // 成功监听清除；测试注入小基数加速）
+  let retryTimer = null
+  let retryAttempt = 0
 
   function start () {
     const cfg = getCfg()
@@ -35,23 +39,43 @@ export function createStatusServer (getCfg, logger, getState) {
       res.end(JSON.stringify(body))
     })
     server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        // 端口被占（同端口热重启竞态/他进程占用）：退避重试——此前直接置
+        // server=null 且永不重试，/health /metrics 在本进程生命周期内永久死亡
+        //（热重载重试也无用），无人值守时只能靠外部探测发现。失败日志降
+        // debug 防刷屏；置 null 使 isRunning 如实反映监听失败、start() 可重建
+        const delay = Math.min(retryBaseMs * 2 ** retryAttempt, retryMaxMs)
+        retryAttempt++
+        server = null // listen 失败后旧 server 不可复用
+        logger.debug({ port: cfg.http.port, delayMs: delay }, 'http 端口被占用，退避重试监听')
+        retryTimer = setTimeout(() => {
+          retryTimer = null
+          start() // server 已置 null；若已被新 start 接管（server 非 null）则短路
+        }, delay)
+        retryTimer.unref?.()
+        return
+      }
       logger.warn({ err: err.message }, 'http status server error')
-      // EADDRINUSE 等监听失败后必须置 null——server 非 null 使后续
-      // start() 短路，/health /metrics 在本进程生命周期内永久死亡（热重载重试
-      // 也无用；error 事件在 node http server 上主要来自 listen 失败——请求
-      // 处理错误已由 handler try/catch 承接）
+      // 其他监听失败同样置 null——server 非 null 使后续 start() 短路（error
+      // 事件在 node http server 上主要来自 listen 失败——请求处理错误已由
+      // handler try/catch 承接）
       server = null
     })
+    server.once('listening', () => { retryAttempt = 0 }) // 成功监听后重置退避
     server.listen(cfg.http.port, '127.0.0.1')
     logger.info({ port: cfg.http.port }, 'http status server listening on 127.0.0.1')
   }
 
   async function stop () {
+    clearTimeout(retryTimer) // 退避重试随 stop 取消（否则 stop 后新 start 被旧重试竞争）
+    retryTimer = null
+    retryAttempt = 0
     if (!server) return
     const s = server
     server = null
     // await close 完成再返回：热重载 stop→start 同端口时，close 未完成 listen
-    // 会 EADDRINUSE → error 处理器置 server=null → 端点永久死亡（C6/K 同源）
+    // 会 EADDRINUSE → error 处理器置 server=null → 端点永久死亡（C6/K 同源；
+    // 现在由退避重试兜底）
     await new Promise((/** @type {(v?: unknown) => void} */ resolve) => {
       s.close(() => resolve())
       s.closeAllConnections?.() // keep-alive 连接不阻塞 close（本地短请求，罕见但防挂）

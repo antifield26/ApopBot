@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "pretest": "npm run check:compat",
     "test": "node --test \"tests/*.test.mjs\"",
     "lint": "eslint src tests scripts eslint.config.js",
     "check:compat": "node scripts/check-compat.mjs",

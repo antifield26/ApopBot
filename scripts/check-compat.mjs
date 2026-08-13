@@ -205,6 +205,11 @@ async function main () {
         check(`补丁 ${patchName} 已应用（哨兵 ${sentinel}）`, src.includes(sentinel),
           `${targetFile} 含哨兵行`,
           '运行 npm install（postinstall 自动应用）或手动 npx patch-package')
+      } else {
+        // 目标文件缺失（上游改名/路径变更）不得静默跳过——否则门禁全绿而
+        // 补丁语义已丢（26.1.2 适配失效）
+        check(`补丁 ${patchName} 已应用（哨兵 ${sentinel}）`, false, `${targetFile} 不存在（哨兵目标文件缺失）`,
+          '上游包路径变更——检查 patches/ 与 PATCH_SENTINELS 的同步')
       }
     }
   }
