@@ -6,6 +6,7 @@ import { loadConfig, validateConfig, assertLogDirWritable } from './core/config.
 import { createLogger } from './core/logger.js'
 import { ConnectionManager } from './core/connection.js'
 import { createFeatureLayerManager } from './core/feature-layer.js'
+import { createReloadHandler } from './core/reload.js'
 import { createL2 } from './l2/index.js'
 import { setupSignals } from './core/signals.js'
 import { createStatusServer } from './core/http-status.js'
@@ -117,72 +118,6 @@ ctx.stateStore = createStateStore({ logger })
 // 探索记忆接入持久化通道（recordResource/recordAnchor 修改后 5s 防抖落盘）
 discovery.attachStore(ctx.stateStore)
 
-/**
- * 重载配置并热更新：校验 → 更新 ctx.cfg/conn.cfg → 日志配置变化重建 logger →
- * 任务 diff 重载。SIGHUP / 配置变化 / !reload 均走此路径（经 layer.queue 串行化）。
- */
-async function reload () {
-  let newCfg
-  try {
-    newCfg = loadConfig()
-  } catch (err) {
-    logger.warn({ err: err.message }, 'reload 配置读取失败，保留旧配置')
-    return false
-  }
-  const { ok: valid, errors: errs } = validateConfig(newCfg)
-  if (!valid) {
-    logger.warn({ errors: errs }, 'reload 配置校验失败，保留旧配置')
-    return false
-  }
-
-  const logChanged = JSON.stringify(newCfg.log) !== JSON.stringify(ctx.cfg.log)
-  const l2Changed = JSON.stringify(newCfg.l2) !== JSON.stringify(ctx.cfg.l2)
-  // 变更检测必须在赋值前计算——赋值后两侧恒等，判定永不成立（此前 log 重建
-  // 分支是死代码：dir/pretty/rotate 变更静默失效；http 已按此修复）
-  const httpChanged = JSON.stringify(newCfg.http) !== JSON.stringify(ctx.cfg.http)
-  const logRebuild = logChanged && (
-    JSON.stringify(newCfg.log.rotate) !== JSON.stringify(ctx.cfg.log.rotate) ||
-    newCfg.log.pretty !== ctx.cfg.log.pretty ||
-    newCfg.log.dir !== ctx.cfg.log.dir)
-  ctx.cfg = newCfg
-  ctx.conn.updateCfg(newCfg)
-  ctx.notifier = createNotifier(newCfg, logger) // webhook 配置随 reload 更新（fatalExit 使用）
-
-  if (logRebuild) {
-    logger.info({ level: newCfg.log.level }, '日志配置变化，重建 logger')
-    // 注：pino v9 transport worker 无法主动拆除，反复改日志配置会累积文件句柄（接受，文档化）
-    logger = createLogger(newCfg)
-    ctx.logger = logger
-    ctx.conn.log = logger
-  } else if (logChanged) {
-    // 仅 level 变化 → 只调 level 不重建 transport——重建后新旧两个 pino-roll
-    // 指向同一 bot.log，轮转 rename 时旧 fd 写被改名文件（丢行/坏 JSONL）
-    logger.level = newCfg.log.level
-    ctx.logger.level = newCfg.log.level
-    logger.info({ level: newCfg.log.level }, '日志级别变更（transport 复用）')
-  }
-
-  // L2 配置变化 → 重建 agent（createL2 构造时持有冻结的 cfg.l2 引用；
-  // enabled=false→true 时 ctx.agent 为 null 也必须生效）
-  if (l2Changed || Boolean(newCfg.l2?.enabled) !== Boolean(ctx.agent)) {
-    await ctx.agent?.stop()
-    ctx.agent = createL2(newCfg, ctx)
-    logger.info('L2 配置变化，重建 agent')
-  }
-
-  // HTTP 状态端点配置变化 → 重启监听（getCfg 闭包取最新配置）
-  if (httpChanged) {
-    await statusServer.stop() // await close 完成再 listen——同端口重启不 EADDRINUSE
-    statusServer.start()
-  }
-
-  if (ctx.tasks) await ctx.tasks.reload(newCfg)
-  logger.info('config reloaded')
-  return true // 成功标志（!reload 命令反馈用）
-}
-const reloadQueued = () => layer.queue(reload)
-ctx.onReload = reloadQueued
-
 // 当前生效的配置文件路径（--config 参数，否则 config/config.json 存在时用生产路径，
 // 最后退回 default.json），用于热监视——与 loadConfig 的回退顺序一致
 function activeConfigPath () {
@@ -247,6 +182,28 @@ const statusServer = createStatusServer(() => ctx.cfg, logger, () => ({
   notifyStats: ctx.notifier?.stats?.() ?? null
 }))
 statusServer.start()
+
+/**
+ * 重载配置并热更新（实现见 src/core/reload.js——入口 import 即连接无法单测，
+ * 抽取后依赖注入可行为测试）：校验 → 更新 ctx.cfg/conn.cfg → 日志配置变化重建
+ * logger → L2 变化重建 agent → HTTP 变化重启监听 → 任务 diff 重载。
+ * SIGHUP / 配置变化 / !reload 均走此路径（经 layer.queue 串行化）。
+ * 定义位置在 statusServer 创建之后（reload 依赖其 stop/start）。
+ */
+const reload = createReloadHandler({
+  ctx,
+  getLogger: () => logger,
+  setLogger: (l) => { logger = l },
+  conn,
+  statusServer,
+  loadConfig,
+  validateConfig,
+  createLogger,
+  createNotifier,
+  createL2
+}).reload
+const reloadQueued = () => layer.queue(reload)
+ctx.onReload = reloadQueued
 
 setupSignals({
   logger,

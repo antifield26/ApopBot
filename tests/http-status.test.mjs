@@ -203,31 +203,6 @@ test('P1-15 修复：stop await close 完成——同端口立即重启不 EADDR
   assert.equal(r.status, 200, '同端口重启后端点应存活')
   assert.equal(server.isRunning(), true)
 })
-
-// C6/K 回归守卫：http 变更检测必须在 ctx.cfg 赋值之前计算——原实现比较在赋值后
-// 两侧恒等，statusServer 的 stop/start 永不执行（http 热重载死代码，必须重启生效）。
-// 该 bug 无法经单元测试直接复现（index.js 是入口，import 即连接），用源码顺序守卫。
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-
-test('C6/K 回归：httpChanged 计算在 ctx.cfg = newCfg 之前（热重载死代码守卫）', () => {
-  const src = readFileSync(fileURLToPath(new URL('../src/index.js', import.meta.url)), 'utf8')
-  const lines = src.split('\n')
-  const httpIdx = lines.findIndex(l => l.includes('const httpChanged'))
-  const assignIdx = lines.findIndex(l => /^\s*ctx\.cfg = newCfg$/.test(l))
-  assert.ok(httpIdx !== -1, '应存在 httpChanged 计算')
-  assert.ok(assignIdx !== -1, '应存在 ctx.cfg 赋值语句（行首，非注释）')
-  assert.ok(httpIdx < assignIdx,
-    `httpChanged（行 ${httpIdx + 1}）必须在赋值（行 ${assignIdx + 1}）之前——否则两侧恒等热重载永不生效`)
-})
-
-test('C6/K 回归：logRebuild 判定在 ctx.cfg = newCfg 之前（日志热重载死代码守卫）', () => {
-  const src = readFileSync(fileURLToPath(new URL('../src/index.js', import.meta.url)), 'utf8')
-  const lines = src.split('\n')
-  const logIdx = lines.findIndex(l => l.includes('const logRebuild'))
-  const assignIdx = lines.findIndex(l => /^\s*ctx\.cfg = newCfg$/.test(l))
-  assert.ok(logIdx !== -1, '应存在 logRebuild 判定')
-  assert.ok(assignIdx !== -1, '应存在 ctx.cfg 赋值语句（行首，非注释）')
-  assert.ok(logIdx < assignIdx,
-    `logRebuild（行 ${logIdx + 1}）必须在赋值（行 ${assignIdx + 1}）之前——否则 dir/pretty/rotate 变更静默失效`)
-})
+// C6/K 回归（httpChanged/logRebuild 判定必须在 ctx.cfg 赋值之前——否则两侧恒等
+// 热重载死代码）：随 reload 抽取（M10）已由 tests/reload.test.mjs 行为测试覆盖
+//（"HTTP 变化 → stop+start" / "log dir 变化 → setLogger"），源码顺序守卫删除。
