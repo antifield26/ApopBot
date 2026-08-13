@@ -687,7 +687,10 @@ export class AgentInterface {
           toolCalls.push({ name: tc.name, result: summary.slice(0, 120) })
           if (toolCalls.length > 20) toolCalls.shift()
         }
-        messages.push({ role: 'assistant', content: res.text ?? '', toolCalls: calls })
+        // 修复：assistant 消息 push 全部 tool_use（含超限未执行的）——Anthropic 协议
+        // 要求每个 tool_result.tool_use_id 对应上下文中存在的 tool_use；只 push 前 4 个
+        // 时第 5+ 条 tool_result 成孤儿 → 严格端点 400（整轮对话失败）
+        messages.push({ role: 'assistant', content: res.text ?? '', toolCalls: allCalls })
         messages.push({ role: 'user', content: '', toolResults: results })
         prevRoundOps = roundOps // 本轮失败供下一轮 system 注入
       }
@@ -970,7 +973,8 @@ export class AgentInterface {
           results.push({ id: tc.id, name: tc.name, output: `执行失败: ${err.message}` })
         }
       }
-      messages.push({ role: 'assistant', content: res.text ?? '', toolCalls: calls })
+      // 同 chat 主循环：push 全部 tool_use（含超限未执行的）——防孤儿 tool_result 400
+      messages.push({ role: 'assistant', content: res.text ?? '', toolCalls: allCalls })
       messages.push({ role: 'user', content: '', toolResults: results })
     }
     this.log.info({ user, goal: goal.text.slice(0, 60), toolCalls }, '规划完成（后台静默推进）')

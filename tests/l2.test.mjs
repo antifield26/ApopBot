@@ -138,6 +138,34 @@ test('observe_block: isAir 语义（boundingBox——箱子非空误判修复：
   assert.ok(!('empty' in res), '字段改名 isAir——empty 语义误导 LLM 判定箱子内容')
 })
 
+test('chat: 超限工具调用（>4）——assistant 推送全部 tool_use（无孤儿 tool_result）', async () => {
+  const ctx = makeCtx()
+  const sixCalls = Array.from({ length: 6 }, (_, i) => ({
+    id: `t${i + 1}`, name: 'act', arguments: { actions: [{ op: 'observe_status', args: {} }] }
+  }))
+  const { agent, provider } = makeAgent(ctx, [
+    { text: null, toolCalls: sixCalls },
+    { text: '完成', toolCalls: [] }
+  ])
+  const { reply } = await agent.chat('steve', '批量操作')
+  assert.equal(reply, '完成')
+  // 第二轮请求的 messages 含第一轮 assistant（tool_use）+ user（tool_results）
+  const round2 = provider.calls[1].messages
+  const assistant = round2.find(m => m.role === 'assistant' && m.toolCalls)
+  const user = round2.find(m => m.role === 'user' && m.toolResults)
+  assert.ok(assistant, '应存在 assistant tool_use 轮')
+  assert.equal(assistant.toolCalls.length, 6, 'assistant 应含全部 tool_use（含超限未执行的）')
+  assert.equal(user.toolResults.length, 6, 'toolResults 应含全部（4 执行 + 2 未执行）')
+  // 无孤儿不变量：每个 toolResult.tool_use_id 必须对应存在的 tool_use
+  const ids = new Set(assistant.toolCalls.map(tc => tc.id))
+  for (const tr of user.toolResults) {
+    assert.ok(ids.has(tr.id), `tool_result id ${tr.id} 必须对应存在的 tool_use（孤儿 → 严格端点 400）`)
+  }
+  // 超限调用（t5/t6）回填"未执行"标记——模型可见可收敛
+  const pending = user.toolResults.filter(tr => tr.id === 't5' || tr.id === 't6')
+  assert.ok(pending.every(tr => tr.output.includes('未执行')), '超限调用回填未执行标记')
+})
+
 test('chat: cooldown 阻止连续请求', async () => {
   const ctx = makeCtx()
   const { agent } = makeAgent(ctx, [{ text: 'a' }, { text: 'b' }])
