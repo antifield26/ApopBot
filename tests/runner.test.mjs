@@ -389,15 +389,53 @@ function makeFarmBot (opts = {}) {
 
 const FARM_AREA = { x1: 0, y1: 0, z1: 0, x2: 20, y2: 100, z2: 20 }
 
-test('farm 脚本: 成熟收割 → continue（不种植/不等待）→ 完成', async () => {
+test('farm 脚本: 成熟收割 → continue（不种植/不等待）→ 默认 maxCycles 0', async () => {
+  // 默认值断言：defaultOptions.maxCycles 必须为 0（不限轮数——巡逻语义）
+  const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
+  assert.equal(farmScript.defaultOptions.maxCycles, 0, 'farm 默认不限轮数（stopWhenIdle 空闲完成是唯一天然终态）')
+  // 收割行为验证：显式 maxCycles=2（有界，避免 makeFarmBot 恒成熟场景触发 maxActions 兜底）
+  const { bot, collects } = makeFarmBot()
+  const ctx = makeCtx(bot)
+  const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['wheat'], maxCycles: 2 }, ctx)
+  await task.start()
+  assert.equal(task.state, 'completed', 'maxCycles=2 两轮后完成')
+  assert.ok(collects.length >= 1, '成熟小麦被收割')
+  assert.ok(task.counters.harvested >= 1, `harvested 计数: ${task.counters.harvested}`)
+})
+
+test('loop max 0 = 不限轮数（farm maxCycles 默认语义——runner 层）', async () => {
+  const loopScript = {
+    id: 'loop0', exclusive: false, naturalCompletion: false, maxActions: 100,
+    script: { steps: [
+      { ctrl: 'loop', max: '${maxCycles}', body: [
+        { ctrl: 'wait', ms: 5 },
+        { op: 'look', args: { yaw: 0.05, relative: true }, count: 'wiggles' }
+      ] },
+      { ctrl: 'return', value: 'completed' }
+    ] }
+  }
+  // maxCycles=0 → 不限轮数：跑过多轮仍在 running
+  const t1 = makeTask(loopScript, { maxCycles: 0 })
+  t1.start()
+  await new Promise(r => setTimeout(r, 60))
+  assert.equal(t1.state, 'running', 'maxCycles=0 不限轮数（巡逻语义）')
+  assert.ok(t1.counters.wiggles >= 4, `跑过 4 轮以上（实际 ${t1.counters.wiggles}）`)
+  await t1.stop()
+  // maxCycles=2 → 恰好 2 轮后完成
+  const t2 = makeTask(loopScript, { maxCycles: 2 })
+  await t2.start()
+  assert.equal(t2.counters.wiggles, 2, '恰好 2 轮')
+  assert.equal(t2.state, 'completed', '显式 N 轮后无条件完成')
+})
+
+test('farm 脚本: maxCycles=2 恰好 2 轮后完成（显式上限）', async () => {
   const { bot, collects } = makeFarmBot()
   const ctx = makeCtx(bot)
   const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
-  const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['wheat'] }, ctx)
+  const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['wheat'], growthCheckSeconds: 0.01, maxCycles: 2 }, ctx)
   await task.start()
-  assert.equal(task.state, 'completed', '收割一轮后完成（maxCycles 默认 1）')
+  assert.equal(task.state, 'completed', 'maxCycles=2 两轮后无条件完成')
   assert.ok(collects.length >= 1, '成熟小麦被收割')
-  assert.ok(task.counters.harvested >= 1, `harvested 计数: ${task.counters.harvested}`)
 })
 
 test('farm 脚本: 无成熟 → 种植（replant 默认）→ 未成熟 → 等待生长', async () => {
@@ -414,11 +452,12 @@ test('farm 脚本: 无成熟 → 种植（replant 默认）→ 未成熟 → 等
 
 test('farm 脚本: replant=false → 不种植；stopWhenIdle → 完成', async () => {
   const { bot, planted } = makeFarmBot({ mature: false })
+  bot.findBlocks = () => [] // 空田（无作物/耕地）——真正触发 stopWhenIdle 空闲完成
   const ctx = makeCtx(bot)
   const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
   const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['wheat'], replant: false, stopWhenIdle: true, growthCheckSeconds: 0.01 }, ctx)
   await task.start()
-  assert.equal(task.state, 'completed', '空闲 + stopWhenIdle → 完成')
+  assert.equal(task.state, 'completed', '空闲 + stopWhenIdle → 完成（不限轮数下唯一天然终态）')
   assert.equal(planted.length, 0, 'replant=false 不种植')
 })
 

@@ -9,16 +9,18 @@ import { CROP_MATURITY, CROP_BY_BLOCK } from '../../core/crops.js'
 // - 种植（replant 默认 true；seedOverrides 透传；种植成功 continue）
 // - 未成熟 → 等待生长（growthCheckSeconds 默认 30s，内部等待可打断）
 // - 空闲：stopWhenIdle → 完成；否则巡逻等待（玩家放种子/成熟后继续）
-// - maxCycles 默认 1（0 = 不限轮数）——loop max 语义
+// - maxCycles 默认 0（0 = 不限轮数）——loop max 语义；显式设置 N 时 N 轮后
+//   无条件结束（保守运维语义）。失败重试在 loop 体内（collect 失败→wait 30s→
+//   下一轮自动重试），不限轮数下不会"一轮失败即假完成"。
 
 export default {
   id: 'farm',
   exclusive: true, // 与 chop/combat/breed/explore 互斥（都在动 pathfinder/collectBlock）
   naturalCompletion: true,
   maxActions: 100000,
-  // maxCycles 默认 3：收割失败（寻路/挖掘超时）有重试空间——
-  // 默认 1 轮时失败即结束 = "任务期间无动作后假 complete"（实测）
-  defaultOptions: { growthCheckSeconds: 30, maxCycles: 3 },
+  // maxCycles 默认 0 = 不限轮数：巡逻农场语义（stopWhenIdle 空闲完成是唯一天然
+  // 终态）；无 stopWhenIdle 的巡逻由 maxActions=100000 死循环兜底（与 combat 一致）
+  defaultOptions: { growthCheckSeconds: 30, maxCycles: 0 },
   /** init 校验。 */
   async init (task) {
     const o = task.options
