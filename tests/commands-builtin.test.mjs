@@ -520,3 +520,30 @@ test('v1.4.0: !agent role 不存在 chat hi → 报错', async () => {
   await dispatch(ctx, '!agent role 不存在 chat hi')
   assert.ok(lastMsg(bot).includes('角色不存在'), lastMsg(bot))
 })
+
+test('命令矩阵：op 冷却 / 非 op 拒绝 / 混合权限子命令冷却（同一 registry 实例）', async () => {
+  const { ctx, bot } = makeCtx()
+  ctx.cfg = { ...ctx.cfg, ops: ['op1', 'op2'], chat: { ...ctx.cfg.chat, commandCooldownMs: 750 } }
+  const registry = createCommandRegistry(ctx) // 同一实例——冷却 Map 跨 dispatch 共享
+  ctx.commands = registry // 真实流程由 feature-layer 注入（handler 内 enforceOpCooldown 读它）
+  const disp = (msg, sender) => registry.dispatch(msg, { sender, ctx })
+  // 1. op 命令冷却（per-sender 桶跨 op 命令共享）：两次 !status
+  await disp('!status', 'op1')
+  assert.ok(lastMsg(bot).includes('pos='), '首次正常执行')
+  await disp('!status', 'op1')
+  assert.ok(lastMsg(bot).includes('命令冷却中'), `op 命令冷却应拦截: ${lastMsg(bot)}`)
+  // 2. 非 op 拒绝（拒绝路径不占冷却）
+  await disp('!status', 'intruder')
+  assert.ok(lastMsg(bot).includes('权限不足'), '非 op 拒绝')
+  // 3. 混合权限子命令（!home set 注册 all、handler 内 op 门）——op2 独立桶验证
+  await disp('!home set base', 'op2')
+  assert.ok(lastMsg(bot).includes('已记录'), `首次 home set 成功: ${lastMsg(bot)}`)
+  await disp('!home set base2', 'op2')
+  assert.ok(lastMsg(bot).includes('命令冷却中'), `混合权限子命令应计冷却（修复前绕过）: ${lastMsg(bot)}`)
+  // 4. 非 op !home set → 权限不足
+  await disp('!home set base3', 'intruder')
+  assert.ok(lastMsg(bot).includes('权限不足'), '非 op home set 拒绝')
+  // 清理探索记忆（模块级状态）
+  const discovery = await import('../src/core/discovery.js')
+  discovery._reset()
+})
