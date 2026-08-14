@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Vec3 } from 'vec3'
 import * as discovery from '../src/core/discovery.js'
-import { AgentInterface, PLANNER_SYSTEM_PROMPT, _resetSummarizeCooldown, estimateTokens, applyTokenBudget } from '../src/l2/agent-interface.js'
+import { AgentInterface, PLANNER_SYSTEM_PROMPT, _resetSummarizeCooldown, _resetSessions, estimateTokens, applyTokenBudget } from '../src/l2/agent-interface.js'
 import { createL2 } from '../src/l2/index.js'
 import { createActionExecutor } from '../src/core/executor.js'
 import { loadConfig } from '../src/core/config.js'
@@ -1285,4 +1285,49 @@ test('L10 修复：滚动摘要可重复触发——滚出窗口的历史不再�
   await new Promise(r => setImmediate(r))
   assert.equal(provider.calls.filter(isSummarizeCall).length, 2, '60s 冷却内不重复压缩')
   _resetSummarizeCooldown()
+})
+
+test('H7: 重启后 setGoal/getGoal 经磁盘回填——保留历史与摘要（不再空会话覆盖落盘）', async () => {
+  const ctx = makeCtx()
+  const disk = {
+    sessions: { 'primary:steve': { history: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }], calls: [], goal: null, summary: '旧摘要' } },
+    set (k, v) { this.sessions[k] = { ...v } },
+    get (k) {
+      const v = this.sessions[k]
+      return v ? { history: [...v.history], calls: [...v.calls], goal: v.goal ?? null, summary: v.summary ?? null } : null
+    },
+    reset (k) { delete this.sessions[k] },
+    snapshot () { return { sessions: this.sessions } }
+  }
+  const executor = createActionExecutor(ctx, { audit: null })
+  // 模拟重启后首个操作就是 !agent goal set（内存 SESSIONS 为空——磁盘有历史）
+  _resetSessions()
+  const agent = new AgentInterface(ctx, { provider: makeFakeProvider([]), executor, config: { ...l2cfg }, sessionStore: disk }, 'primary')
+  agent.setGoal('steve', '挖钻石', [])
+  const stored = disk.sessions['primary:steve']
+  assert.equal(stored.history.length, 2, 'setGoal 必须保留磁盘历史（修复前空会话覆盖 → 数据丢失）')
+  assert.equal(stored.summary, '旧摘要', '滚动摘要必须保留')
+  assert.equal(stored.goal.text, '挖钻石', 'goal 应写入')
+  // 再次"重启"：getGoal 经磁盘回填（修复前误报无目标）
+  _resetSessions()
+  const agent2 = new AgentInterface(ctx, { provider: makeFakeProvider([]), executor, config: { ...l2cfg }, sessionStore: disk }, 'primary')
+  const g = agent2.getGoal('steve')
+  assert.ok(g && g.text === '挖钻石', '重启后 getGoal 经磁盘回填（修复前误报暂无目标）')
+  // pickGoalSession 磁盘回填：规划器在任务完成时（早于任何对话）能看到目标
+  const picked = agent2.pickGoalSession()
+  assert.ok(picked && picked.goal.text === '挖钻石' && picked.user === 'steve', '规划器重启后应能从磁盘找到目标（自主推进不再静默失效）')
+  _resetSessions()
+})
+
+test('M3: planner 角色手动 chat 走受限工具集（无 act——人设/文档承诺硬约束）', async () => {
+  const ctx = makeCtx()
+  const provider = makeFakeProvider([{ text: 'ok', toolCalls: [] }])
+  const executor = createActionExecutor(ctx, { audit: null })
+  const agent = new AgentInterface(ctx, { provider, executor, config: { ...l2cfg }, systemPrompt: PLANNER_SYSTEM_PROMPT }, 'planner')
+  const { reply } = await agent.chat('steve', '看看有什么任务')
+  assert.ok(reply, 'chat 正常返回')
+  const tools = provider.calls[0].tools.map(t => t.name)
+  assert.ok(!tools.includes('act'), `planner 手动 chat 不得有 act（修复前全量工具）: ${tools}`)
+  assert.ok(tools.includes('start_task'), 'planner 保留 start_task（任务管理通道）')
+  assert.ok(tools.includes('observe_tasks'), 'planner 保留 readonly 观察')
 })

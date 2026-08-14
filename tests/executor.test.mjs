@@ -296,3 +296,30 @@ test('L2 修复：空动作数组拒绝也写审计（与文件头注释一致�
   assert.ok(auditEntries.length >= 1, '空数组拒绝应写审计')
   assert.ok(auditEntries[0].result.includes('动作数组为空'), auditEntries[0].result)
 })
+
+test('H9: executor 超时 abort per-run signal——handler 可取消点立即收手（幽灵动作）', async () => {
+  const aborted = []
+  const { map } = makePrims({
+    longop: {
+      permission: 'op',
+      exclusiveClass: 'movement',
+      guardText: '长动作',
+      timeoutMs: 60,
+      handler: async (c, args, runtime) => {
+        // 模拟带可取消点的 handler（goto/collect/sleep 等）：只认 signal
+        await new Promise((resolve, reject) => {
+          runtime.signal.addEventListener('abort', () => {
+            aborted.push(true)
+            reject(new DOMException('动作被中断', 'AbortError'))
+          }, { once: true })
+        })
+        return 'never'
+      }
+    }
+  })
+  const ex = createActionExecutor(makeCtx(), { primitives: map, audit: null })
+  // user:'system' = 脚本任务通道（权限门放行——本测试聚焦超时中止语义）
+  const r = await ex.executeBatch([{ op: 'longop', args: {} }], { user: 'system', source: 'script' })
+  assert.equal(r.results[0].ok, false, '超时应失败')
+  assert.equal(aborted.length, 1, '超时后 per-run signal 应被 abort（修复前 handler 后台继续执行）')
+})

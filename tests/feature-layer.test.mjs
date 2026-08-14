@@ -401,3 +401,17 @@ test('P1: 被攻击（玩家/自伤源）→ 不记录', async () => {
   await layer.teardown()
   discovery._reset()
 })
+
+test('H5: 回复限流——窗口内超 limit 静默丢弃（防刷屏踢服 DoS）', async () => {
+  const ctx = makeCtx()
+  const layer = createFeatureLayerManager(ctx, ctx.logger)
+  const bot = new FakeBot()
+  await layer.rebuild(bot)
+  // 小 limit 便于断言（真实默认 5/10s）
+  ctx.cfg = { ...ctx.cfg, chat: { ...ctx.cfg.chat, replyLimit: 2, replyWindowMs: 60000 } }
+  for (let i = 0; i < 6; i++) emitChat(bot, 'steve', '!ping')
+  await new Promise(r => setTimeout(r, 20))
+  const pongs = bot.messages.filter(m => m.startsWith('pong')).length
+  assert.equal(pongs, 2, `窗口内只回复 limit 条（实际 ${pongs}）——超限静默丢弃不执行`)
+  await layer.teardown()
+})

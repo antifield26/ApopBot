@@ -24,6 +24,11 @@ import { interruptibleSleep } from './common.js'
 const lastFedTs = new Map()
 const FEED_TS_TTL_MS = 60 * 60 * 1000
 
+/** 测试钩子：清空喂食冷却表（模块级状态跨测试文件累积——单进程模式防污染）。 */
+export function _resetFeedTs () {
+  lastFedTs.clear()
+}
+
 function pruneFeedTs (nowTs) {
   for (const [id, ts] of lastFedTs) {
     if (nowTs - ts > FEED_TS_TTL_MS) lastFedTs.delete(id)

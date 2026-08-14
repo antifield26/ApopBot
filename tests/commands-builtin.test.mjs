@@ -418,7 +418,7 @@ test('!agent goal set --plan 非法 JSON → 明确报错（不设置）', async
     agent: {
       chat: async () => ({ reply: 'ok' }),
       act: async () => ({ ok: true, result: 'ok' }),
-      setGoal: (u, t, p) => { goalCalls.push({ u, t, p }) },
+      setGoal: (u, t, p) => { goalCalls.push({ user: u, text: t, plan: p }) },
       getGoal: () => null,
       clearGoal: () => {}
     }
@@ -428,6 +428,25 @@ test('!agent goal set --plan 非法 JSON → 明确报错（不设置）', async
   assert.equal(goalCalls.length, 0, '非法计划不应设置')
   await dispatch(ctx, '!agent goal set 建基地 --plan="挖木头"')
   assert.ok(lastMsg(bot).includes('字符串数组'), lastMsg(bot))
+})
+
+test('M16: --plan 含空格 JSON 从全文提取——plan 不丢失、目标文本不被污染', async () => {
+  const goalCalls = []
+  const { ctx } = makeCtx({
+    agent: {
+      chat: async () => ({ reply: 'ok' }),
+      act: async () => ({ ok: true, result: 'ok' }),
+      setGoal: (u, t, p) => { goalCalls.push({ user: u, text: t, plan: p }) },
+      getGoal: () => null,
+      clearGoal: () => {}
+    }
+  })
+  // token 切分会把含空格 JSON 拆散（parser 只对 { 起头跟踪括号）——修复前
+  // plan 静默丢失、目标文本混入 --plan 片段且无报错
+  await dispatch(ctx, '!agent goal set 建一座大基地 --plan=["挖 木头","造 工具"]')
+  assert.equal(goalCalls.length, 1, '应正常设置')
+  assert.equal(goalCalls[0].text, '建一座大基地', `目标文本不得被污染: ${goalCalls[0].text}`)
+  assert.deepEqual(goalCalls[0].plan, ['挖 木头', '造 工具'], `plan 不得丢失: ${JSON.stringify(goalCalls[0].plan)}`)
 })
 
 test('!agent goal 查看——显示目标与计划', async () => {

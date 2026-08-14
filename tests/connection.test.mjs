@@ -348,3 +348,19 @@ test('L1 修复：插件装载失败重连计数确定性单次（同步/异步 
   assert.equal(conn.reconnectCount, 1, '同步 end 路径应恰计 1（不双计）')
   await conn.disconnect()
 })
+
+test('H4: 同一次断线的迟到 error 不得双计（kicked 已计数 → RECONNECTING 守卫）', async () => {
+  const { conn, bots } = makeConn()
+  await conn.connect()
+  bots[0].emit('spawn')
+  assert.equal(conn.state, 'connected')
+  // 非 fatal 踢出（server full）→ 计数 1 → RECONNECTING
+  bots[0].emit('kicked', 'server is full')
+  assert.equal(conn.reconnectCount, 1, 'kicked 应计 1')
+  assert.equal(conn.state, 'reconnecting')
+  // 同一次断线 socket 关闭的迟到 error（kicked 后典型序列）——修复前再计 1
+  //（广播/metrics 失真、reconnect-alert 2 倍速误触发）
+  bots[0].emit('error', new Error('socket hang up'))
+  assert.equal(conn.reconnectCount, 1, 'kicked 后的迟到 error 不得双计')
+  await conn.disconnect() // 停止退避重连风暴（不残留定时器）
+})

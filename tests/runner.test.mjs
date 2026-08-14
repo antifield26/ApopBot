@@ -5,9 +5,20 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ScriptTask } from '../src/tasks/runner.js'
 import { Vec3 } from 'vec3'
+import { _resetFeedTs } from '../src/core/primitives/interact.js'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }
+}
+
+/** 轮询等待条件（固定等待的时序断言在慢机/插桩下 flaky——此替代） */
+async function pollUntil (cond, timeoutMs = 3000, intervalMs = 25) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (cond()) return
+    await new Promise(r => setTimeout(r, intervalMs))
+  }
+  throw new Error(`pollUntil 超时（${timeoutMs}ms）`)
 }
 
 function makeCtx (botOverrides = {}) {
@@ -489,10 +500,11 @@ test('loop max 0 = 不限轮数（farm maxCycles 默认语义——runner 层）
       { ctrl: 'return', value: 'completed' }
     ] }
   }
-  // maxCycles=0 → 不限轮数：跑过多轮仍在 running
+  // maxCycles=0 → 不限轮数：跑过多轮仍在 running（pollUntil 替代固定等待——
+  // 60ms 固定断言在覆盖率插桩/慢机下只跑 3 轮，实证 flaky）
   const t1 = makeTask(loopScript, { maxCycles: 0 })
   t1.start()
-  await new Promise(r => setTimeout(r, 60))
+  await pollUntil(() => t1.counters.wiggles >= 4, 2000)
   assert.equal(t1.state, 'running', 'maxCycles=0 不限轮数（巡逻语义）')
   assert.ok(t1.counters.wiggles >= 4, `跑过 4 轮以上（实际 ${t1.counters.wiggles}）`)
   await t1.stop()
@@ -624,6 +636,9 @@ test('breed 脚本: 无动物 + stopWhenNoAnimals → 完成', async () => {
 })
 
 test('breed 脚本: 喂食成功 → 等待幼崽 → breedings 计数', async () => {
+  // 清喂食冷却表：模块级状态——单进程模式（--test-isolation=none）下被
+  // primitives.test.mjs 先写入 5 分钟冷却 → 本测试轮询 305s（实证）
+  _resetFeedTs()
   const animals = new Map()
   const cow = { id: 1, name: 'cow', type: 'animal', position: { x: 2, y: 64, z: 0 }, height: 1.3 }
   animals.set(1, cow)

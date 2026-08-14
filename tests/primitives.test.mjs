@@ -209,6 +209,31 @@ test('M6: equip 超时后按手持校验——已装备视为成功（不误报�
   await assert.rejects(h({ bot: bot2 }, { itemName: 'iron_pickaxe' }), /equip timeout/)
 })
 
+test('H2: place 原语 faceVector 必须为 Vec3（字符串 face 在真实 mineflayer assert 失败）', async () => {
+  const place = createPrimitiveRegistry({}).get('place')
+  const placed = []
+  const bot = {
+    blockAt: (p) => (p.y === 64
+      ? { boundingBox: 'empty' }
+      : { name: 'stone', boundingBox: 'block', position: p }),
+    heldItem: { name: 'dirt' },
+    // 不桩实现——只捕获入参：faceVector 形状必须满足 mineflayer generic_place
+    // 的 vectorToDirection（读 x/y/z + assert）
+    placeBlock: async (refBlock, faceVector) => { placed.push({ ref: refBlock.position, face: faceVector }) }
+  }
+  await place.handler({ bot }, { x: 0, y: 64, z: 0, face: 'up' })
+  assert.equal(placed.length, 1, 'placeBlock 应被调用')
+  const fv = placed[0].face
+  assert.ok(fv.x === 0, `faceVector.x（up 应为 0，实际 ${fv.x}）`) // -0 与 0 数学等价（strictEqual 按 Object.is 区分）
+  assert.ok(fv.y === 1, 'faceVector.y（up 应为 +1——修复前字符串 up 触发 assert.ok(false)）')
+  assert.ok(fv.z === 0, `faceVector.z（实际 ${fv.z}）`)
+  assert.equal(typeof fv.clone, 'function', 'faceVector 必须是 Vec3 实例（vectorToDirection 读字段 + assert 校验）')
+  // down 方向取负（等待动作冷却 500ms 过后）
+  await new Promise(r => setTimeout(r, 550))
+  await place.handler({ bot }, { x: 0, y: 64, z: 0, face: 'down' })
+  assert.equal(placed[1].face.y, -1, 'down 应为 -Y')
+})
+
 test('M4: sleep 原语正常 wake/abort 路径均移除 abort 监听器（不泄漏）', async () => {
   const controller = new AbortController()
   const h = createPrimitiveRegistry({}).get('sleep').handler

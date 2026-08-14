@@ -915,3 +915,48 @@ test('自然完成触发 agent.onTaskCompleted（entry 链已启动则不触发�
   await mgr.stopAll()
   await mgr2.stopAll()
 })
+
+test('H1: guard 抢占排队场景——A 运行 B 排队时 preemptForCombat 全停（不 drain 补启动 B）', async () => {
+  const bot = makeCombatBot()
+  const manager = new TaskManager({}, makeLogger(), { bot })
+  await manager.load({
+    tasks: [
+      { id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } },
+      { id: 'g2', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }
+    ]
+  })
+  await settle(5)
+  assert.equal(manager._pendingExclusive.length, 1, 'g2 应已排队')
+  // 修复前：stopTask(g1) 的 drain 立即补启动 g2 → guard 战斗 busy 撞 g2 →
+  // startTask 返回 null → 战斗永不执行。修复后：g1/g2 全停、队列清空
+  const pre = await manager.preemptForCombat()
+  assert.deepEqual([...pre.stopped].sort(), ['g1', 'g2'], '运行中与排队中的 exclusive 都应被 stop')
+  assert.equal(manager._pendingExclusive.length, 0, '队列应清空（不 drain 补启动）')
+  assert.equal(manager.tasks.get('g2').task.state, 'stopped', '排队任务被 stop 而非启动')
+  // guard 战斗应能直接启动（无 busy 冲突）——不 await：startTask 的 promise 解析
+  // 为 run 的返回值（undefined），fl-guard 同款判 truthy promise 存在性
+  manager.addTask({ id: 'guard-response', type: 'combat', options: { stopWhenNoTargets: true }, notifyChat: false, enabled: false })
+  const p = manager.startTask('guard-response', undefined, undefined, { ignorePaused: true })
+  assert.ok(p, 'guard 战斗应直接启动（修复前撞 busy 返回 null → 战斗永不执行）')
+  await p
+  await settle(3)
+  assert.ok(['running', 'init', 'completed'].includes(manager.tasks.get('guard-response').task.state), 'guard 战斗运行/完成')
+  await manager.stopAll()
+})
+
+test('M7: reload 保留 ad-hoc 任务（配置 diff 只作用于 config 条目）', async () => {
+  const bot = makeCombatBot()
+  const stateStore = { counters: {}, setCounter () {}, deleteCounter () {}, setTasks () {}, flush () {} }
+  const manager = new TaskManager({ tasks: [] }, makeLogger(), { bot }, stateStore)
+  await manager.load({ tasks: [{ id: 'g1', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }] })
+  await settle(5)
+  // ad-hoc 任务（!task new / LLM start_task 形态）
+  manager.addTask({ id: 'a1', type: 'afk', options: { intervalMinutes: 1 } })
+  await settle(2)
+  // 配置变更（新增 g2、移除 g1）——ad-hoc a1 必须存活
+  await manager.reload({ tasks: [{ id: 'g2', type: 'combat', enabled: true, options: { stopWhenNoTargets: false } }] })
+  assert.ok(manager.tasks.get('a1'), 'ad-hoc 任务不得被 reload 移除（修复前静默清除+快照覆写）')
+  assert.ok(!manager.tasks.get('g1'), '配置移除的任务应删除')
+  assert.ok(manager.tasks.get('g2'), '配置新增的任务应装载')
+  await manager.stopAll()
+})
