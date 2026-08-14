@@ -236,7 +236,9 @@ export function registerBuiltinCommands (registry, _ctx) {
     usage: '!say <text>',
     description: '以 Bot 身份说话（超长自动分片）',
     handler: async (c, args) => {
-      await sendChat(c.bot, args.join(' '), c.cfg.chat?.maxLength)
+      const text = args.join(' ').trim()
+      if (!text) { await sendChat(c.bot, '§c用法: !say <text>（文本不能为空）', c.cfg.chat?.maxLength); return }
+      await sendChat(c.bot, text, c.cfg.chat?.maxLength)
     }
   })
 
@@ -257,7 +259,7 @@ export function registerBuiltinCommands (registry, _ctx) {
       const [name] = args
       if (!name) { await sendChat(c.bot, '§c用法: !follow <player>|off', c.cfg.chat?.maxLength); return }
       if (!c.plugins?.follow) { await sendChat(c.bot, '§c未启用 follow 插件', c.cfg.chat?.maxLength); return }
-      if (name === 'off') {
+      if (name.toLowerCase() === 'off') {
         c.plugins.follow.stop()
         auditCommand(c, 'follow_player', { name: 'off' }, true, '已停止跟随')
         await sendChat(c.bot, '§a已停止跟随', c.cfg.chat?.maxLength)
@@ -430,6 +432,7 @@ export function registerBuiltinCommands (registry, _ctx) {
           return
         }
         const role = c.agent?.get?.(t1)
+        if (!t1) { await sendChat(c.bot, '§c用法: !agent role list | !agent role <name> <action> [args]', c.cfg.chat?.maxLength); return }
         if (!role) { await sendChat(c.bot, `§c角色不存在: ${t1}（!agent role list 查看）`, c.cfg.chat?.maxLength); return }
         target = role
         roleName = t1

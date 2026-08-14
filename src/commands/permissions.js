@@ -10,6 +10,7 @@
 export function isOp (username, cfg) {
   if (!Array.isArray(cfg?.ops)) return false
   if (typeof username !== 'string' || !username) return false
-  const name = username.toLowerCase()
-  return cfg.ops.some(op => typeof op === 'string' && op.toLowerCase() === name)
+  // trim 归一：配置条目带首尾空格时永不匹配（如 "steve, alex" 环境变量拆分残留）
+  const name = username.trim().toLowerCase()
+  return cfg.ops.some(op => typeof op === 'string' && op.trim().toLowerCase() === name)
 }

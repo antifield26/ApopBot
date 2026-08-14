@@ -74,9 +74,14 @@ jobs:
 
   # 第 11 轮：部署安装模式镜像——deploy.ps1 用 npm ci --omit=dev，CI 主 job 用
   # npm ci 全量，两种安装模式不同构（minecraft-protocol 版本检查依赖 devDependency
-  # 被传递依赖 hoist 顶层的巧合）——此 job 复现部署路径，防 check:compat 行为分叉
+  # 被传递依赖 hoist 顶层的巧合）——此 job 复现部署路径，防 check:compat 行为分叉。
+  # 双端矩阵：部署机是 Windows（deploy.ps1/NSSM），ubuntu 分支保 Linux 语义
   deploy-mode:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
 
@@ -90,3 +95,14 @@ jobs:
 
       - name: Compatibility gate (deploy mode)
         run: npm run check:compat
+
+      # deploy.ps1 静态门禁（引号构造/哈希门控/NSSM 命令——Windows 部署路径零机器
+      # 验证时的语法级防线；PSScriptAnalyzer 默认规则，仅 Error 级阻断）
+      - name: PowerShell static analysis (deploy.ps1)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $issues = Invoke-ScriptAnalyzer -Path scripts/deploy.ps1 -Severity Error
+          if ($issues) { $issues | Format-Table; exit 1 }

@@ -3,6 +3,43 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 **版本单一来源 = package.json**（`node scripts/release.mjs [patch|minor|major]` bump，check:compat 交叉校验 package.json ↔ lockfile）。
 
+## [Unreleased]
+
+2026-08-14 全面评估批（6 并行审查 + 主审逐项源码验证，评估报告见 docs/review-2026-08-14.md）——HIGH 10 + MEDIUM 22 + LOW 18 全档实施：
+
+### 修复（HIGH，全部经源码实证 + 回归测试）
+
+- **H2 place 原语 faceVector 向量化**：字符串 face 在真实 mineflayer 触发 `vectorToDirection` assert（100% 失败）——改 `new Vec3(-off)` + 非桩 placeBlock 入参形状测试
+- **H1 guard 排队抢占竞态**：preemptForCombat 的 stopTask drain 先于排队拦截补启动 → guard 战斗 busy 撞车永不执行——`stopTask({drain:false})` 先全停再统一 drain
+- **H4 error 事件双计数**：kicked 后的迟到 socket error 再计一次（广播/metrics/告警失真）——error 处理器补 RECONNECTING/_fatalExit 守卫
+- **H3 fatal 停服通知**：致命断线路径无 notifier 调用、unhandledRejection 路径 exit 前通知来不及发——onFatal 钩子 + exit 前 ≤3s 通知窗口
+- **H5 聊天回复限流**：全部反馈路径无速率限制 → 0 门槛刷屏踢服 DoS——per-sender token bucket（chat.replyLimit/replyWindowMs）桶满静默丢弃
+- **H6 权威身份通道**：legacy 'chat' 事件从渲染文本正则提取显示名，昵称/前缀插件下可伪装 ops 白名单——bot.on('message') UUID → bot.players 精确匹配（system 渲染路径回退正则）
+- **H7 会话磁盘回填**：重启后首次 !agent goal set 用空会话覆盖落盘（历史/摘要永久丢失）——loadSession 统一 setGoal/getGoal/clearGoal/chat 四入口 + pickGoalSession 磁盘回填
+- **H8 喂食接近距离门**：interact_entity 远距 useEntityOn 被服务端静默拒绝但 fed++ 假成功——>4 格 approachEntity 后再喂
+- **H9 executor 超时幽灵动作**：超时只拒绝等待不中止 handler（继续喂食/挖掘/移动且不落审计）——per-run AbortController + withTimeout onTimeout abort
+- **H10 attack 目标口径统一**：全图重扫取最近，区域内任务可被拉走 64 格——maxDistance/area 参数 + 追击上限跟随扫描半径
+
+### 修复（MEDIUM 22 项，详见评估报告）
+
+- provider TimeoutError 分类（超时不再 3 倍重试放大 180s busy 锁死）；thinking=enabled 注入 budget_tokens（Anthropic 协议必填，新增 l2.thinkingBudgetTokens + maxTokens>budget 校验）
+- planner 手动 chat 受限工具集（buildPlanningTools）；executor 非 readonly 动作互斥（跨角色串行承诺成立）；summarize 优先级（滚动摘要先于反思——失败对话不再饿死长时记忆）
+- primary.enabled=false 校验拒绝 + createL2 兜底；reload 保留 ad-hoc 任务；durationMinutes 统一挂载（常驻任务时长上限不再静默失效）；pause 自然完成窗口
+- combat 死选项（attackRange/attackCooldownMs）移除；scheduled init 失败通知；!task new options.schedule 提升条目顶层；dangerZones chunkKey 维度键
+- follow/find 双向互斥拒绝 + entityGone 出视距重解析（30s 窗口）+ 换维度停止；--plan 全文提取（含空格 JSON 不再污染目标文本）；混合权限子命令冷却
+- 惰性 logger 家族（TaskManager getter/chatLogger 闭包/executor 审计动态 dir）；plant_crops 默认排除无种植模式作物；坐标世界边界入 schema（dig/place/observe_block/collect）；observe_blocks 正则长度上限；area 非法统一显式报错
+
+### 工程
+
+- 测试 648 → **672 项全绿**；覆盖率盲区补缺：改世界状态原语测试包（store/fetch/drop/use_item/harvest/autoDeposit/ensureMiningTool 注入式 fake container）+ 命令矩阵回归（解析→权限→冷却→反馈）
+- flaky 修复（loop max 0 固定等待改 pollUntil；lastFedTs 冷却表测试钩子 _resetFeedTs/_resetReplyBuckets）
+- CI：upload-artifact v5、check:compat 去重、deploy-mode 双端矩阵 + PSScriptAnalyzer 静态门禁
+- 工程杂项：overrides 补 pin prismarine-world；README audit 表述收紧；deploy.md 重复行；upstream-lib 过期注释；docs/l2.md 原语表补全 8 项 + 36 原语数量断言
+- P2 观测：/metrics 各角色 token 计量（input/output/budgetTrimmed）+ 上下文预算裁剪量；提示词 op 清单与注册表同源生成（{OP_LIST} 占位）
+- TS 第二阶段地基：tsconfig 纳入 .ts（Node ≥24 原生类型剥离）；转换前置 = @typescript-eslint/parser（沙箱离线无法安装 devDependency，路径已文档化）
+- acceptance.md 增补 v1.5.2 修复档 10 项真机验收条目（H1/H2/H3/H5/H6/H7/H8/H10/M15）
+- 上游合并条件项（PR #3902/#1487 合并后 migrate-upstream）保持待外部事件触发，docs/upstream-migration.md 流程不变
+
 ## [1.5.1] - 2026-08-13
 
 v1.5.0 之后的维护档：受击响应（guard）新功能 + 时间链路 + 协议补丁修正 + 全面审查修复（高/中/低危 26 项 + 测试缺口 + 文档对齐）。

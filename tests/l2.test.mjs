@@ -634,8 +634,8 @@ test('A2: applyTokenBudget——超预算丢最旧历史轮，工具轮保留', 
     { role: 'user', content: '当前问题' }
   ]
   const before = messages.length
-  const trimmed = applyTokenBudget(messages, 0, 5) // 预算极小 → 必裁
-  assert.equal(trimmed, true)
+  const trimmed = applyTokenBudget(messages, 0, 5) // 预算极小 → 必裁（返回裁掉的 token 数）
+  assert.ok(trimmed > 0, `裁剪量应 >0（实际 ${trimmed}）`)
   assert.ok(messages.length < before, '应丢弃旧轮')
   assert.ok(messages.some(m => m.toolCalls), '工具调用轮必须保留（配对语义）')
   assert.equal(messages.at(-1).content, '当前问题', '当前用户消息保留')
@@ -657,7 +657,7 @@ test('A2: applyTokenBudget——工具结果动态截短且不低于下限', () 
 
 test('A2: applyTokenBudget——未超预算不动消息', () => {
   const messages = [{ role: 'user', content: 'hi' }]
-  assert.equal(applyTokenBudget(messages, 0, 10000), false)
+  assert.equal(applyTokenBudget(messages, 0, 10000), 0)
   assert.deepEqual(messages, [{ role: 'user', content: 'hi' }])
 })
 

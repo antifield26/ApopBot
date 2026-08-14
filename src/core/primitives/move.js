@@ -55,7 +55,9 @@ export function registerMove (register, _ctx) {
     schema: {
       type: 'object',
       properties: {
-        maxDistance: { type: 'number', min: 16, max: 256, description: '探索距离 16-256，默认 48' },
+        // 上限 48 与 explore.js 的 EXPLORE_STEP 一致（min(maxDistance, 48) 内部
+        // 钳制——schema 如实声明，此前 256 会被静默截 48）
+        maxDistance: { type: 'number', min: 16, max: 48, description: '探索距离 16-48，默认 48' },
         direction: { type: 'string', description: 'n/s/e/w/ne/nw/se/sw/random，默认 random' }
       }
     },

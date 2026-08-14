@@ -53,7 +53,20 @@ export function installDeathHandling (ctx, bot, log, notifier) {
         })
         .catch(() => {})
     }
-    try { bot.respawn() } catch { /* 重生通道未就绪 */ }
+    // 重生 + 有界重试：respawn 同步抛错（客户端已死/通道未就绪）时无自愈——
+    // bot 停在死亡界面、任务永久暂停。3 次 × 2s 重试（respawn 只发包、幂等；
+    // 服务端确认后 'respawn' 事件触发即停——防重复发包）
+    const tryRespawn = () => {
+      try { bot.respawn(); return true } catch { return false }
+    }
+    if (!tryRespawn()) {
+      let respawnTries = 0
+      const retryTimer = setInterval(() => {
+        if (++respawnTries > 3 || tryRespawn()) clearInterval(retryTimer)
+      }, 2000)
+      retryTimer.unref?.()
+      bot.once('respawn', () => clearInterval(retryTimer))
+    }
   })
   bot.on('respawn', async () => {
     // 恢复本次死亡暂停的任务（手动暂停的保持暂停）；await 暂停 promise 确保

@@ -60,7 +60,11 @@ export function chunkText (text, maxLength) {
   let rest = text
   while (rest.length > maxLength) {
     let cut = maxLength
-    // 最后一个 § 颜色码之后断开（§ 颜色码占 2 字符，不能拆开）
+    // 代理对防御：maxLength 处是高代理项（emoji 前半）时回退一字符——硬切会把
+    // 代理对拆成两个 U+FFFD 乱码
+    if (cut < rest.length && rest.charCodeAt(cut - 1) >= 0xd800 && rest.charCodeAt(cut - 1) <= 0xdbff) cut--
+    // 最后一个 § 颜色码之后断开（§ 颜色码占 2 字符，不能拆开；sendChat 已先行
+    // strip，此处保留作纯函数自防御）
     for (let i = 0; i < maxLength; i++) {
       if (rest[i] === '§' && i + 2 <= maxLength) cut = i + 2
     }

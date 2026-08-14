@@ -1,6 +1,9 @@
 {
   // 渐进 TypeScript 第一阶段：checkJs 默认关，核心文件顶部 `// @ts-check` 逐文件开启。
   // allowJs + nodenext 保证后续逐文件改 .ts 零阻碍升级（迁移路线见 docs/architecture.md）。
+  // 第二阶段（逐文件 .ts 化）：Node ≥24 原生类型剥离（erasable syntax only）运行 .ts，
+  // 导入说明符需显式 .ts 扩展名；ts 文件纳入 lint 需 @typescript-eslint/parser
+  //（沙箱/离线环境无法安装 devDependency 时暂缓转换，仅先保持 include 就绪）。
   "compilerOptions": {
     "noEmit": true,
     "allowJs": true,
@@ -15,5 +18,5 @@
     "types": ["node"],
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.js"]
+  "include": ["src/**/*.js", "src/**/*.ts"]
 }

@@ -245,11 +245,12 @@ export function messageTokens (m) {
  * A2：上下文预算裁剪——消息序列（fixedTokens + Σ消息）超预算时按序裁剪：
  * ① 丢最旧的纯文本历史轮（工具轮必须保留配对）→ ② 工具结果统一截短（不低于
  * TOOL_RESULT_MIN_CHARS，由剩余预算分摊）→ ③ 当前用户消息截到剩余。
- * 原地修改传入数组（调用方持有副本）；返回是否发生裁剪。
+ * 原地修改传入数组（调用方持有副本）；返回裁掉的估算 token 数（0 = 未裁剪）。
  */
 export function applyTokenBudget (messages, fixedTokens, budget) {
   let over = fixedTokens + messages.reduce((s, m) => s + messageTokens(m), 0) - budget
-  if (over <= 0) return false
+  if (over <= 0) return 0
+  const initialOver = over
   // ① 丢最旧纯文本轮（保留最后一条——当前用户消息留给 ③ 按剩余预算截断）。
   // 只丢 assistant 轮：对话恒以 user 开头、user/assistant 交替——丢 user 会造成
   // assistant 孤立在开头，Anthropic 协议要求首条 user + 角色交替（DeepSeek 兼容
@@ -289,7 +290,7 @@ export function applyTokenBudget (messages, fixedTokens, budget) {
       last.content = last.content.slice(0, keep)
     }
   }
-  return true
+  return Math.max(0, initialOver - over)
 }
 
 /**
@@ -363,14 +364,7 @@ const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手
 
 【行动协议】
 1. 用 act 工具执行动作数组 {actions:[{op,args},...]}，一次最多 8 个、按序执行；每个动作的结果按序返回，必须读取。动作原语（op）：
-   观察：observe_status（连接/位置/血量/饥饿）、observe_inventory（背包）、observe_environment（时间/天气/维度/群系/朝向/附近）、observe_entities（附近实体）、observe_blocks（找方块位置）、observe_block（单方块详情）、observe_crops（作物成熟度）、observe_tasks（任务列表/状态/等待原因）、query_map（探索记忆中的资源坐标——verified:false 表示该区块未加载无法核对，可能已被挖走/改变，行动前用 observe_block 确认；danger 分支返回附近危险区域记忆——fresh/stale 由返回标记判断；place 分支查命名地点；assess 分支做位置安全评估；blockName 时每条附 nearestDanger 最近危险区距离，minSafeDist 过滤危险区附近的点）、map_status（探索统计）
-   移动：goto{x,y,z,range?,timeoutMs?} 寻路移动；explore_step{direction?,maxDistance?} 单步探索
-   建造：dig{x,y,z} 挖方块（不捡掉落物）；place{x,y,z,face?} 放手持物品；collect_blocks{blockNames|positions,area?,maxBlocks?,chestLocations?} 批量采集（自动捡掉落）；plant_crops{area,cropTypes?} 种作物
-   战斗：attack{filter,maxHits?} 攻击实体（自动接近连击）
-   交互：interact_entity{filter,foodName?,count?} 右键实体（喂食繁殖）
-   物品：equip{itemName}；drop{itemName?,count?}；use_item 用手持物；eat 自动进食
-   流程：wait{ms} 等待（≤5 分钟）；look{x,y,z|yaw,pitch} 转向；reply{text} 说话；fish{timeoutMs?} 钓鱼
-   任务：start_task{type,id,options?,next{type,id,options?,schedule?}?,schedule?} 启动任务（next=自然完成后接力任务链；schedule=cron 定时触发而非立即启动）；stop_task{id} 停止任务；follow_player{name|off} 跟随玩家
+{OP_LIST}
 2. 观测优先：行动前先观察（observe_*），不凭猜测行动、不编造世界状态。单步行动后读结果再决定下一步。
 3. 异常恢复：失败先读懂原因（如"移动失败: 无法到达"、"exclusive 任务 X 运行中"、"权限不足"、"先 goto 靠近"），同一失败操作不要盲目重试超过 2 次；需要等待用 wait{ms}。
 4. 预算：每次 act ≤8 动作、每轮对话 ≤4 次工具调用（超限动作将不执行）。移动/采集耗时长，拆小步执行。
@@ -384,18 +378,39 @@ const CORE_SYSTEM_PROMPT = `你是运行在 Minecraft 服务器上的 Bot 助手
 11. 技能:行 = 历史成功任务的可复用做法（步骤+注意点）；经验教训:行 = 过往失败教训。两者都只是参考提示，不是规则——世界状态以观察为准，技能步骤与实际不符时按实际做。`
 
 /**
+ * 动作原语清单（提示词同源生成）：从 executor 注册表生成——静态提示词的 op 清单
+ * 与注册表双份维护会漂移（历史：l2.md 表缺 8 个原语、提示词"≤8 工具步"过期）。
+ * 每项 = op{必填参数}（描述截断 40 字符）。
+ * @param {{ primitives: Map<string, { description?: string, schema?: { required?: string[] } }> }} executor
+ * @returns {string} 缩进 2 格的多行清单
+ */
+function opListLine (executor) {
+  const parts = []
+  for (const [op, p] of executor.primitives) {
+    const req = p.schema?.required?.length ? `{${p.schema.required.join(',')}}` : ''
+    const desc = String(p.description ?? '').slice(0, 40)
+    parts.push(`${op}${req}${desc ? `（${desc}）` : ''}`)
+  }
+  return parts.map(s => `   ${s}`).join('\n')
+}
+
+/**
  * 每次对话注入调用者身份：LLM 必须知道"谁在说话、是否有 op 权限"，
  * 否则面对危险操作请求只会回复"需要验证 op 身份"。
  * v1.4.0 多角色化：systemPrompt 参数化（角色人设基底，缺省 CORE_SYSTEM_PROMPT）。
  * @param {string} user 消息来源玩家
  * @param {Record<string, any>} cfg
  * @param {string} [systemPrompt] 角色人设基底
+ * @param {{ primitives: Map<string, { description?: string, schema?: { required?: string[] } }> }} [executor] 原语注册表（含 {OP_LIST} 占位的提示词才需要）
  */
-function buildSystem (user, cfg, systemPrompt = CORE_SYSTEM_PROMPT) {
+function buildSystem (user, cfg, systemPrompt = CORE_SYSTEM_PROMPT, executor = null) {
   const auth = isOp(user, cfg)
     ? `${user} 是 op 白名单成员——危险操作可直接执行，无需再要求验证`
     : `${user} 是普通玩家——危险操作（goto/dig/place/attack 等动作）必须拒绝并说明权限不足`
-  return `${systemPrompt}\n\n当前会话：${auth}`
+  const prompt = executor && systemPrompt.includes('{OP_LIST}')
+    ? systemPrompt.replace('{OP_LIST}', opListLine(executor))
+    : systemPrompt
+  return `${prompt}\n\n当前会话：${auth}`
 }
 
 // ---- 工具集：act（动作数组）+ 观察/回复工具 ----
@@ -505,8 +520,8 @@ export class AgentInterface {
     // 按玩家冷却：全局单值会让一个玩家的请求冷却挡住所有玩家的 !agent chat
     this.cooldowns = new Map()
     this._abort = null
-    // LLM 计量：本次对话累计 tokens + 最近一次请求耗时（/metrics 用）
-    this.usage = { inputTokens: 0, outputTokens: 0, latencyMs: null }
+    // LLM 计量：本次对话累计 tokens + 最近一次请求耗时 + 预算裁剪量（/metrics 用）
+    this.usage = { inputTokens: 0, outputTokens: 0, latencyMs: null, budgetTrimmedTokens: 0 }
     // 世界事件挂起（被动感知）：feature-layer 事件监听写入，下次对话注入——
     // 不做主动唤醒（busy 门/玩家冷却/权限语义约束）；≤3 条 × 80 字符
     this.pendingEvents = []
@@ -610,7 +625,7 @@ export class AgentInterface {
         }
         // 单 provider（云端）——恒拼接完整提示词
         // 经验教训注入（按上轮失败 op 检索 ≤3 条；无匹配回退最近 2 条）
-        const system = buildSystem(user, this.ctx.cfg, this.systemPrompt) +
+        const system = buildSystem(user, this.ctx.cfg, this.systemPrompt, this.executor) +
           experienceInjection(this.experience, prevRoundOps) +
           // 技能注入（v1.5.0 自主学习循环）：活跃任务类型的成功实践总结——
           // 无匹配回退最近 1 条；无技能库时空串零成本
@@ -645,7 +660,8 @@ export class AgentInterface {
             // 三步后仍超窗，依赖 Ollama 静默截断）：提示调参方向
             this.log.warn({ fixedTokens, budget, window }, `L2 固定 prompt（system+技能定义）超出上下文预算（window ${window}）——历史/工具结果将被全部裁剪后仍可能超窗。建议调高 l2.cloudMaxContextWindow 或减少 maxTokens/工具数`)
           }
-          applyTokenBudget(messages, fixedTokens, budget)
+          // 预算裁剪量计量（调参观测：裁掉多少 token——/metrics 暴露）
+          this.usage.budgetTrimmedTokens = (this.usage.budgetTrimmedTokens ?? 0) + applyTokenBudget(messages, fixedTokens, budget)
         }
         const res = await this.provider.chat(messages, {
           tools,

@@ -78,3 +78,18 @@
 - 状态：**等待真机日志**。诊断日志已就绪（C2：卡住时记录周围 3×3 方块/手持/落地态）。
 - 采集方式：部署机遇到卡住后，从 bot.log 提取「移动卡住诊断」条目贴到 [issue #1](https://github.com/antifield26/ApopBot/issues/1)。
 - 预计根因：树叶碰撞数据不一致 / 半嵌过深，待现场数据确认。
+
+## v1.5.2 修复档验收（2026-08-14 评估批）
+
+| 条目 | 状态 | 依赖环境 | 验证步骤 | 验证日期 | 备注 |
+|---|---|---|---|---|---|
+| H2 place 原语 | 待验收 | l2 启用或 op | `!agent act place {"x":..,"y":..,"z":..,"face":"up"}`——方块真实放置（修复前字符串 face 触发 mineflayer assert，100% 失败） | | 单元测试已用非桩 placeBlock 断言 Vec3 入参 |
+| H1 guard 排队抢占 | 待验收 | 怪物 + 排队任务 | A exclusive 运行、B exclusive 排队时引怪攻击 bot——guard 战斗应正常清理（修复前 B 被 drain 启动 → 战斗永不执行） | | preemptForCombat 先全停再 drain |
+| H10 combat 区域约束 | 待验收 | 区域外有怪 | combat 任务（aggroRange+area）运行时区域外刷怪——bot 不得追出区域（修复前可被拉走 64 格） | | attack 原语 maxDistance/area 与扫描口径一致 |
+| H8 喂食接近 | 待验收 | 动物距离 >4 格 | `!agent act interact_entity {"filter":"cow","minFeedIntervalMs":300000}`——bot 应先走近再喂（修复前远距 fed++ 假成功） | | 繁殖计数不再虚报 |
+| M15 follow 出视距 | 待验收 | 双账号 | `!follow <player>` 后目标跑出渲染距离再回来——跟随应自动恢复（修复前永久停止）；目标掉线才真正停止 | | 重解析 30s 窗口 |
+| M15 follow 换维度 | 待验收 | 双账号 + 传送门 | 跟随中 bot 进传送门换维度——应停止跟随并播报（修复前走向旧维度坐标） | | startDim 检测 |
+| H5 回复限流 | 待验收 | 服务器 | 10s 内连发 6+ 条 `!` 消息——bot 只回复 replyLimit（默认 5）条且不被踢（修复前 0 门槛刷屏踢服 DoS） | | chat.replyLimit/replyWindowMs 可配 |
+| H6 权威身份 | 待验收 | 昵称/前缀插件 | 显示名含 ops 名单后缀的玩家（如 "Sir Steve" vs ops "steve"）执行 op 命令——应被拒绝 | | message 事件 UUID → bot.players 精确匹配 |
+| H7 会话回填 | 待验收 | l2 启用 | 对话几轮后重启 bot → `!agent goal set xxx` → 重启前多轮上下文应保留（修复前空会话覆盖落盘） | | loadSession 统一三入口 |
+| H3 fatal 通知 | 待验收 | webhook 已配 | 触发致命断线（如改错 username 造成 name_conflict）——webhook 应收到 fatal 推送（修复前致命断线路径无通知） | | onFatal 钩子 + exit 前 3s 窗口 |

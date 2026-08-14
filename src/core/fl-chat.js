@@ -62,10 +62,13 @@ function normUuid (v) {
 export function installChatListener (ctx, bot, log) {
   ctx.chatHandler = async (sender, msg) => {
     if (sender === ctx.cfg.username) return
-    if (!msg || !msg.startsWith('!')) return
+    // trimStart：前导空格消息（" !ping"）与 parser 的 trim 语义对齐——此前
+    // startsWith('!') 先于 trim 判定，前导空格被整体忽略
+    const line = typeof msg === 'string' ? msg.trimStart() : msg
+    if (!line || !line.startsWith('!')) return
     // 回复限流：桶满静默丢弃（防刷屏踢服 DoS——所有反馈路径统一在入口纳入）
     if (!allowReply(sender, ctx.cfg)) return
-    const hit = await ctx.commands?.dispatch(msg, { sender, ctx }).catch((err) => {
+    const hit = await ctx.commands?.dispatch(line, { sender, ctx }).catch((err) => {
       log().error({ err: err.message }, 'dispatch error')
       return true // 出错不算未知命令
     })

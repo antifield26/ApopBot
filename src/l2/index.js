@@ -86,12 +86,14 @@ export function createL2 (cfg, ctx, deps = null) {
     roles,
     get: (name) => roles.get(name) ?? null,
     all: () => [...roles.values()],
-    /** 各角色状态（!agent role list / /metrics 用）。 */
+    /** 各角色状态（!agent role list / /metrics 用）——含各角色 token 计量。 */
     roleStats: () => [...roles.values()].map(a => ({
       name: a.role,
       busy: a.busy,
       sessions: a.sessionCount(),
-      planEnabled: a.cfg.planEnabled !== false
+      planEnabled: a.cfg.planEnabled !== false,
+      tokens: { input: a.usage?.inputTokens ?? 0, output: a.usage?.outputTokens ?? 0, budgetTrimmed: a.usage?.budgetTrimmedTokens ?? 0 },
+      latencyMs: a.usage?.latencyMs ?? null
     })),
     // 共享依赖暴露（commands/HTTP 消费）
     executor,
