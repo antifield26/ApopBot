@@ -27,8 +27,6 @@ winget install --id Git.Git                                                     
 > 升级 mineflayer/minecraft-protocol 版本时补丁会因 context 冲突报错——先删补丁重装
 > 再按 docs/upstream-migration.md 重新生成。
 
-重开 shell 后验证：`node -v`（≥24）、`nssm version`。
-
 ## 目录布局
 
 - 建议 `C:\minecraft-bot`（整仓拷贝/克隆）

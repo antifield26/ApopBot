@@ -25,7 +25,7 @@ export const VERSION_FILE = {
 export function applyChanges (pkg, newMineflayerVersion) {
   const next = structuredClone(pkg)
   next.dependencies.mineflayer = `^${newMineflayerVersion}`
-  // 删除 overrides 中的 git 引用（minecraft-data 保留精确 pin：3.112.0 已含 775 且与 26.1.2 数据绑定）
+  // 删除 overrides 中的 git 引用（minecraft-data 保留精确 pin：3.113.0 已含 775 且与 26.1.2 数据绑定）
   for (const key of Object.keys(KNOWN_PINS)) {
     delete next.overrides?.[key]
   }

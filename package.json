@@ -47,6 +47,7 @@
   "overrides": {
     "minecraft-data": "^3.113.0",
     "prismarine-chunk": "1.41.0",
-    "prismarine-physics": "1.11.1"
+    "prismarine-physics": "1.11.1",
+    "prismarine-world": "3.7.0"
   }
 }

@@ -38,7 +38,10 @@ const JUMP_CLEAR_TICKS = 2
  * mineflayer 插件工厂。装载后产生 bot.follow = { setTarget(player|null), stop(), getTarget() }。
  */
 export function followPlugin (bot) {
+  /** @type {{ position?: any, id?: number, username?: string, name?: string }|null} */
   let target = null
+  let targetName = null // 目标玩家名（entityGone 后用于 bot.players 重解析）
+  let startDim = null // 开始跟随时的 bot 维度（换维度检测）
   let timer = null
   let lastPos = null
   let stuckCount = 0
@@ -82,6 +85,14 @@ export function followPlugin (bot) {
 
   function tick () {
     if (!target?.position || !bot.entity?.position) { stopMoving(); return }
+    // 换维度检测：bot 经传送门/命令换维度后闭包持有的目标实体陈旧（坐标停留
+    // 在旧维度）——继续走会走向旧坐标（可能岩浆/虚空）。维度不一致即停止
+    if (startDim && bot.game?.dimension && bot.game.dimension !== startDim) {
+      const name = targetName ?? target.username ?? target.name ?? '目标'
+      follow.stop()
+      sendChat(bot, `§e已停止跟随 ${name}（Bot 维度变化）`).catch(() => { /* 聊天通道未就绪 */ })
+      return
+    }
     const p = bot.entity.position
     const tp = target.position
     // NaN 坐标防御——异常位置继续运算（distanceTo/offset 直进 blockAt）会抛错，
@@ -180,15 +191,43 @@ export function followPlugin (bot) {
     }
   }
 
+  /** 目标实体卸载后按玩家名重解析（出渲染距离 ≠ 掉线——玩家仍在 bot.players）。 */
+  async function reResolveTarget (name) {
+    const deadline = Date.now() + 30000
+    while (Date.now() < deadline && !target) {
+      const p = Object.values(bot.players ?? {}).find(pl => (pl.username ?? '').toLowerCase() === name.toLowerCase())
+      if (p?.entity) {
+        target = p.entity
+        targetName = name
+        startDim = bot.game?.dimension ?? null
+        lastPos = null
+        stuckCount = 0
+        if (!timer) {
+          timer = setInterval(tick, TICK_MS)
+          timer.unref?.()
+        }
+        return
+      }
+      await new Promise(r => setTimeout(r, 1000))
+    }
+    if (!target) {
+      sendChat(bot, `§e已停止跟随 ${name}（实体长时间未加载——可能已离开视距/维度）`).catch(() => { /* 聊天通道未就绪 */ })
+    }
+  }
+
   const follow = {
-    /** @param {object|null} player */
+    /** @param {{ position?: any, id?: number, username?: string, name?: string }|null} player */
     setTarget (player) {
       target = player
       if (!player) {
+        targetName = null
+        startDim = null
         follow.stop()
         return
       }
       if (!bot.pathfinder) throw new Error('follow 插件需要 pathfinder')
+      targetName = player.username ?? player.name ?? null
+      startDim = bot.game?.dimension ?? null
       stopMoving()
       clearGoal()
       lastPos = null
@@ -207,6 +246,8 @@ export function followPlugin (bot) {
 
     stop () {
       target = null
+      targetName = null
+      startDim = null
       jumpHeld = false
       if (timer) { clearInterval(timer); timer = null }
       stopMoving()
@@ -218,16 +259,29 @@ export function followPlugin (bot) {
 
   bot.on('entityGone', (entity) => {
     if (target && entity.id === target.id) {
-      const name = target.username ?? target.name ?? `实体#${target.id}`
+      const name = targetName ?? target.username ?? target.name ?? `实体#${target.id}`
+      // 玩家仍在 bot.players（掉线/换维度才移除）→ 出渲染距离/瞬时卸载：
+      // 暂停直接控制并重解析，实体重新加载后自动继续（此前无条件停——正常
+      // 走远 64-128 格即"目标消失"，跟随被意外终止且误导"目标掉线"）
+      const stillHere = Object.values(bot.players ?? {}).some(p => (p.username ?? '').toLowerCase() === name.toLowerCase())
+      if (stillHere) {
+        target = null
+        stopMoving()
+        clearGoal()
+        void reResolveTarget(name)
+        return
+      }
       follow.stop()
       // 目标掉线/死亡/传送——静默停止会让玩家以为还在跟随，聊天提示。
       // 统一走 sendChat：剥 § 颜色码（裸 bot.chat 的 § 会被 Paper 踢出）
-      sendChat(bot, `§e已停止跟随 ${name}（目标消失）`).catch(() => { /* 聊天通道未就绪 */ })
+      sendChat(bot, `§e已停止跟随 ${name}（目标掉线/离开）`).catch(() => { /* 聊天通道未就绪 */ })
     }
   })
 
   bot.on('end', () => {
     target = null
+    targetName = null
+    startDim = null
     jumpHeld = false
     if (timer) { clearInterval(timer); timer = null }
   })

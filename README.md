@@ -51,7 +51,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 | `afk` | `intervalMinutes` | 周期视角转动防踢 | 无（scheduled 时必须配 `durationMinutes`） |
 | `farm` | `area` + `cropTypes` | 种植→等待成熟→收割循环（wheat/carrots/potatoes/beetroots/nether_wart） | 默认巡逻（`stopWhenIdle: true` 时区域空闲即完成） |
 | `chop` | `area` | 区域伐木（默认匹配 `/_log$|_wood$/`） | 默认巡逻（`stopWhenDone: true` 时无树即完成） |
-| `combat` | — | 区域内敌对实体巡逻（低血进食/远离、击杀计数、`maxTargets` 上限） | 默认巡逻（`stopWhenNoTargets: true` 时无怪即完成）/ 达上限 |
+| `combat` | — | 区域内敌对实体巡逻（低血进食/等待重扫、击杀计数、`maxTargets` 上限） | 默认巡逻（`stopWhenNoTargets: true` 时无怪即完成）/ 达上限 |
 | `breed` | — | 区域内白名单动物喂养繁殖（`maxBreedings` 上限） | 默认巡逻（`stopWhenNoAnimals: true` 时无动物即完成）/ 达上限 |
 | `explore` | — | 方形螺旋游荡覆盖（每站采样记录 23 种资源与实体到探索记忆，LLM 经 `query_map` 查询）；`maxDistance` 半径上限（16-256）、`area` 可限定 | `stopWhenDone: true` 时环满即完成 / 无则到边界后以当前位置重启（有界漫游）；scheduled 由 durationMinutes 到时停止 |
 
@@ -136,9 +136,10 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 | `tasks` | `[]` | 任务定义（8 种类型，可带 schedule + durationMinutes） |
 | `chat.maxLength` | `250` | 聊天分片上限（服务端上限 256） |
 | `chat.commandCooldownMs` | `750` | op 命令冷却（防刷屏） |
+| `chat.replyLimit` / `chat.replyWindowMs` | `5` / `10000` | 命令回复限流（per-sender token bucket：窗口内最多回复 N 条，桶满静默丢弃——防刷屏踢服 DoS，全部反馈路径统一纳入） |
 | `scheduleTimezone` | `Asia/Shanghai` | cron 调度时区 |
 | `notify.webhook` | `''` | 运维通知：任务终态/断线重连/死亡重生/fatal 停服推送企业微信或 Server酱（URL 自动识别；空=关闭；零依赖，失败静默） |
-| `l2` | `enabled: false` | LLM 层：单 Provider，预设 DeepSeek（`deepseek-v4-flash` + Anthropic 兼容端点 `api.deepseek.com/anthropic`，`thinking: disabled`/`effort: low`——disabled 时不传 reasoning_effort，DeepSeek 端点两者互斥 400）；密钥只走 `l2.cloudApiKeyEnv` 指定环境变量；残留旧键（provider/ollama 系）启动即报错（契约冻结） |
+| `l2` | `enabled: false` | LLM 层：单 Provider，预设 DeepSeek（`deepseek-v4-flash` + Anthropic 兼容端点 `api.deepseek.com/anthropic`，`thinking: disabled`/`effort: low`——disabled 时不传 reasoning_effort，DeepSeek 端点两者互斥 400；`thinking: enabled` 时注入 `thinkingBudgetTokens`（Anthropic 协议必填，`maxTokens` 必须大于它））；密钥只走 `l2.cloudApiKeyEnv` 指定环境变量；残留旧键（provider/ollama 系）启动即报错（契约冻结） |
 
 环境变量示例：`MCBOT_USERNAME=bot2 MCBOT_OP_WHITELIST=steve,alex npm start`
 
@@ -146,7 +147,7 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 
 mineflayer 正式版只支持到 1.21.11（协议 774）；26.1.2（775）上游 PR（#3902/#1487）未合并。本项目：
 - **全部官方 npm 版**：`mineflayer 4.37.1` / `minecraft-protocol 1.66.2` / `minecraft-data 3.113.0`（已含 775）/ `prismarine-chunk 1.41.0` / `prismarine-physics 1.11.1`（已含 26.1）
-- **26.1.2 适配 = 本地补丁**：`patches/` 的 patch-package 补丁（postinstall 自动应用，`npm ci` 零手工步骤）——供应链 100% 干净（零 git 依赖、npm audit 正常）。共 5 个：`minecraft-protocol`（775 协议）/ `mineflayer`（lib/ 26.1 适配）/ `mineflayer-pathfinder`（爬升根治——执行器起跳保留 forward）/ `prismarine-physics`（爬升根治——半嵌挤回 + float32 贴墙余量）/ `prismarine-world`（raycast 同步化——A* 永不收敛超时根因修复）
+- **26.1.2 适配 = 本地补丁**：`patches/` 的 patch-package 补丁（postinstall 自动应用，`npm ci` 零手工步骤）——供应链 100% 干净（零 git 依赖、npm audit 无高危）。共 5 个：`minecraft-protocol`（775 协议）/ `mineflayer`（lib/ 26.1 适配）/ `mineflayer-pathfinder`（爬升根治——执行器起跳保留 forward）/ `prismarine-physics`（爬升根治——半嵌挤回 + float32 贴墙余量）/ `prismarine-world`（raycast 同步化——A* 永不收敛超时根因修复）
 - 门禁：`npm run check:compat`（含 3.7 补丁哨兵——补丁缺失/未应用即 FAIL）；上游合并后删补丁 + 更新版本号回切（见 docs/upstream-migration.md）
 
 ## 26.1.2 实测兼容性备忘（PaperMC 26.1.2 真机验证）

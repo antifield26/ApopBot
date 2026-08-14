@@ -136,7 +136,9 @@
   },
   "chat": {
     "maxLength": 250,
-    "commandCooldownMs": 750
+    "commandCooldownMs": 750,
+    "replyLimit": 5,
+    "replyWindowMs": 10000
   },
   "http": {
     "enabled": false,
@@ -173,6 +175,7 @@
     "maxTokens": 1024,
     "thinking": "disabled",
     "effort": "low",
+    "thinkingBudgetTokens": 4096,
     "dangerInjection": true,
     "planEnabled": true,
     "planCooldownMs": 120000,

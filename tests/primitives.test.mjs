@@ -253,3 +253,12 @@ test('M4: sleep 原语正常 wake/abort 路径均移除 abort 监听器（不泄
   await assert.rejects(p2, /中断/)
   assert.equal(getEventListeners(controller.signal, 'abort').length, 0, 'abort 后监听器也应清理')
 })
+
+test('原语注册表：36 个原语（docs/l2.md 动作协议表同源——新增原语必须同步文档）', () => {
+  const reg = createPrimitiveRegistry({})
+  assert.equal(reg.size, 36, `原语数量漂移（实际 ${reg.size}）——docs/l2.md 动作协议表需同步`)
+  // 文档表格按族列出——抽查新增项都在（此前表格缺 8 个原语）
+  for (const op of ['observe_tasks', 'sleep', 'harvest_animals', 'store_items', 'fetch_items', 'set_place', 'remove_place', 'set_goal']) {
+    assert.ok(reg.has(op), `注册表缺 ${op}`)
+  }
+})

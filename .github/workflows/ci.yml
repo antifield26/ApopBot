@@ -45,6 +45,7 @@ jobs:
 
       - name: Run tests (node --test, 全离线)
         run: npm test
+        # pretest 已自动跑 check:compat（补丁哨兵/版本 pin/协议 775 门禁）——不再独立重复
 
       - name: Lint (eslint flat config)
         run: npm run lint
@@ -59,13 +60,10 @@ jobs:
 
       - name: Upload coverage artifact
         if: matrix.os == 'ubuntu-latest' && matrix.node == 24
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-report
           path: coverage/
-
-      - name: Compatibility gate (check:compat, 离线模式)
-        run: npm run check:compat
 
       # 信息性审计（不门禁）：git 依赖 audit 支持不可靠（可能直接报错退出），且
       # axios 0.21.4 是已文档化接受风险（Xbox 认证链，offline 模式不执行该路径，

@@ -6,9 +6,9 @@ import { findSurfaceBlocks, createMovement, REASON_TEXT } from '../core/movement
 import { validateTaskOptions, validateCron } from '../core/task-schemas.js'
 import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
 
-// !find 防重入：行走期间重复 find 拒绝（单 bot 架构，模块级标志）。
-// 重连重建功能层时若残留 true，由 120s 墙钟超时自愈（goto 必然结束）
-let findBusy = false
+// !find 防重入：行走期间重复 find 拒绝（单 bot 架构，ctx.findBusy 标志——挂在
+// ctx 上供 !follow 互查：follow 与 find 双控制器冲突时双方都显式拒绝而非静默
+// 互相覆盖 goal）。重连重建功能层时若残留 true，由 120s 墙钟超时自愈
 
 /** 命令层动作审计（!find/!follow 走 executor 的审计通道——L2 关闭时静默）。 */
 function auditCommand (c, op, args, ok, result, durationMs = 0) {
@@ -263,6 +263,12 @@ export function registerBuiltinCommands (registry, _ctx) {
         await sendChat(c.bot, '§a已停止跟随', c.cfg.chat?.maxLength)
         return
       }
+      // !find 进行中拒绝跟随——双控制器冲突双方都显式拒绝（此前 follow 会覆盖
+      // find 的 goal → find 报 GoalChanged 失败、控制状态互打）
+      if (c.findBusy) {
+        await sendChat(c.bot, '§c无法跟随：!find 进行中（移动互斥，稍候再试）', c.cfg.chat?.maxLength)
+        return
+      }
       // exclusive 任务运行中拒绝跟随——follow 直接控制层与任务 pathfinder 双
       // 控制器冲突（!find 仅警告，follow 直接拒绝）
       if (hasExclusiveActive()) {
@@ -338,11 +344,19 @@ export function registerBuiltinCommands (registry, _ctx) {
           return
         }
       }
-      if (findBusy) {
+      if (c.findBusy) {
         await sendChat(c.bot, '§e上一个 find 仍在进行中，请稍候', c.cfg.chat?.maxLength)
         return
       }
-      findBusy = true
+      // follow 进行中拒绝查找——双控制器冲突双方都显式拒绝（此前 follow 每 tick
+      // setGoal 覆盖 find goal → find 报"目标被其他移动覆盖"失败）
+      const followTarget = c.plugins?.follow?.getTarget?.()
+      if (followTarget) {
+        const fn = followTarget.username ?? followTarget.name ?? '玩家'
+        await sendChat(c.bot, `§c无法查找：正在跟随 ${fn}（移动互斥，先 !follow off）`, c.cfg.chat?.maxLength)
+        return
+      }
+      c.findBusy = true
       try {
         // 地表候选查询（palette 快路径 + 上方 2 格空/透明验证）
         let result
@@ -385,7 +399,7 @@ export function registerBuiltinCommands (registry, _ctx) {
           await sendChat(c.bot, `§e找到 ${blockName} 但${REASON_TEXT[r.reason] ?? '移动失败'}：最近候选 ${Math.floor(nearest.x)},${Math.floor(nearest.y)},${Math.floor(nearest.z)}（水平距离 ${dist}m）`, c.cfg.chat?.maxLength)
         }
       } finally {
-        findBusy = false
+        c.findBusy = false
       }
     }
   })
