@@ -5,10 +5,10 @@
 // 注意：mine 步骤默认跳过（--dangerous 开启）——但跳过只是不执行该步，
 // 流程继续跑后续步骤并正常退出（O3 修复：早期版本 return 导致进程永不退出）。
 
-import { loadConfig, validateConfig } from '../src/core/config.js'
-import { createConsoleLogger } from '../src/core/logger.js'
-import { withTimeout } from '../src/util/promise-timeout.js'
-import { createBot, loadMineflayerPluginsAsync } from '../src/core/bot.js'
+import { loadConfig, validateConfig } from '../src/core/config.ts'
+import { createConsoleLogger } from '../src/core/logger.ts'
+import { withTimeout } from '../src/util/promise-timeout.ts'
+import { createBot, loadMineflayerPluginsAsync } from '../src/core/bot.ts'
 import pathfinderPkg from 'mineflayer-pathfinder' // CJS 包：default 导入后解构（ESM named 互操作不可靠）
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'

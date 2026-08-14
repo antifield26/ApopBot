@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { installDeathHandling } from '../src/core/fl-death.js'
+import { installDeathHandling } from '../src/core/fl-death.ts'
 
 // 死亡/重生处理链路测试（此前零覆盖——生命周期核心路径：死亡→pauseAll→
 // follow 停止→agent 中止→respawn 请求；重生→恢复暂停任务）。

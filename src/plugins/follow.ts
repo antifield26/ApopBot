@@ -1,0 +1,287 @@
+// 自定义插件：跟随指定玩家（供 !follow 命令使用）。
+//
+// 实现：混合跟随。pathfinder 的 GoalFollow 基于 A*，其动作集不含跳跃——目标跳过
+// 障碍/跳上台阶后 Bot 无法到达。故近距离用 setControlState 直接控制（前进 + 爬升
+// 跳跃 sticky jump），卡住（原地无位移）/目标远离/前方虚空时切 pathfinder 寻路
+// 绕行，接近后回到直接控制。
+// sticky jump：目标高于阈值（0.6 格）时持续按住跳跃键直到高度差修正（≤0.3 格），
+// 而不是每 tick 用瞬时差判断——跟随延迟下目标 y 数据滞后，瞬时差波动会导致跳跃
+// 被错误松开、只跳一次且跳在滞后位置。
+//
+// 分层说明：本插件是独立于任务/命令体系的 setInterval 直接控制层（近距离
+// setControlState，远距才借用 pathfinder）。统一移动层（src/core/movement.js）
+// 服务于任务/命令体系（goto/approachEntity）。二者经"任务 exclusive 互斥 +
+// follow 手动开关"隔离，互不调用——follow 的实时性要求不适合任务体系的可取消
+// 移动封装。
+
+import pathfinderPkg from 'mineflayer-pathfinder' // CJS 包：default 导入后解构（ESM named 互操作不可靠）
+import { sendChat } from '../core/chat.ts'
+const { goals } = pathfinderPkg
+
+const TICK_MS = 500 // 控制周期
+const REACH = 2.5 // 与目标距离小于此视为已跟上（停下）
+const DIRECT_RANGE = 6 // 此距离内用直接控制（跳跃可用）；更远走寻路
+const STUCK_TICKS = 6 // 直接控制 N 轮（3s）无位移 → 切寻路绕行
+const PATH_UPDATE_DIST = 2 // 寻路模式下目标位移超过此值才重建 goal（低配机避免每 tick 重算 A*）
+// 重建冷却：pathfinder 的 setGoal 会 resetPath（清路径 + 丢进行中 A* 分片 + 停控制）——
+// 目标持续移动时每 2 格就重建会让 A* 永远算不完 → 原地不动。
+// 位移 2 格 + 冷却 1.5s 双条件：A* 有 1.5s 计算窗口（40ms/tick ≈ 37 分片）
+const GOAL_RECALC_COOLDOWN_MS = 1500
+// 跳跃判定：按移动方向前方的方块，而非目标高度差——目标在平地上但 Bot 面前有
+// 1 格台阶（y 差 < 0.6）时目标高度判定不触发跳跃 → 被挡停在方块前；目标远处在
+// 高处时又持续无效跳跃。取前方 1 格（Bot 脚部同层）实心 = 台阶/墙/坡 → 持续跳跃
+// 直到越过（连续 2 tick 前方空才松开，防跳跃中瞬时误判）
+const JUMP_CLEAR_TICKS = 2
+
+/**
+ * mineflayer 插件工厂。装载后产生 bot.follow = { setTarget(player|null), stop(), getTarget() }。
+ */
+export function followPlugin (bot) {
+  /** @type {{ position?: any, id?: number, username?: string, name?: string }|null} */
+  let target = null
+  let targetName = null // 目标玩家名（entityGone 后用于 bot.players 重解析）
+  let startDim = null // 开始跟随时的 bot 维度（换维度检测）
+  let timer = null
+  let lastPos = null
+  let stuckCount = 0
+  let pathing = false
+  let lastGoalPos = null
+  let lastGoalTime = 0 // 上次重建寻路目标的时间戳（冷却防 A* 重置风暴）
+  let jumpHeld = false // 跳跃按住状态（前方方块实心时持续跳，越过障碍后松开）
+  let jumpClearTicks = 0 // 前方空连续 tick 计数（防跳跃过程中瞬时误判松开）
+
+  function stopMoving () {
+    bot.setControlState('forward', false)
+    bot.setControlState('jump', false)
+  }
+
+  function clearGoal () {
+    try { bot.pathfinder?.setGoal(null) } catch { /* 插件可能已卸载 */ }
+  }
+
+  /** 移动方向前方 1 格（Bot 脚部同层）是实心障碍 → 需要跳跃（台阶/墙/坡）。
+   * 注意用 sign 偏移：dx/dz 是方向余弦（<1），直接 offset 后 floor 会落在脚下格。 */
+  function shouldJump (p, dx, dz) {
+    // blockAt 包 try——tick 是 setInterval 回调，抛错 = uncaughtException →
+    // fatalExit 停服；位置异常时按"无障碍"处理（防跳崖即可）
+    let ahead
+    try { ahead = bot.blockAt(p.offset(Math.sign(dx), 0, Math.sign(dz))) } catch { ahead = null }
+    if (!ahead || ahead.boundingBox === 'empty') return false
+    return ahead.name !== 'water' && ahead.name !== 'lava'
+  }
+
+  /** 按前方方块检测更新跳跃按住状态（sticky：越过障碍连续 2 tick 前方空才松开）。 */
+  function updateJump (p, dx, dz) {
+    if (shouldJump(p, dx, dz)) {
+      jumpHeld = true
+      jumpClearTicks = 0
+    } else if (jumpHeld) {
+      jumpClearTicks++
+      if (jumpClearTicks >= JUMP_CLEAR_TICKS) jumpHeld = false
+    }
+    bot.setControlState('jump', jumpHeld)
+  }
+
+  function tick () {
+    if (!target?.position || !bot.entity?.position) { stopMoving(); return }
+    // 换维度检测：bot 经传送门/命令换维度后闭包持有的目标实体陈旧（坐标停留
+    // 在旧维度）——继续走会走向旧坐标（可能岩浆/虚空）。维度不一致即停止
+    if (startDim && bot.game?.dimension && bot.game.dimension !== startDim) {
+      const name = targetName ?? target.username ?? target.name ?? '目标'
+      follow.stop()
+      sendChat(bot, `§e已停止跟随 ${name}（Bot 维度变化）`).catch(() => { /* 聊天通道未就绪 */ })
+      return
+    }
+    const p = bot.entity.position
+    const tp = target.position
+    // NaN 坐标防御——异常位置继续运算（distanceTo/offset 直进 blockAt）会抛错，
+    // setInterval 回调内抛错 = uncaughtException → exit(2) 停服
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z) ||
+        !Number.isFinite(tp.x) || !Number.isFinite(tp.y) || !Number.isFinite(tp.z)) {
+      stopMoving()
+      return
+    }
+    const dist = p.distanceTo(tp)
+    const yDiff = tp.y - p.y
+
+    if (dist <= REACH) {
+      // 已跟上：停下。目标在 Bot 上方且前方是台壁（1 格高障碍）时——前进+跳跃
+      // 爬升对齐（只 set jump 不 forward 会原地跳永远上不去）。必须清残留寻路
+      // goal——否则 pathfinder 的 monitorMovement 每 physicsTick 覆盖控制状态
+      // 继续走向旧目标（双控制器冲突 → 跟随失效/原地不动）
+      const dx = dist > 0 ? (tp.x - p.x) / dist : 0
+      const dz = dist > 0 ? (tp.z - p.z) / dist : 0
+      const wallAhead = yDiff > 0.3 && shouldJump(p, dx, dz)
+      if (wallAhead) {
+        bot.setControlState('forward', true)
+        bot.setControlState('jump', true)
+      } else {
+        stopMoving()
+        // 目标在正上方（无台壁）时原地补跳对齐
+        bot.setControlState('jump', yDiff > 0.3 && shouldJump(p, dx, dz))
+      }
+      pathing = false
+      clearGoal()
+      lastPos = p.clone()
+      stuckCount = 0
+      jumpHeld = false
+      jumpClearTicks = 0
+      return
+    }
+
+    try { bot.lookAt(tp.offset(0, 0.5, 0)) } catch { /* 位置可能失效 */ }
+
+    if (dist < DIRECT_RANGE && !pathing) {
+      // 直接控制：前进 + 前方方块检测跳跃（GoalFollow 不跳会导致丢失跟随；跳跃
+      // 触发按移动方向前方的方块，而非目标高度差——目标平地上有 1 格台阶时 y 差
+      // 判定不跳被挡住停下，目标远处高处又持续无效跳跃）
+      const dx = (tp.x - p.x) / dist
+      const dz = (tp.z - p.z) / dist
+      // 前方 1 格是岩浆 → 停 forward 切寻路（直接控制不避障且不跳岩浆——
+      // pathfinder 的 blocksToAvoid 含 lava 会绕行；否则直接步入岩浆烧死）
+      let ahead1
+      try { ahead1 = bot.blockAt(p.offset(Math.sign(dx), 0, Math.sign(dz))) } catch { ahead1 = null }
+      if (ahead1?.name === 'lava') {
+        stopMoving()
+        pathing = true
+        lastGoalPos = null
+        jumpHeld = false
+        return
+      }
+      bot.setControlState('forward', true)
+      updateJump(p, dx, dz)
+      // 前方 2 格是虚空/未加载（直走会掉落）→ 切寻路（无条件，跳跃中也防跳崖）；
+      // 同 sign 偏移：余弦偏移 floor 会落在脚下格
+      let ahead
+      try { ahead = bot.blockAt(p.offset(Math.sign(dx) * 2, -1, Math.sign(dz) * 2)) } catch { ahead = null }
+      // 卡住检测：爬升中看 y 位移（贴墙跳时水平位移小会被误判卡住）；否则看水平位移
+      const movedY = jumpHeld && lastPos ? Math.abs(p.y - lastPos.y) > 0.15 : false
+      const moved = !jumpHeld && lastPos && p.distanceTo(lastPos) > 0.2
+      lastPos = p.clone()
+      stuckCount = moved || movedY ? 0 : stuckCount + 1
+      if (stuckCount >= STUCK_TICKS || !ahead) {
+        stopMoving()
+        pathing = true
+        lastGoalPos = null
+        jumpHeld = false
+      }
+    } else {
+      // 寻路绕行：目标位移超阈值 + 冷却双条件才重建 goal——setGoal 会 resetPath
+      //（清路径 + 丢进行中 A* 分片 + 停控制），目标持续移动时无冷却地重建会让
+      // A* 永远算不完 → 原地不动
+      stopMoving()
+      pathing = true
+      jumpHeld = false
+      const moved = lastGoalPos && tp.distanceTo(lastGoalPos) > PATH_UPDATE_DIST
+      const cooled = Date.now() - lastGoalTime > GOAL_RECALC_COOLDOWN_MS
+      if (!lastGoalPos || (moved && cooled)) {
+        // GoalNear 构造签名 (x, y, z, range)——传 Vec3 单参得到 NaN goal
+        //（Math.floor(Vec3)=NaN → A* 行为异常 → 原地不动）
+        try { bot.pathfinder.setGoal(new goals.GoalNear(tp.x, tp.y, tp.z, 1)) } catch { /* 未在移动 */ }
+        lastGoalPos = tp.clone()
+        lastGoalTime = Date.now()
+      }
+      if (dist < DIRECT_RANGE * 0.5) {
+        // 回到直接控制前必须停 pathfinder——否则其 monitorMovement 每 physicsTick
+        // 覆盖 setControlState（双控制器打架 → 跟随失效/原地不动）
+        pathing = false
+        clearGoal()
+      }
+    }
+  }
+
+  /** 目标实体卸载后按玩家名重解析（出渲染距离 ≠ 掉线——玩家仍在 bot.players）。 */
+  async function reResolveTarget (name) {
+    const deadline = Date.now() + 30000
+    while (Date.now() < deadline && !target) {
+      const p = (Object.values(bot.players ?? {}) as Array<{ username?: string, entity?: any }>).find(pl => (pl.username ?? '').toLowerCase() === name.toLowerCase())
+      if (p?.entity) {
+        target = p.entity
+        targetName = name
+        startDim = bot.game?.dimension ?? null
+        lastPos = null
+        stuckCount = 0
+        if (!timer) {
+          timer = setInterval(tick, TICK_MS)
+          timer.unref?.()
+        }
+        return
+      }
+      await new Promise(r => setTimeout(r, 1000))
+    }
+    if (!target) {
+      sendChat(bot, `§e已停止跟随 ${name}（实体长时间未加载——可能已离开视距/维度）`).catch(() => { /* 聊天通道未就绪 */ })
+    }
+  }
+
+  const follow = {
+    /** @param {{ position?: any, id?: number, username?: string, name?: string }|null} player */
+    setTarget (player) {
+      target = player
+      if (!player) {
+        targetName = null
+        startDim = null
+        follow.stop()
+        return
+      }
+      if (!bot.pathfinder) throw new Error('follow 插件需要 pathfinder')
+      targetName = player.username ?? player.name ?? null
+      startDim = bot.game?.dimension ?? null
+      stopMoving()
+      clearGoal()
+      lastPos = null
+      stuckCount = 0
+      pathing = false
+      lastGoalPos = null
+      if (!timer) {
+        timer = setInterval(tick, TICK_MS)
+        timer.unref?.()
+      }
+    },
+
+    getTarget () {
+      return target
+    },
+
+    stop () {
+      target = null
+      targetName = null
+      startDim = null
+      jumpHeld = false
+      if (timer) { clearInterval(timer); timer = null }
+      stopMoving()
+      clearGoal()
+    }
+  }
+
+  bot.follow = follow
+
+  bot.on('entityGone', (entity) => {
+    if (target && entity.id === target.id) {
+      const name = targetName ?? target.username ?? target.name ?? `实体#${target.id}`
+      // 玩家仍在 bot.players（掉线/换维度才移除）→ 出渲染距离/瞬时卸载：
+      // 暂停直接控制并重解析，实体重新加载后自动继续（此前无条件停——正常
+      // 走远 64-128 格即"目标消失"，跟随被意外终止且误导"目标掉线"）
+      const stillHere = (Object.values(bot.players ?? {}) as Array<{ username?: string }>).some(p => (p.username ?? '').toLowerCase() === name.toLowerCase())
+      if (stillHere) {
+        target = null
+        stopMoving()
+        clearGoal()
+        void reResolveTarget(name)
+        return
+      }
+      follow.stop()
+      // 目标掉线/死亡/传送——静默停止会让玩家以为还在跟随，聊天提示。
+      // 统一走 sendChat：剥 § 颜色码（裸 bot.chat 的 § 会被 Paper 踢出）
+      sendChat(bot, `§e已停止跟随 ${name}（目标掉线/离开）`).catch(() => { /* 聊天通道未就绪 */ })
+    }
+  })
+
+  bot.on('end', () => {
+    target = null
+    targetName = null
+    startDim = null
+    jumpHeld = false
+    if (timer) { clearInterval(timer); timer = null }
+  })
+}

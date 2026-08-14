@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chunkText, sendChat, stripColorCodes } from '../src/core/chat.js'
+import { chunkText, sendChat, stripColorCodes } from '../src/core/chat.ts'
 
 test('chunkText: 短文本不分片', () => {
   assert.deepEqual(chunkText('hello', 250), ['hello'])
@@ -87,7 +87,7 @@ test('sendChat: 发送时统一剥离颜色码', async () => {
 })
 
 test('registry 速率限制：op 命令冷却期内静默丢弃', async () => {
-  const { CommandRegistry } = await import('../src/commands/registry.js')
+  const { CommandRegistry } = await import('../src/commands/registry.ts')
   const registry = new CommandRegistry({ child: () => ({ debug () {}, warn () {}, error () {} }) })
   const calls = []
   registry.register({

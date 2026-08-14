@@ -2,7 +2,7 @@
 // 失败静默不阻塞主流程。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createNotifier } from '../src/core/notify.js'
+import { createNotifier } from '../src/core/notify.ts'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }

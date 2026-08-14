@@ -1,9 +1,9 @@
 import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { loadConfig } from '../src/core/config.js'
-import { createFeatureLayerManager } from '../src/core/feature-layer.js'
-import { _resetReplyBuckets } from '../src/core/fl-chat.js'
+import { loadConfig } from '../src/core/config.ts'
+import { createFeatureLayerManager } from '../src/core/feature-layer.ts'
+import { _resetReplyBuckets } from '../src/core/fl-chat.ts'
 
 // 回复限流桶是模块级状态（跨测试/跨文件累积——每次测试前重置）
 beforeEach(() => { _resetReplyBuckets() })
@@ -200,7 +200,7 @@ test('C6/N 修复：重建时回灌快照计数器（U1 承诺兑现——此前
 })
 
 test('U16 修复: 玩家上线问候（新玩家欢迎/首包洪峰去重/离开不告别/冷却）', async () => {
-  const { _resetGreetState } = await import('../src/core/feature-layer.js')
+  const { _resetGreetState } = await import('../src/core/feature-layer.ts')
   _resetGreetState()
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)
@@ -229,7 +229,7 @@ test('U16 修复: 玩家上线问候（新玩家欢迎/首包洪峰去重/离开
 })
 
 test('U16 修复: 问候只走固定模板（LLM 不参与——provider 被调用即测试失败）', async () => {
-  const { _resetGreetState } = await import('../src/core/feature-layer.js')
+  const { _resetGreetState } = await import('../src/core/feature-layer.ts')
   _resetGreetState()
   const ctx = makeCtx()
   ctx.agent = { provider: { chat: async () => { throw new Error('LLM 不应参与问候') } } }
@@ -339,7 +339,7 @@ test('teardown 幂等（重复调用不抛）', async () => {
 // 第 11 轮（E2）：第 10 轮三管齐下的方案 B（blockUpdate 监听）此前零测试——
 // 监听器挂错事件名/坐标取错字段都不会被发现（接线测试兜底）
 test('第 10 轮方案 B：blockUpdate 方块变化 → 探索记忆删除（接线）', async () => {
-  const { _reset, recordResource, query } = await import('../src/core/discovery.js')
+  const { _reset, recordResource, query } = await import('../src/core/discovery.ts')
   _reset()
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)
@@ -365,7 +365,7 @@ test('第 10 轮方案 B：blockUpdate 方块变化 → 探索记忆删除（接
 })
 
 test('P1: 被攻击（entityHurt 怪物源）→ 危险区域记录（被动写路径）', async () => {
-  const discovery = await import('../src/core/discovery.js')
+  const discovery = await import('../src/core/discovery.ts')
   discovery._reset()
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)
@@ -384,7 +384,7 @@ test('P1: 被攻击（entityHurt 怪物源）→ 危险区域记录（被动写�
 })
 
 test('P1: 被攻击（玩家/自伤源）→ 不记录', async () => {
-  const discovery = await import('../src/core/discovery.js')
+  const discovery = await import('../src/core/discovery.ts')
   discovery._reset()
   const ctx = makeCtx()
   const layer = createFeatureLayerManager(ctx, ctx.logger)

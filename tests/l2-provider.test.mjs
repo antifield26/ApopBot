@@ -3,7 +3,7 @@
 // Ollama/auto 相关测试已随本地 provider 移除。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createProvider } from '../src/l2/provider.js'
+import { createProvider } from '../src/l2/provider.ts'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }
@@ -174,8 +174,8 @@ test('U5: cloud usage 解析（input_tokens/output_tokens）+ latency', async ()
 })
 
 test('U5: agent 计量累计——chat 工具循环多轮 usage 累加（AgentInterface 层）', async () => {
-  const { AgentInterface } = await import('../src/l2/agent-interface.js')
-  const { createActionExecutor } = await import('../src/core/executor.js')
+  const { AgentInterface } = await import('../src/l2/agent-interface.ts')
+  const { createActionExecutor } = await import('../src/core/executor.ts')
   const ctx = { cfg: { ops: [], l2: { maxActionsPerCall: 8 } }, logger: makeLogger(), bot: {}, tasks: { getStatus: () => [] }, conn: { getStatus: () => ({ state: 'connected' }) }, plugins: {} }
   const calls = []
   const provider = {

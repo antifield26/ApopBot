@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { Vec3 } from 'vec3'
-import { createMovement, createMovements, stopPathfinding, findSurfaceBlocks } from '../src/core/movement.js'
+import { createMovement, createMovements, stopPathfinding, findSurfaceBlocks } from '../src/core/movement.ts'
 import pathfinderPkg from 'mineflayer-pathfinder'
 const { goals } = pathfinderPkg
 

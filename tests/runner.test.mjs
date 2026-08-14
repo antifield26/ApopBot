@@ -3,9 +3,9 @@
 // 自然完成）+ afk/fish 脚本行为。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ScriptTask } from '../src/tasks/runner.js'
+import { ScriptTask } from '../src/tasks/runner.ts'
 import { Vec3 } from 'vec3'
-import { _resetFeedTs } from '../src/core/primitives/interact.js'
+import { _resetFeedTs } from '../src/core/primitives/interact.ts'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }
@@ -194,7 +194,7 @@ test('deadline 条件: durationMinutes 到时 → return completed', async () =>
 test('afk 脚本: 周期 wait + look 转动（wiggles 计数）', async () => {
   const looks = []
   const ctx = makeCtx({ look: (yaw) => looks.push(yaw) })
-  const { default: afkScript } = await import('../src/tasks/scripts/afk.js')
+  const { default: afkScript } = await import('../src/tasks/scripts/afk.ts')
   const task = makeTask(afkScript, { intervalMinutes: 0.0001 }, ctx) // 直构造不走 schema（task-schemas 要求 ≥1）
   task.start()
   await new Promise(r => setTimeout(r, 30))
@@ -204,7 +204,7 @@ test('afk 脚本: 周期 wait + look 转动（wiggles 计数）', async () => {
 })
 
 test('afk 脚本: intervalMinutes 缺省/非法 → init 校验（task-schemas 已拦，防御）', async () => {
-  const { default: afkScript } = await import('../src/tasks/scripts/afk.js')
+  const { default: afkScript } = await import('../src/tasks/scripts/afk.ts')
   const task = makeTask(afkScript, {})
   // options 校验在 task-schemas（manager 入口拦截）；此处验证脚本对缺省值不抛
   task.startedAt = Date.now()
@@ -219,7 +219,7 @@ test('fish 脚本: 背包满（stopWhenInventoryFull）→ 自然完成', async 
   const slots = Array.from({ length: 34 }, () => ({ type: 1, count: 1 }))
   const items = Array.from({ length: 34 }, (_, i) => ({ name: 'fish' + i, count: 1 }))
   const ctx = makeCtx({ inventory: { slots, items: () => items } })
-  const { default: fishScript } = await import('../src/tasks/scripts/fish.js')
+  const { default: fishScript } = await import('../src/tasks/scripts/fish.ts')
   const task = makeTask(fishScript, { durationMinutes: 10, stopWhenInventoryFull: true }, ctx)
   await task.start()
   assert.equal(task.state, 'completed', '背包满 → 完成')
@@ -227,7 +227,7 @@ test('fish 脚本: 背包满（stopWhenInventoryFull）→ 自然完成', async 
 
 test('fish 脚本: 时长到 → 自然完成（deadline）', async () => {
   const ctx = makeCtx()
-  const { default: fishScript } = await import('../src/tasks/scripts/fish.js')
+  const { default: fishScript } = await import('../src/tasks/scripts/fish.ts')
   // startedAt 由 BaseTask.run() 设置——durationMinutes 用微值（~12ms）等真实到期
   const task = makeTask(fishScript, { durationMinutes: 0.0002, stopWhenInventoryFull: false }, ctx)
   await new Promise(r => setTimeout(r, 10)) // 确保 deadline 条件先于循环启动
@@ -240,7 +240,7 @@ test('fish 脚本: 抛竿失败 → 软失败 + 5s 等待后重试（不中断�
   const ctx = makeCtx({
     fish: async () => { fishCalls++; throw new Error('fish timeout') }
   })
-  const { default: fishScript } = await import('../src/tasks/scripts/fish.js')
+  const { default: fishScript } = await import('../src/tasks/scripts/fish.ts')
   const task = makeTask(fishScript, { durationMinutes: 10, stopWhenInventoryFull: false }, ctx)
   task.start()
   await new Promise(r => setTimeout(r, 30))
@@ -296,7 +296,7 @@ function makeCollectBot (opts = {}) {
 test('mine 脚本: 扫描→收集循环（counters.mined 累计）', async () => {
   const { bot, collects } = makeCollectBot()
   const ctx = makeCtx(bot)
-  const { default: mineScript } = await import('../src/tasks/scripts/mine.js')
+  const { default: mineScript } = await import('../src/tasks/scripts/mine.ts')
   const task = makeTask(mineScript, { blockTypes: ['iron_ore'], stopWhenDone: true }, ctx)
   await task.start()
   assert.equal(task.state, 'completed', 'stopWhenDone + 挖空 → 完成')
@@ -307,7 +307,7 @@ test('mine 脚本: 扫描→收集循环（counters.mined 累计）', async () =
 test('mine 脚本: 无目标 + stopWhenDone=false → 5min 等待（不完成）', async () => {
   const { bot } = makeCollectBot({ emptyWorld: true })
   const ctx = makeCtx(bot)
-  const { default: mineScript } = await import('../src/tasks/scripts/mine.js')
+  const { default: mineScript } = await import('../src/tasks/scripts/mine.ts')
   const task = makeTask(mineScript, { blockTypes: ['iron_ore'] }, ctx)
   task.start()
   await new Promise(r => setTimeout(r, 30))
@@ -319,7 +319,7 @@ test('mine 脚本: 无目标 + stopWhenDone=false → 5min 等待（不完成）
 test('mine 脚本: NoChests → inventoryFull → 5min 等待（不误判失败）', async () => {
   const { bot } = makeCollectBot({ noChests: true })
   const ctx = makeCtx(bot)
-  const { default: mineScript } = await import('../src/tasks/scripts/mine.js')
+  const { default: mineScript } = await import('../src/tasks/scripts/mine.ts')
   const task = makeTask(mineScript, { blockTypes: ['iron_ore'], stopWhenDone: true }, ctx)
   task.start()
   await new Promise(r => setTimeout(r, 30))
@@ -331,7 +331,7 @@ test('mine 脚本: NoChests → inventoryFull → 5min 等待（不误判失败�
 test('mine 脚本: init 校验——未知方块类型报错（failed）', async () => {
   const { bot } = makeCollectBot()
   const ctx = makeCtx(bot)
-  const { default: mineScript } = await import('../src/tasks/scripts/mine.js')
+  const { default: mineScript } = await import('../src/tasks/scripts/mine.ts')
   const task = makeTask(mineScript, { blockTypes: ['not_a_block'] }, ctx)
   await task.start()
   assert.equal(task.state, 'failed', 'init 校验失败 → failed')
@@ -341,7 +341,7 @@ test('mine 脚本: init 校验——未知方块类型报错（failed）', async
 test('mine 脚本: init 校验——畸形 area 报错（越区采集防御）', async () => {
   const { bot } = makeCollectBot()
   const ctx = makeCtx(bot)
-  const { default: mineScript } = await import('../src/tasks/scripts/mine.js')
+  const { default: mineScript } = await import('../src/tasks/scripts/mine.ts')
   const task = makeTask(mineScript, { blockTypes: ['iron_ore'], area: { x1: 0, x2: 10, z1: 0, z2: 10 } }, ctx)
   await task.start()
   assert.equal(task.state, 'failed')
@@ -351,7 +351,7 @@ test('mine 脚本: init 校验——畸形 area 报错（越区采集防御）',
 test('chop 脚本: init 校验——畸形 area 报错（越区采集防御）', async () => {
   const { bot } = makeCollectBot()
   const ctx = makeCtx(bot)
-  const { default: chopScript } = await import('../src/tasks/scripts/chop.js')
+  const { default: chopScript } = await import('../src/tasks/scripts/chop.ts')
   const task = makeTask(chopScript, { area: { x1: 0 } }, ctx)
   await task.start()
   assert.equal(task.state, 'failed')
@@ -416,7 +416,7 @@ test('M3 回归：breed 繁殖冷却——同一动物冷却期内不再计数�
 test('chop 脚本: 缺省正则（/_log$|_wood$/）扫描全部原木', async () => {
   const { bot, collects } = makeCollectBot()
   const ctx = makeCtx(bot)
-  const { default: chopScript } = await import('../src/tasks/scripts/chop.js')
+  const { default: chopScript } = await import('../src/tasks/scripts/chop.ts')
   const task = makeTask(chopScript, { stopWhenDone: true }, ctx)
   await task.start()
   assert.equal(task.state, 'completed', 'chop 完成')
@@ -427,7 +427,7 @@ test('chop 脚本: 缺省正则（/_log$|_wood$/）扫描全部原木', async ()
 test('chop 脚本: 显式 logTypes 只伐指定类型', async () => {
   const { bot, collects } = makeCollectBot()
   const ctx = makeCtx(bot)
-  const { default: chopScript } = await import('../src/tasks/scripts/chop.js')
+  const { default: chopScript } = await import('../src/tasks/scripts/chop.ts')
   const task = makeTask(chopScript, { logTypes: ['oak_log'], stopWhenDone: true }, ctx)
   await task.start()
   assert.equal(task.state, 'completed')
@@ -477,7 +477,7 @@ const FARM_AREA = { x1: 0, y1: 0, z1: 0, x2: 20, y2: 100, z2: 20 }
 
 test('farm 脚本: 成熟收割 → continue（不种植/不等待）→ 默认 maxCycles 0', async () => {
   // 默认值断言：defaultOptions.maxCycles 必须为 0（不限轮数——巡逻语义）
-  const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
+  const { default: farmScript } = await import('../src/tasks/scripts/farm.ts')
   assert.equal(farmScript.defaultOptions.maxCycles, 0, 'farm 默认不限轮数（stopWhenIdle 空闲完成是唯一天然终态）')
   // 收割行为验证：显式 maxCycles=2（有界，避免 makeFarmBot 恒成熟场景触发 maxActions 兜底）
   const { bot, collects } = makeFarmBot()
@@ -518,7 +518,7 @@ test('loop max 0 = 不限轮数（farm maxCycles 默认语义——runner 层）
 test('farm 脚本: maxCycles=2 恰好 2 轮后完成（显式上限）', async () => {
   const { bot, collects } = makeFarmBot()
   const ctx = makeCtx(bot)
-  const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
+  const { default: farmScript } = await import('../src/tasks/scripts/farm.ts')
   const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['wheat'], growthCheckSeconds: 0.01, maxCycles: 2 }, ctx)
   await task.start()
   assert.equal(task.state, 'completed', 'maxCycles=2 两轮后无条件完成')
@@ -528,7 +528,7 @@ test('farm 脚本: maxCycles=2 恰好 2 轮后完成（显式上限）', async (
 test('farm 脚本: 无成熟 → 种植（replant 默认）→ 未成熟 → 等待生长', async () => {
   const { bot, planted } = makeFarmBot({ mature: false })
   const ctx = makeCtx(bot)
-  const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
+  const { default: farmScript } = await import('../src/tasks/scripts/farm.ts')
   const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['wheat'], growthCheckSeconds: 1, maxCycles: 2 }, ctx) // 2 轮：第 1 轮种植，第 2 轮 growing——1s 等待 50ms 检查时仍在
   task.start()
   await new Promise(r => setTimeout(r, 50))
@@ -541,7 +541,7 @@ test('farm 脚本: replant=false → 不种植；stopWhenIdle → 完成', async
   const { bot, planted } = makeFarmBot({ mature: false })
   bot.findBlocks = () => [] // 空田（无作物/耕地）——真正触发 stopWhenIdle 空闲完成
   const ctx = makeCtx(bot)
-  const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
+  const { default: farmScript } = await import('../src/tasks/scripts/farm.ts')
   const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['wheat'], replant: false, stopWhenIdle: true, growthCheckSeconds: 0.01 }, ctx)
   await task.start()
   assert.equal(task.state, 'completed', '空闲 + stopWhenIdle → 完成（不限轮数下唯一天然终态）')
@@ -551,7 +551,7 @@ test('farm 脚本: replant=false → 不种植；stopWhenIdle → 完成', async
 test('farm 脚本: init 校验——未知作物报错（failed）', async () => {
   const { bot } = makeFarmBot()
   const ctx = makeCtx(bot)
-  const { default: farmScript } = await import('../src/tasks/scripts/farm.js')
+  const { default: farmScript } = await import('../src/tasks/scripts/farm.ts')
   const task = makeTask(farmScript, { area: FARM_AREA, cropTypes: ['dragon_fruit'] }, ctx)
   await task.start()
   assert.equal(task.state, 'failed')
@@ -588,7 +588,7 @@ function makeCombatBot (opts = {}) {
 test('combat 脚本: 无目标 + stopWhenNoTargets → 完成', async () => {
   const { bot } = makeCombatBot({ bot: { entities: new Map() } })
   const ctx = makeCtx(bot)
-  const { default: combatScript } = await import('../src/tasks/scripts/combat.js')
+  const { default: combatScript } = await import('../src/tasks/scripts/combat.ts')
   const task = makeTask(combatScript, { stopWhenNoTargets: true }, ctx)
   await task.start()
   assert.equal(task.state, 'completed', '无目标 + stopWhenNoTargets → 完成')
@@ -597,7 +597,7 @@ test('combat 脚本: 无目标 + stopWhenNoTargets → 完成', async () => {
 test('combat 脚本: 击杀 → kills 计数 → maxTargets 上限完成', async () => {
   const { bot, packets } = makeCombatBot()
   const ctx = makeCtx(bot)
-  const { default: combatScript } = await import('../src/tasks/scripts/combat.js')
+  const { default: combatScript } = await import('../src/tasks/scripts/combat.ts')
   const task = makeTask(combatScript, { maxTargets: 1, checkIntervalSeconds: 0.01 }, ctx)
   await task.start()
   assert.equal(task.state, 'completed', '击杀 1 个（maxTargets 1）→ 完成')
@@ -610,7 +610,7 @@ test('combat 脚本: 武器自动装备（init 钩子解析背包第一把剑）
   const equipped = []
   bot.equip = async (item) => { equipped.push(item.name) }
   const ctx = makeCtx(bot)
-  const { default: combatScript } = await import('../src/tasks/scripts/combat.js')
+  const { default: combatScript } = await import('../src/tasks/scripts/combat.ts')
   const task = makeTask(combatScript, { stopWhenNoTargets: true }, ctx)
   await task.start()
   assert.ok(equipped.includes('iron_sword'), `应自动装备剑: ${JSON.stringify(equipped)}`)
@@ -619,7 +619,7 @@ test('combat 脚本: 武器自动装备（init 钩子解析背包第一把剑）
 test('combat 脚本: init 校验——area 不完整报错（攻击距离由 attack 原语统一 3.5 格）', async () => {
   const { bot } = makeCombatBot()
   const ctx = makeCtx(bot)
-  const { default: combatScript } = await import('../src/tasks/scripts/combat.js')
+  const { default: combatScript } = await import('../src/tasks/scripts/combat.ts')
   const task = makeTask(combatScript, { area: { x1: 1 } }, ctx)
   await task.start()
   assert.equal(task.state, 'failed')
@@ -629,7 +629,7 @@ test('combat 脚本: init 校验——area 不完整报错（攻击距离由 att
 test('breed 脚本: 无动物 + stopWhenNoAnimals → 完成', async () => {
   const bot = { entity: { position: { x: 0, y: 64, z: 0 } }, entities: new Map(), pathfinder: { stop: () => {} }, inventory: { items: () => [] } }
   const ctx = makeCtx(bot)
-  const { default: breedScript } = await import('../src/tasks/scripts/breed.js')
+  const { default: breedScript } = await import('../src/tasks/scripts/breed.ts')
   const task = makeTask(breedScript, { stopWhenNoAnimals: true }, ctx)
   await task.start()
   assert.equal(task.state, 'completed', '无动物 + stopWhenNoAnimals → 完成')
@@ -656,7 +656,7 @@ test('breed 脚本: 喂食成功 → 等待幼崽 → breedings 计数', async (
     removeListener: () => {}
   }
   const ctx = makeCtx(bot)
-  const { default: breedScript } = await import('../src/tasks/scripts/breed.js')
+  const { default: breedScript } = await import('../src/tasks/scripts/breed.ts')
   const task = makeTask(breedScript, { maxBreedings: 1, useCooldownMs: 500 }, ctx) // schema min 500
   await task.start()
   assert.equal(task.state, 'completed', '繁殖 1 次（maxBreedings 1）→ 完成')
@@ -667,8 +667,8 @@ test('breed 脚本: 喂食成功 → 等待幼崽 → breedings 计数', async (
 // ---- explore 脚本（v1.0.0 C10：任务局部 op spiral_step）----
 
 test('explore 脚本: 螺旋一站推进（goto + 锚点登记 + waypoints 计数）', async () => {
-  const { default: exploreScript } = await import('../src/tasks/scripts/explore.js')
-  const discovery = await import('../src/core/discovery.js')
+  const { default: exploreScript } = await import('../src/tasks/scripts/explore.ts')
+  const discovery = await import('../src/core/discovery.ts')
   discovery._reset()
   const bot = {
     entity: { position: new Vec3(0, 64, 0) },
@@ -690,7 +690,7 @@ test('explore 脚本: 螺旋一站推进（goto + 锚点登记 + waypoints 计�
 })
 
 test('explore 脚本: stopWhenDone 环满 → 自然完成', async () => {
-  const { default: exploreScript } = await import('../src/tasks/scripts/explore.js')
+  const { default: exploreScript } = await import('../src/tasks/scripts/explore.ts')
   const bot = {
     entity: { position: new Vec3(0, 64, 0) },
     blockAt: (p) => (p.y <= 64 ? { boundingBox: 'solid', name: 'stone', position: p } : { boundingBox: 'empty', name: 'air', position: p }),
@@ -740,7 +740,7 @@ test('第 8 轮：stop 后同实例重启（F4）——_abort 重建，动作正
 // ---- scanEntities hostileNames（World Model 落记忆字段）----
 
 test('P1: scanEntities 返回 hostileNames（纯名字列表，hostile 显示串不变）', async () => {
-  const { scanEntities } = await import('../src/core/explore.js')
+  const { scanEntities } = await import('../src/core/explore.ts')
   const bot = {
     entity: { position: new Vec3(0, 64, 0) },
     entities: new Map([

@@ -4,7 +4,7 @@
 // 等在 C6-C10 任务脚本测试中覆盖）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createActionExecutor, validateParams } from '../src/core/executor.js'
+import { createActionExecutor, validateParams } from '../src/core/executor.ts'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }
@@ -93,7 +93,7 @@ test('executeOne: op 白名单成员可执行 + all 原语对普通玩家开放'
 })
 
 test('exclusive 守卫：movement/build/combat/interact 拒绝，readonly/item/flow 放行', async () => {
-  const arb = await import('../src/core/arbiter.js')
+  const arb = await import('../src/core/arbiter.ts')
   const { map, calls } = makePrims()
   const ex = createActionExecutor(makeCtx({ cfg: { ops: ['steve'], l2: { maxActionsPerCall: 8 } } }), { primitives: map, audit: null })
   arb.setExclusiveOwner('g1')

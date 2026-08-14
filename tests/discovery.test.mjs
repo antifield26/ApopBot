@@ -1,8 +1,8 @@
 // 探索记忆（L2 进化 B1）测试：容量边界/去重/淘汰/快照往返。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import * as discovery from '../src/core/discovery.js'
-import { DANGER_FRESH_MS } from '../src/core/discovery.js'
+import * as discovery from '../src/core/discovery.ts'
+import { DANGER_FRESH_MS } from '../src/core/discovery.ts'
 
 test.beforeEach(() => discovery._reset())
 

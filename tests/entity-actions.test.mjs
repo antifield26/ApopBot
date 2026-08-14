@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import mc from 'minecraft-protocol' // CJS 包：ESM default 导入
-import { attackEntity, useEntityOn } from '../src/core/entity-actions.js'
+import { attackEntity, useEntityOn } from '../src/core/entity-actions.ts'
 
 const VERSION = '26.1.2'
 

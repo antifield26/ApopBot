@@ -2,7 +2,7 @@
 // 此前直接映射恒早 6 小时。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatTime, directionFromYaw, environmentLine } from '../src/core/environment.js'
+import { formatTime, directionFromYaw, environmentLine } from '../src/core/environment.ts'
 
 test('formatTime: timeOfDay 0 = 游戏钟 06:00（日出），非 00:00', () => {
   assert.equal(formatTime(0), '06:00', 'timeOfDay 0（日出）应为 06:00')
@@ -71,7 +71,7 @@ test('v1.5.1: environmentLine 玩家行带坐标（LLM 执行 follow/goto 类指
 
 // ---- dangerLine 危险注入（World Model 被动感知）----
 
-import * as discovery from '../src/core/discovery.js'
+import * as discovery from '../src/core/discovery.ts'
 
 function makeBotWithPos (x, z) {
   return { entity: { position: { x, y: 64, z } } }
@@ -110,4 +110,4 @@ function importDangerLine (bot) {
 }
 
 // 静态导入放文件尾（动态引用防循环）
-import { dangerLine as dangerLineRef } from '../src/core/environment.js'
+import { dangerLine as dangerLineRef } from '../src/core/environment.ts'

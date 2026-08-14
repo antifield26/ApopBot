@@ -5,9 +5,9 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { createExperienceStore, loadExperience } from '../src/l2/experience.js'
-import { AgentInterface } from '../src/l2/agent-interface.js'
-import { createActionExecutor } from '../src/core/executor.js'
+import { createExperienceStore, loadExperience } from '../src/l2/experience.ts'
+import { AgentInterface } from '../src/l2/agent-interface.ts'
+import { createActionExecutor } from '../src/core/executor.ts'
 
 function makeTmp () {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'exp-'))
@@ -187,7 +187,7 @@ test('经验检索：match 按 op 精确匹配；add 去重合并 count', () => 
 
 // ---- 技能库（v1.5.0：成功实践沉淀，与经验互补）----
 
-import { createSkillsStore, loadSkills } from '../src/l2/skills.js'
+import { createSkillsStore, loadSkills } from '../src/l2/skills.ts'
 
 test('skill: add→flush 原子落盘 + 结构化字段完整', () => {
   const { dir } = makeTmp()
@@ -302,7 +302,7 @@ test('skill: 形状防御（坏数据按空）+ 未来版本拒绝加载', () =>
 
 // ---- 技能学习循环（v1.5.0：任务完成 → LLM 提炼 → 入库）----
 
-import { parseSkillJson } from '../src/l2/agent-interface.js'
+import { parseSkillJson } from '../src/l2/agent-interface.ts'
 
 const SKILL_JSON = '{"name":"高效挖铁","summary":"先观察再批量采集","steps":["observe_blocks 找矿","goto 靠近","collect_blocks"],"pitfalls":["背包满先存"]}'
 const SKILL_REC = { entry: { id: 'm1', type: 'mine', options: { blockTypes: ['iron_ore'] } }, task: { state: 'completed', counters: { mined: 5 } } }

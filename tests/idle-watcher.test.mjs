@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { _idleTick, _resetIdleWatcher, bindIdleWatcher } from '../src/core/idle-watcher.js'
+import { _idleTick, _resetIdleWatcher, bindIdleWatcher } from '../src/core/idle-watcher.ts'
 
 // 任务长 idle LLM 播报测试（此前零覆盖——10 分钟阈值 + 1 小时冷却 + 跨重建）。
 // _idleTick 单次检查由测试直接驱动（60s 周期不便于测试）。

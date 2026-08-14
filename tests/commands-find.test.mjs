@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Vec3 } from 'vec3'
-import { createCommandRegistry } from '../src/commands/commands.js'
+import { createCommandRegistry } from '../src/commands/commands.ts'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }
@@ -140,7 +140,7 @@ test('!find 行走期间防重入（busy）', async () => {
 })
 
 test('!find 运行中 exclusive 任务 → 警告后继续（C8/S：走仲裁器登记）', async () => {
-  const arb = await import('../src/core/arbiter.js')
+  const arb = await import('../src/core/arbiter.ts')
   arb.setExclusiveOwner('guard-base')
   try {
     const { ctx, bot } = makeCtx({

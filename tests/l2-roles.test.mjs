@@ -2,11 +2,11 @@
 // 会话隔离/前缀剥离/旧 key 迁移/白名单/冷却/统计。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import * as discovery from '../src/core/discovery.js'
-import { _resetSummarizeCooldown, _resetSessions } from '../src/l2/agent-interface.js'
-import { createL2 } from '../src/l2/index.js'
-import { createActionExecutor } from '../src/core/executor.js'
-import { loadConfig } from '../src/core/config.js'
+import * as discovery from '../src/core/discovery.ts'
+import { _resetSummarizeCooldown, _resetSessions } from '../src/l2/agent-interface.ts'
+import { createL2 } from '../src/l2/index.ts'
+import { createActionExecutor } from '../src/core/executor.ts'
+import { loadConfig } from '../src/core/config.ts'
 
 test.beforeEach(() => {
   discovery._reset()
@@ -227,7 +227,7 @@ test('roles: sessionCount 按角色统计；roleStats 形状', async () => {
 import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { createSkillsStore } from '../src/l2/skills.js'
+import { createSkillsStore } from '../src/l2/skills.ts'
 
 function makeTmp () {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'skills-'))

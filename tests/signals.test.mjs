@@ -2,7 +2,7 @@
 // 零覆盖模块补齐（此前 signals.js 无任何测试）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { setupSignals } from '../src/core/signals.js'
+import { setupSignals } from '../src/core/signals.ts'
 
 function makeLogger (opts = {}) {
   return {

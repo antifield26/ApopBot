@@ -2,7 +2,7 @@
 // 用 deps.imports 注入 fake 插件（真实动态 import 由 connection.test 的注入路径覆盖）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { loadMineflayerPlugins } from '../src/plugins/index.js'
+import { loadMineflayerPlugins } from '../src/plugins/index.ts'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }

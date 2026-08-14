@@ -1,7 +1,7 @@
 // 任务 options schema 校验测试（C5/R3 根治版：ad-hoc options 零校验的入口拦截）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validateTaskOptions, TASK_OPTION_SCHEMAS } from '../src/core/task-schemas.js'
+import { validateTaskOptions, TASK_OPTION_SCHEMAS } from '../src/core/task-schemas.ts'
 
 test('schema: 合法 options 放行', () => {
   assert.deepEqual(validateTaskOptions('afk', { intervalMinutes: 5 }), { ok: true })
@@ -74,7 +74,7 @@ test('A2/P1-2: mine/chop radius 上限 256（同步 findBlocks 枚举限幅）',
 
 // ---- 任务链 next 与 cron 校验（start_task/config 共用入口）----
 
-import { validateNextOptions, validateCron } from '../src/core/task-schemas.js'
+import { validateNextOptions, validateCron } from '../src/core/task-schemas.ts'
 
 test('next: 合法 next（type/id/options/schedule）放行', () => {
   assert.deepEqual(validateNextOptions({ type: 'mine', id: 'm1' }), { ok: true })

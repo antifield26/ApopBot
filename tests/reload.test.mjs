@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createReloadHandler } from '../src/core/reload.js'
+import { createReloadHandler } from '../src/core/reload.ts'
 
 // 热重载处理器行为测试（M10 抽取自 index.js——入口 import 即连接无法单测；
 // 依赖注入后逐行为断言，替换此前"读源码断言行序"的脆弱守卫）。

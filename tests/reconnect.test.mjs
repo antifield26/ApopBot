@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classifyDisconnect, nextBackoff } from '../src/core/reconnect.js'
+import { classifyDisconnect, nextBackoff } from '../src/core/reconnect.ts'
 
 test('classifyDisconnect: 致命原因', () => {
   assert.equal(classifyDisconnect('Your username is already logged in!').isFatal, true)

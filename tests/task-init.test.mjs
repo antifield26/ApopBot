@@ -3,15 +3,15 @@
 // 运行行为测试见 tests/runner.test.mjs（脚本 DSL 全链路）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ScriptTask } from '../src/tasks/runner.js'
-import mineScript from '../src/tasks/scripts/mine.js'
-import fishScript from '../src/tasks/scripts/fish.js'
-import afkScript from '../src/tasks/scripts/afk.js'
-import farmScript from '../src/tasks/scripts/farm.js'
-import chopScript from '../src/tasks/scripts/chop.js'
-import combatScript from '../src/tasks/scripts/combat.js'
-import breedScript from '../src/tasks/scripts/breed.js'
-import exploreScript from '../src/tasks/scripts/explore.js'
+import { ScriptTask } from '../src/tasks/runner.ts'
+import mineScript from '../src/tasks/scripts/mine.ts'
+import fishScript from '../src/tasks/scripts/fish.ts'
+import afkScript from '../src/tasks/scripts/afk.ts'
+import farmScript from '../src/tasks/scripts/farm.ts'
+import chopScript from '../src/tasks/scripts/chop.ts'
+import combatScript from '../src/tasks/scripts/combat.ts'
+import breedScript from '../src/tasks/scripts/breed.ts'
+import exploreScript from '../src/tasks/scripts/explore.ts'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }

@@ -1,7 +1,7 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { ConnectionManager } from '../src/core/connection.js'
+import { ConnectionManager } from '../src/core/connection.ts'
 
 // fatal 路径的硬杀兜底（process.kill 1000ms 延迟）在测试进程存活期间可能触发——
 // 文件级接管 kill 覆盖整个测试运行期（局部 mock 在 restore 后 timer 仍会触发真杀）

@@ -3,9 +3,9 @@
 // 唯一防线曾是真机验收）。fake container 驱动原语 handler，不依赖 mineflayer。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createPrimitiveRegistry } from '../src/core/primitives/index.js'
-import { autoDeposit } from '../src/core/storage.js'
-import { ensureMiningTool } from '../src/core/tool.js'
+import { createPrimitiveRegistry } from '../src/core/primitives/index.ts'
+import { autoDeposit } from '../src/core/storage.ts'
+import { ensureMiningTool } from '../src/core/tool.ts'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }
@@ -212,7 +212,7 @@ test('harvest_animals: sheep 剪羊毛（equip shears → 接近 → useEntityOn
   bot.entities = new Map([[9, sheep]])
   bot.entity.position = { x: 0, y: 64, z: 0, distanceTo: (p) => Math.abs(p.x) + Math.abs(p.z), clone: () => bot.entity.position }
   // useEntityOn 走 entity-actions 原始包（写 use_entity）——捕获写包
-  const { useEntityOn } = await import('../src/core/entity-actions.js')
+  const { useEntityOn } = await import('../src/core/entity-actions.ts')
   const origWrite = bot._client.write
   bot._client.write = (name, params) => { if (name === 'use_entity') used.push(params); else origWrite(name, params) }
   const r = await h({ bot, logger: makeLogger() }, { filter: 'sheep', max: 1 })

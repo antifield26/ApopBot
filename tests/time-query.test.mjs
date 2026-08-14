@@ -3,8 +3,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { installTimeQuery } from '../src/core/time-query.js'
-import { environmentLine } from '../src/core/environment.js'
+import { installTimeQuery } from '../src/core/time-query.ts'
+import { environmentLine } from '../src/core/environment.ts'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }

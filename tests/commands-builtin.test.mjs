@@ -2,7 +2,7 @@
 // 用真实 createCommandRegistry + fake ctx（chat 记录、tasks/conn/agent stubs）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createCommandRegistry } from '../src/commands/commands.js'
+import { createCommandRegistry } from '../src/commands/commands.ts'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }
@@ -179,7 +179,7 @@ test('!follow 未启用插件 → 明确报错', async () => {
 })
 
 test('C8/S 修复：!follow 在 exclusive 任务运行时拒绝（移动互斥，不再双控制器冲突）', async () => {
-  const arb = await import('../src/core/arbiter.js')
+  const arb = await import('../src/core/arbiter.ts')
   arb.setExclusiveOwner('guard-base')
   try {
     const { ctx, bot } = makeCtx({ plugins: { follow: { stop: () => {}, setTarget: () => {} } } })
@@ -544,6 +544,6 @@ test('命令矩阵：op 冷却 / 非 op 拒绝 / 混合权限子命令冷却（�
   await disp('!home set base3', 'intruder')
   assert.ok(lastMsg(bot).includes('权限不足'), '非 op home set 拒绝')
   // 清理探索记忆（模块级状态）
-  const discovery = await import('../src/core/discovery.js')
+  const discovery = await import('../src/core/discovery.ts')
   discovery._reset()
 })

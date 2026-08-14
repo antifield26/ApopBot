@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseCommand } from '../src/commands/parser.js'
-import { isOp } from '../src/commands/permissions.js'
-import { CommandRegistry } from '../src/commands/registry.js'
+import { parseCommand } from '../src/commands/parser.ts'
+import { isOp } from '../src/commands/permissions.ts'
+import { CommandRegistry } from '../src/commands/registry.ts'
 
 test('parseCommand 基础解析', () => {
   assert.deepEqual(parseCommand('!ping'), { name: 'ping', args: [] })

@@ -5,8 +5,8 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { createSessionStore, loadSessions } from '../src/l2/sessions.js'
-import { AgentInterface } from '../src/l2/agent-interface.js'
+import { createSessionStore, loadSessions } from '../src/l2/sessions.ts'
+import { AgentInterface } from '../src/l2/agent-interface.ts'
 
 function makeTmp () {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'sess-'))

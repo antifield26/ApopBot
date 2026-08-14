@@ -3,54 +3,54 @@
 ## 总体结构
 
 ```
-minecraft-bot (Node.js ≥24, ESM)
-├── src/index.js              入口：配置 → logger → ConnectionManager → 功能层 → 信号
+minecraft-bot (Node.js ≥24, ESM；src 全量 .ts——Node 原生类型剥离直接运行，见「质量工具」)
+├── src/index.ts              入口：配置 → logger → ConnectionManager → 功能层 → 信号
 ├── src/core/                 基础设施
-│   ├── config.js             配置分层加载与校验（默认值 < default.json < --config < MCBOT_* < CLI；
+│   ├── config.ts             配置分层加载与校验（默认值 < default.json < --config < MCBOT_* < CLI；
 │   │                          契约冻结：l2 子键白名单 + CONFIG_SCHEMA_VERSION）
-│   ├── logger.js             pino 结构化日志（文件按天轮转 + stdout）
-│   ├── connection.js         ConnectionManager：连接/退避重连/spawn 超时/致命退出
-│   ├── reconnect.js          断线分类（classifyDisconnect）+ 指数退避（nextBackoff），纯函数
-│   ├── bot.js                createBot（同步）+ loadMineflayerPlugins（异步，事件零丢失窗口）
-│   ├── feature-layer.js      功能层生命周期（每次 spawn 全量重建 tasks/commands/L2 + chat 监听）
-│   ├── fl-chat.js / fl-death.js / fl-players.js / fl-world.js / fl-guard.js
+│   ├── logger.ts             pino 结构化日志（文件按天轮转 + stdout）
+│   ├── connection.ts         ConnectionManager：连接/退避重连/spawn 超时/致命退出
+│   ├── reconnect.ts          断线分类（classifyDisconnect）+ 指数退避（nextBackoff），纯函数
+│   ├── bot.ts                createBot（同步）+ loadMineflayerPlugins（异步，事件零丢失窗口）
+│   ├── feature-layer.ts      功能层生命周期（每次 spawn 全量重建 tasks/commands/L2 + chat 监听）
+│   ├── fl-chat.ts / fl-death.ts / fl-players.ts / fl-world.ts / fl-guard.ts
 │   │                          事件监听类拆分（聊天分发/死亡重生/玩家问候/世界感知与记忆失效/受击响应）
-│   ├── idle-watcher.js       任务长 idle LLM 播报（模块级 interval，重建只换引用）
-│   ├── chat.js               聊天安全层（256 字符分片发送 + 全局串行队列）
-│   ├── signals.js            SIGINT/SIGTERM 优雅退出；热重载（配置监视/!reload，Linux 另支持 SIGHUP）
-│   ├── reload.js             热重载处理器（依赖注入可测——校验→cfg/conn→logger→L2→http→tasks）
-│   ├── http-status.js        只读 HTTP 端点 /health /metrics（EADDRINUSE 退避重试）
-│   ├── notify.js             webhook 运维通知（企业微信/Server酱）
-│   ├── time-query.js         时间查询（/minecraft:time 命令链路 + clockUpdates 解析）
-│   ├── storage.js / tool.js  自动存储 + 工具耐久管理
+│   ├── idle-watcher.ts       任务长 idle LLM 播报（模块级 interval，重建只换引用）
+│   ├── chat.ts               聊天安全层（256 字符分片发送 + 全局串行队列）
+│   ├── signals.ts            SIGINT/SIGTERM 优雅退出；热重载（配置监视/!reload，Linux 另支持 SIGHUP）
+│   ├── reload.ts             热重载处理器（依赖注入可测——校验→cfg/conn→logger→L2→http→tasks）
+│   ├── http-status.ts        只读 HTTP 端点 /health /metrics（EADDRINUSE 退避重试）
+│   ├── notify.ts             webhook 运维通知（企业微信/Server酱）
+│   ├── time-query.ts         时间查询（/minecraft:time 命令链路 + clockUpdates 解析）
+│   ├── storage.ts / tool.ts  自动存储 + 工具耐久管理
 │   ├── primitives/           动作原语注册表（按族拆分：observe/move/build/combat/interact/item/flow/task，36 个原语）
-│   ├── executor.js           动作执行器（LLM act 数组与任务脚本共用：权限/exclusive/校验/超时/审计）
-│   ├── audit.js              动作审计日志（logs/audit.log JSONL 按天轮转）
-│   ├── state.js              schemaVersion 2 + 迁移器（未来版本拒绝加载）
-│   └── movement.js / entity-actions.js / arbiter.js / entities.js / resources.js / crops.js / discovery.js / explore.js / environment.js
+│   ├── executor.ts           动作执行器（LLM act 数组与任务脚本共用：权限/exclusive/校验/超时/审计）
+│   ├── audit.ts              动作审计日志（logs/audit.log JSONL 按天轮转）
+│   ├── state.ts              schemaVersion 2 + 迁移器（未来版本拒绝加载）
+│   └── movement.ts / entity-actions.ts / arbiter.ts / entities.ts / resources.ts / crops.ts / discovery.ts / explore.ts / environment.ts
 ├── src/tasks/                任务系统（脚本化：任务 = 动作原语脚本）
-│   ├── base.js               BaseTask 状态机（created→init→running⇄paused→stopped/completed/failed；
+│   ├── base.ts               BaseTask 状态机（created→init→running⇄paused→stopped/completed/failed；
 │   │                          run-completion 语义 + 终态重启 + _cancel 取消钩子 + _internalWait）
-│   ├── manager.js            TaskManager：装载/启停/热重载 diff/cron 调度/临时任务/防重叠/时长上限持久化
-│   ├── runner.js             ScriptTask（BaseTask 子类）+ ScriptRunner（脚本 DSL 解释器：
+│   ├── manager.ts            TaskManager：装载/启停/热重载 diff/cron 调度/临时任务/防重叠/时长上限持久化
+│   ├── runner.ts             ScriptTask（BaseTask 子类）+ ScriptRunner（脚本 DSL 解释器：
 │   │                          loop/if/break/continue/return/count + 条件六型 + 模板求值 + 任务局部 op）
 │   ├── scripts/              mine/fish/afk/farm/chop/combat/breed/explore 8 个任务脚本
-│   ├── types.js              任务类型单一注册表（factory → ScriptTask + 脚本定义）
-│   ├── util.js               isArea 等任务校验工具
-│   └── scheduled.js          croner 调度包装（单一 onTrigger 回调）
+│   ├── types.ts              任务类型单一注册表（factory → ScriptTask + 脚本定义）
+│   ├── util.ts               isArea 等任务校验工具
+│   └── scheduled.ts          croner 调度包装（单一 onTrigger 回调）
 ├── src/commands/             聊天命令系统
-│   ├── parser.js             shell 式引号感知解析（token 内 " 按字面，支持 JSON 参数；未闭合引号报错）
-│   ├── permissions.js        config.ops 白名单（offline 模式无法查 OP；大小写不敏感）
-│   ├── registry.js           注册/分发/权限校验/op 命令速率限制
-│   └── commands.js           内置命令
+│   ├── parser.ts             shell 式引号感知解析（token 内 " 按字面，支持 JSON 参数；未闭合引号报错）
+│   ├── permissions.ts        config.ops 白名单（offline 模式无法查 OP；大小写不敏感）
+│   ├── registry.ts           注册/分发/权限校验/op 命令速率限制
+│   └── commands.ts           内置命令
 ├── src/plugins/              mineflayer 生态插件装载（pathfinder→collectBlock→autoEat→armorManager→follow（条件装载））
 ├── src/l2/                   LLM 层（l2.enabled=false 时零依赖；单 Provider 见 docs/l2.md）
-│   ├── agent-interface.js    chat 工具循环（act 动作数组 + 观察工具）+ 反思钩子（经验沉淀）+ 滚动摘要
-│   ├── provider.js           云端 Anthropic 兼容 API（预设 DeepSeek，thinking=disabled）
-│   ├── sessions.js           会话落盘（data/sessions.json）
-│   ├── experience.js         经验记忆库（data/experience.json）
-│   ├── skills.js             技能库（data/skills.json——任务完成自主学习循环）
-│   └── index.js              createL2 组装（多角色注册表）
+│   ├── agent-interface.ts    chat 工具循环（act 动作数组 + 观察工具）+ 反思钩子（经验沉淀）+ 滚动摘要
+│   ├── provider.ts           云端 Anthropic 兼容 API（预设 DeepSeek，thinking=disabled）
+│   ├── sessions.ts           会话落盘（data/sessions.json）
+│   ├── experience.ts         经验记忆库（data/experience.json）
+│   ├── skills.ts             技能库（data/skills.json——任务完成自主学习循环）
+│   └── index.ts              createL2 组装（多角色注册表）
 └── src/util/                 promise-timeout / debounced-file-store
 ```
 
@@ -131,14 +131,14 @@ minecraft-bot (Node.js ≥24, ESM)
 
 ## 质量工具
 
-- **ESLint 10 flat config**（`eslint.config.js`）：eslint:recommended + 项目风格（无分号/单引号/2 空格），覆盖 src/tests/scripts；CI 门禁 `npm run lint`
-- **checkJs 渐进 TS 路线**：tsconfig.json（noEmit + allowJs + module nodenext）——src 全部文件 `// @ts-check` 开启，`npm run typecheck` 门禁；这是全量 TS 迁移的第一阶段（后续逐文件改 .ts 零阻碍，tsconfig 已兼容）。**新 src 文件必须带 `// @ts-check`**（CI 不强制但约定）
+- **ESLint 10 flat config**（`eslint.config.js`）：eslint:recommended + 项目风格（无分号/单引号/2 空格），覆盖 src/tests/scripts；src 的 .ts 文件经 @typescript-eslint/parser 同一套规则解析；CI 门禁 `npm run lint`
+- **全量 TS（第二阶段完成）**：src 72 个文件全部 .ts，Node ≥24 原生类型剥离直接运行（无构建步骤）；`npm run typecheck`（tsc -p，noEmit + allowImportingTsExtensions）门禁。迁移注意点（此 TS 版本行为）：JSDoc `@type` 表达式断言与带默认初始化器的 `@param` 在 .ts 中失效——类型修正一律用内联注解/`as` 断言；类属性需显式声明（不再从构造函数赋值推断）。typescript devDep 为 5.x 稳定线（typescript-eslint 尚不支持 7.x）
 - **覆盖率**：`npm run test:coverage`（node --test lcov → coverage/lcov.info，CI artifact）；基线多数模块 85-100% 行覆盖，**暂不设阈值**（mock 为主，阈值意义有限）——引入真机集成测试后再设
-- checkJs 已拦截的真实缺陷示例（证明工具价值）：observe_blocks regex 路径 TDZ 使用 dim（运行时必崩）、collect_blocks const chests 重新赋值（NoChests 分支必抛）——类型门禁后同类错误在开发期暴露
+- 类型门禁已拦截的真实缺陷示例（证明工具价值）：observe_blocks regex 路径 TDZ 使用 dim（运行时必崩）、collect_blocks const chests 重新赋值（NoChests 分支必抛）——同类错误在开发期暴露
 
 ## 已知风险
 
-- mineflayer PR #3902 / minecraft-protocol PR #1487 上游仍未合并。补丁是本地载体：升级这两个包版本时补丁 context 冲突会显式报错（patch-package 行为，不会静默），需按 docs/upstream-migration.md 重新生成；mineflayer 补丁的 use_entity 已改**无条件新格式**（`{target, hand, location(lpVec3 必填), sneaking}` + 独立 attack 包——去特征门控，与 26.1.2 真实 schema 一致），项目层 entity-actions.js 的原始包与之匹配（check-compat 哨兵按新格式验证）。注意：补丁只对 26.1.2 正确——回退旧 mcVersion 需恢复门控（保守保留至上游合并）
+- mineflayer PR #3902 / minecraft-protocol PR #1487 上游仍未合并。补丁是本地载体：升级这两个包版本时补丁 context 冲突会显式报错（patch-package 行为，不会静默），需按 docs/upstream-migration.md 重新生成；mineflayer 补丁的 use_entity 已改**无条件新格式**（`{target, hand, location(lpVec3 必填), sneaking}` + 独立 attack 包——去特征门控，与 26.1.2 真实 schema 一致），项目层 entity-actions.ts 的原始包与之匹配（check-compat 哨兵按新格式验证）。注意：补丁只对 26.1.2 正确——回退旧 mcVersion 需恢复门控（保守保留至上游合并）
 - `npm audit` 的 axios 漏洞全部位于 Microsoft 认证链（prismarine-auth → @xboxreplay/xboxlive-auth），offline 模式不执行该路径。**已接受风险**（第六轮 C1 评估：overrides 覆盖 axios 版本有破坏 prismarine-auth 兼容性的风险，offline 部署不触达该链；CI 审计步骤信息性标记，不门禁）
 - pino v9 transport 无法主动拆除：反复改日志配置会累积文件句柄（接受，文档化）。**仅 rotate/pretty/dir 变化才重建 logger**（只改 level 时复用 transport——旧实现双写同一 bot.log 会丢行/坏 JSONL）
 - 审计日志（audit.log）为**进程级共享单例**（dir+keepDays 键缓存）：热重载改 log.dir 时旧 worker 随旧配置弃用（句柄累积面收敛）

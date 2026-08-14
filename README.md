@@ -76,7 +76,7 @@ Minecraft Bot，以 NSSM Windows 服务运行在 Windows PC 上，连接 PaperMC
 npm ci
 npm test                    # 单元测试（Windows 可跑）
 npm run lint                # ESLint 门禁（eslint:recommended + 项目风格）
-npm run typecheck           # checkJs 类型门禁（src 全部 @ts-check，渐进 TS 路线第一阶段）
+npm run typecheck           # 类型门禁（src 全量 .ts——Node 原生类型剥离运行，tsc 校验）
 npm run test:coverage       # 覆盖率报告（lcov → coverage/lcov.info，CI artifact）
 npm run check:compat        # 协议 775 兼容性门禁
 cp config/config.example.json config/config.json   # 按需编辑
@@ -124,7 +124,7 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 ## 配置
 
 优先级：内置默认 → `config/default.json` → `--config` 文件 → `MCBOT_*` 环境变量 → CLI。
-关键项（完整键值见内置默认（src/core/config.js）与 `config/config.example.json`）：
+关键项（完整键值见内置默认（src/core/config.ts）与 `config/config.example.json`）：
 
 | 键 | 默认 | 说明 |
 |---|---|---|

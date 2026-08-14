@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { loadState, createStateStore } from '../src/core/state.js'
+import { loadState, createStateStore } from '../src/core/state.ts'
 
 function makeTmpDir (t) {
   const dir = mkdtempSync(path.join(tmpdir(), 'mcbot-state-'))

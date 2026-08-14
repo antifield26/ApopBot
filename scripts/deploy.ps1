@@ -210,7 +210,7 @@ if ($state -eq 'missing') {
 
 $cfgPath = Join-Path $root 'config\config.json'
 Set-NssmParam 'AppDirectory' $root
-Set-NssmParam 'AppParameters' "src/index.js --config `"$cfgPath`""
+Set-NssmParam 'AppParameters' "src/index.ts --config `"$cfgPath`""
 Set-NssmParam 'Start' 'SERVICE_AUTO_START'
 # AppExit 是"参数名 + 退出码 + 动作"三段式（nssm set <svc> AppExit <code> <action>），
 # 不走单 key/value 的 Set-NssmParam（'AppExit 2' 带空格会被 nssm 当作不存在的参数名）

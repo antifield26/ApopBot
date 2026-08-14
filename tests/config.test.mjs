@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { loadConfig, validateConfig, assertLogDirWritable } from '../src/core/config.js'
+import { loadConfig, validateConfig, assertLogDirWritable } from '../src/core/config.ts'
 
 test('内置默认值：生产基线', () => {
   const cfg = loadConfig({ argv: [], env: {} }, { skipProdConfig: true })
@@ -396,8 +396,8 @@ test('B2: scheduled fish 缺 durationMinutes 在配置校验期报错（与 afk 
 })
 
 test('B3: KNOWN_TASK_TYPES 与 TASK_TYPES 键集一致（第六轮 C3 后为单一来源派生——保留断言防回退）', async () => {
-  const { KNOWN_TASK_TYPES } = await import('../src/core/config.js')
-  const { TASK_TYPES } = await import('../src/tasks/types.js')
+  const { KNOWN_TASK_TYPES } = await import('../src/core/config.ts')
+  const { TASK_TYPES } = await import('../src/tasks/types.ts')
   assert.deepEqual([...KNOWN_TASK_TYPES].sort(), Object.keys(TASK_TYPES).sort())
   // C3：自然完成语义也来自注册表（NATURAL_COMPLETION_TYPES 非导出——经 scheduled 校验间接断言）
   assert.ok(TASK_TYPES.afk.naturalCompletion === false, 'afk 无自然完成')

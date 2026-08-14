@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Cron } from 'croner'
-import { BaseTask } from '../src/tasks/base.js'
-import { TaskManager } from '../src/tasks/manager.js'
+import { BaseTask } from '../src/tasks/base.ts'
+import { TaskManager } from '../src/tasks/manager.ts'
 
 // 测试用最小假任务（不依赖 mineflayer）；内部等待用基类 _internalWait（可被 stop 打断）
 class FakeTask extends BaseTask {
@@ -610,7 +610,7 @@ class HangTask extends BaseTask {
 }
 
 test('A1 修复：stop 超时强制结束后（run 挂死）stopTask 无条件释放仲裁器', async () => {
-  const arb = await import('../src/core/arbiter.js')
+  const arb = await import('../src/core/arbiter.ts')
   const manager = makeManager()
   const task = new HangTask('h1', 'hang', {}, { bot: {}, logger: makeLogger(), config: {} })
   manager.tasks.set('h1', { entry: { id: 'h1', type: 'hang', options: {}, notifyChat: false }, task, cron: null })
@@ -628,7 +628,7 @@ test('A1 修复：stop 超时强制结束后（run 挂死）stopTask 无条件�
 })
 
 test('A1 修复：同 id 重启后旧代 run 晚 settle 不误清新一代登记', async () => {
-  const arb = await import('../src/core/arbiter.js')
+  const arb = await import('../src/core/arbiter.ts')
   const manager = makeManager()
   const task = new HangTask('h1', 'hang', {}, { bot: {}, logger: makeLogger(), config: {} })
   manager.tasks.set('h1', { entry: { id: 'h1', type: 'hang', options: {}, notifyChat: false }, task, cron: null })
@@ -674,7 +674,7 @@ test('A5 修复: stopTask 清理 _pendingExclusive（!task stop 排队中任务�
 })
 
 test('A5 修复: cron onTrigger 抛错被承接（croner catch 默认 false——防 unhandledRejection 停服）', async () => {
-  const { createTaskSchedule } = await import('../src/tasks/scheduled.js')
+  const { createTaskSchedule } = await import('../src/tasks/scheduled.ts')
   const errors = []
   const logger = { info () {}, error: (o) => { errors.push(o) } }
   const cron = createTaskSchedule(
@@ -693,7 +693,7 @@ test('A5 修复: cron onTrigger 抛错被承接（croner catch 默认 false—�
 })
 
 test('C8/S 修复：exclusive 任务运行期间仲裁器登记，终态清除', async () => {
-  const arb = await import('../src/core/arbiter.js')
+  const arb = await import('../src/core/arbiter.ts')
   const bot = makeCombatBot()
   const manager = new TaskManager({}, makeLogger(), { bot })
   await manager.load({

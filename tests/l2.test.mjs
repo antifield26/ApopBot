@@ -1,11 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Vec3 } from 'vec3'
-import * as discovery from '../src/core/discovery.js'
-import { AgentInterface, PLANNER_SYSTEM_PROMPT, _resetSummarizeCooldown, _resetSessions, estimateTokens, applyTokenBudget } from '../src/l2/agent-interface.js'
-import { createL2 } from '../src/l2/index.js'
-import { createActionExecutor } from '../src/core/executor.js'
-import { loadConfig } from '../src/core/config.js'
+import * as discovery from '../src/core/discovery.ts'
+import { AgentInterface, PLANNER_SYSTEM_PROMPT, _resetSummarizeCooldown, _resetSessions, estimateTokens, applyTokenBudget } from '../src/l2/agent-interface.ts'
+import { createL2 } from '../src/l2/index.ts'
+import { createActionExecutor } from '../src/core/executor.ts'
+import { loadConfig } from '../src/core/config.ts'
 
 function makeLogger () {
   return { child: () => makeLogger(), info () {}, warn () {}, error () {}, debug () {} }
@@ -309,7 +309,7 @@ test('primitives: observe_inventory 聚合数量（v1.0.0 结构化返回）', a
 })
 
 test('provider: v1.0.0 单 provider（云端）——createProvider 忽略 provider 配置恒返回 cloud 实例', async () => {
-  const { createProvider } = await import('../src/l2/provider.js')
+  const { createProvider } = await import('../src/l2/provider.ts')
   const l2 = { cloudBaseUrl: 'http://x', cloudApiKeyEnv: 'TEST_KEY', model: 'm' }
   const logger = makeLogger()
   process.env.TEST_KEY = 'k'
@@ -320,7 +320,7 @@ test('provider: v1.0.0 单 provider（云端）——createProvider 忽略 provi
 })
 
 test('provider: cloud 缺 API key 报错（可感知，非静默）', async () => {
-  const { createProvider } = await import('../src/l2/provider.js')
+  const { createProvider } = await import('../src/l2/provider.ts')
   const l2 = { cloudApiKeyEnv: 'NONEXISTENT_KEY_XYZ', model: 'm' }
   const provider = createProvider({ l2 }, makeLogger())
   await assert.rejects(provider.chat([{ role: 'user', content: 'hi' }]), /API key/)
@@ -543,7 +543,7 @@ test('primitives: observe_blocks 只读（all 权限）——非 op 可查询', 
 // ---- A3（第四轮）：技能层仲裁器防线与参数边界 ----
 
 test('A3 修复: follow_player 在 exclusive 任务运行中被拒（与 !follow 命令同款防线）', async () => {
-  const arb = await import('../src/core/arbiter.js')
+  const arb = await import('../src/core/arbiter.ts')
   try {
     const follow = { setTarget: () => {}, stop: () => {} }
     const ctx = makeCtx({ plugins: { follow } }, { ops: ['op1'] })
@@ -702,7 +702,7 @@ test('A3 修复: 环境自动注入——chat 的 system 含环境行', async ()
 // ---- L2 进化（B2/C1）：探索记忆查询 + 单步探索 ----
 
 test('B2 修复: query_map 查询探索记忆（结构化返回）', async () => {
-  const discovery = await import('../src/core/discovery.js')
+  const discovery = await import('../src/core/discovery.ts')
   discovery._reset()
   const ctx = makeCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
@@ -721,7 +721,7 @@ test('B2 修复: query_map 查询探索记忆（结构化返回）', async () =>
 })
 
 test('B2 修复: map_status 统计（结构化返回）', async () => {
-  const discovery = await import('../src/core/discovery.js')
+  const discovery = await import('../src/core/discovery.ts')
   discovery._reset()
   const ctx = makeCtx({}, { ops: ['op1'] })
   const { agent } = makeAgent(ctx, [])
@@ -736,8 +736,8 @@ test('B2 修复: map_status 统计（结构化返回）', async () => {
 })
 
 test('C1 修复: explore 技能单步探索（exclusive 任务运行中被拒）', async () => {
-  const arb = await import('../src/core/arbiter.js')
-  const discovery = await import('../src/core/discovery.js')
+  const arb = await import('../src/core/arbiter.ts')
+  const discovery = await import('../src/core/discovery.ts')
   discovery._reset()
   const bot = {
     entity: { position: new Vec3(0, 64, 0) },
@@ -793,7 +793,7 @@ test('P1 修复: nearby_entities filter 命中（OR 语义 + e.type 比对——
 })
 
 test('P2-3 修复: move_to 在 exclusive 任务运行中被拒（唯一漏网的危险技能）', async () => {
-  const arb = await import('../src/core/arbiter.js')
+  const arb = await import('../src/core/arbiter.ts')
   try {
     const ctx = makeCtx({}, { ops: ['op1'] })
     const { agent } = makeAgent(ctx, [])
@@ -826,7 +826,7 @@ test('F1-b 修复: busy 反馈附带已进行秒数', async () => {
 })
 
 test('P2-5 修复: messageTokens 工具轮计入参数 JSON（估算不再系统性偏低）', async () => {
-  const { messageTokens } = await import('../src/l2/agent-interface.js')
+  const { messageTokens } = await import('../src/l2/agent-interface.ts')
   assert.ok(typeof messageTokens === 'function')
   const small = messageTokens({ role: 'assistant', content: '', toolCalls: [{ name: 'status', arguments: {} }] })
   const big = messageTokens({ role: 'assistant', content: '', toolCalls: [{ name: 'run_task', arguments: { type: 'mine', id: 'x', options: { blockTypes: ['iron_ore'], area: { x1: 0, y1: 0, z1: 0, x2: 10, y2: 10, z2: 10 } } } }] })
@@ -836,7 +836,7 @@ test('P2-5 修复: messageTokens 工具轮计入参数 JSON（估算不再系统
 // ---- L2 进化（U13/U14/U15）：动作技能 / 结果精简 / 会话工具记录 ----
 
 test('U13: dig 技能——可挖性校验/距离提示/exclusive 拒绝', async () => {
-  const arb = await import('../src/core/arbiter.js')
+  const arb = await import('../src/core/arbiter.ts')
   const dug = []
   const bot = {
     ...makeCtx().bot,
@@ -852,7 +852,7 @@ test('U13: dig 技能——可挖性校验/距离提示/exclusive 拒绝', async
   try {
     // 第 11 轮（E2）：挖除即删接线断言——dig 成功后该坐标探索记忆删除
     //（第 10 轮方案 A 此前只在 runner/l2 用例中被真实执行但从未断言）
-    const discovery = await import('../src/core/discovery.js')
+    const discovery = await import('../src/core/discovery.ts')
     discovery._reset()
     discovery.recordResource('stone', { x: 2, y: 63, z: 0 })
     const r = await agent.act('op1', 'dig', { x: 2, y: 63, z: 0 })
@@ -926,7 +926,7 @@ test('U13: place 技能——参考方块/占用检查/heldItem 前置', async (
 test('U13 修复: attack 技能——Map 实体表回归 + 击杀即止（原地不动根因一）', async () => {
   // 根因：bot.entities 是 Map——`entities[id]` 下标恒 undefined → 存在检查恒 false →
   // attack 技能从未真正发出攻击包（P1 Map bug 同根，U13 侧漏网）
-  const arb = await import('../src/core/arbiter.js')
+  const arb = await import('../src/core/arbiter.ts')
   const packets = []
   const entities = new Map()
   const hostile = { id: 1, type: 'hostile', name: 'zombie', position: new Vec3(2, 64, 0), height: 1.8 } // 距离 2 ≤ 3.5
@@ -1092,7 +1092,7 @@ test('第 8 轮：预算裁剪只丢 assistant 轮——首条恒 user（孤立 
 })
 
 test('第 8 轮：truncateJson 保 JSON 结构（工具结果截断不再无效）', async () => {
-  const { truncateJson } = await import('../src/l2/agent-interface.js')
+  const { truncateJson } = await import('../src/l2/agent-interface.ts')
   const arr = JSON.stringify(Array.from({ length: 5 }, (_, i) => ({ op: `a${i}`, ok: true, result: 'ok' })))
   const out = truncateJson(arr, 70)
   assert.ok(!out.endsWith('…(截断)'), '结构化结果不应半截')

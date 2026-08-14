@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { getEventListeners } from 'node:events'
-import { createPrimitiveRegistry } from '../src/core/primitives/index.js'
+import { createPrimitiveRegistry } from '../src/core/primitives/index.ts'
 
 // 动作原语层直测（不经 executor 管线）：registry 由工厂创建，handler 直接调用。
 
@@ -69,7 +69,7 @@ test('M3: interact_entity 默认不限冷却（LLM act 行为不变）', async (
 // ---- M9：多角色共享 executor 的 user 指代消解 ----
 
 test('M9: 多角色共享 executor——follow_player 无 name 解析各自 runtime.user（不被残留 _caller 串扰）', async () => {
-  const { createActionExecutor } = await import('../src/core/executor.js')
+  const { createActionExecutor } = await import('../src/core/executor.ts')
   const targets = []
   const bot = {
     username: 'bot1',
@@ -100,7 +100,7 @@ test('M9: 多角色共享 executor——follow_player 无 name 解析各自 runt
 })
 
 test('M4: 动作互斥——非 readonly 动作执行期间其它角色动作被拒；readonly 观察放行', async () => {
-  const { createActionExecutor } = await import('../src/core/executor.js')
+  const { createActionExecutor } = await import('../src/core/executor.ts')
   const ctx = {
     bot: { entity: { position: { x: 0, y: 64, z: 0 } }, chat: () => {} },
     cfg: { l2: { maxActionsPerCall: 8 }, ops: ['alice', 'bob'], log: { dir: null } },
@@ -161,7 +161,7 @@ function makeSleepBot () {
 // ---- M6：幽灵动作（竞速取消/事后校验） ----
 
 test('M6: raceAbort——abort 后立即拒绝且监听器清理（底层 promise 不被吞）', async () => {
-  const { raceAbort } = await import('../src/core/primitives/common.js')
+  const { raceAbort } = await import('../src/core/primitives/common.ts')
   const controller = new AbortController()
   let resolveUnderlying
   const underlying = new Promise(r => { resolveUnderlying = r })

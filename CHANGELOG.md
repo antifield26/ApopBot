@@ -36,8 +36,7 @@
 - CI：upload-artifact v5、check:compat 去重、deploy-mode 双端矩阵 + PSScriptAnalyzer 静态门禁
 - 工程杂项：overrides 补 pin prismarine-world；README audit 表述收紧；deploy.md 重复行；upstream-lib 过期注释；docs/l2.md 原语表补全 8 项 + 36 原语数量断言
 - P2 观测：/metrics 各角色 token 计量（input/output/budgetTrimmed）+ 上下文预算裁剪量；提示词 op 清单与注册表同源生成（{OP_LIST} 占位）
-- TS 第二阶段地基：tsconfig 纳入 .ts（Node ≥24 原生类型剥离）；转换前置 = @typescript-eslint/parser（沙箱离线无法安装 devDependency，路径已文档化）
-- acceptance.md 增补 v1.5.2 修复档 10 项真机验收条目（H1/H2/H3/H5/H6/H7/H8/H10/M15）
+- **TS 第二阶段完成**：src 72 个文件全量 .js → .ts（Node ≥24 原生类型剥离直接运行，无构建步骤；import 说明符显式 .ts 扩展名；入口 src/index.ts，deploy.ps1/package.json 同步）；eslint 经 @typescript-eslint/parser 解析 .ts；类型修正习语迁移（此 TS 版本 JSDoc 在 .ts 中部分失效——内联注解/as 断言替代）；typescript devDep 7.x → 5.9 稳定线（typescript-eslint 尚不支持 7.x）；acceptance.md 增补 v1.5.2 修复档 10 项真机验收条目（H1/H2/H3/H5/H6/H7/H8/H10/M15）
 - 上游合并条件项（PR #3902/#1487 合并后 migrate-upstream）保持待外部事件触发，docs/upstream-migration.md 流程不变
 
 ## [1.5.1] - 2026-08-13
