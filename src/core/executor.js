@@ -29,6 +29,10 @@ export function createActionExecutor (ctx, deps = {}) {
   // per-op 调用计数（/metrics 观测——LLM/脚本/命令三源合计；audit 有全量日志可作源）
   const actionCounts = new Map()
   const actionStats = () => Object.fromEntries(actionCounts)
+  // 动作互斥锁（实例级）：多角色（primary/planner/自定义）共享同一 executor，
+  // busy 门是各实例一把——非 readonly 动作执行期间其它角色的非 readonly 动作
+  // 拒绝（readonly 观察可并发）。任务脚本持有独立 executor 实例，不受影响
+  let actionBusy = false
 
   /**
    * 单动作执行管线（每动作独立 try/catch，永不外抛）。
@@ -68,6 +72,14 @@ export function createActionExecutor (ctx, deps = {}) {
         entry.result = v.error
         return finish()
       }
+      // 动作互斥（多角色）：非 readonly 动作执行期间拒绝其它非 readonly 动作
+      //（busy 门实例级无法跨角色——文档"仲裁器保证动作串行"此前不成立：
+      // 双 goto 互覆盖 goal / 重复 start_task）
+      if (p.exclusiveClass !== 'readonly' && actionBusy) {
+        entry.result = '另一个会话的动作正在执行，请稍后重试'
+        return finish()
+      }
+      if (p.exclusiveClass !== 'readonly') actionBusy = true
       // 冷却由原语 handler 内部自理（"只对实际执行生效"——业务性校验失败不占，
       // 见 primitives.js dig/place/attack）
       // 执行（withTimeout 兜底 + runtime.signal 贯通）
@@ -81,6 +93,7 @@ export function createActionExecutor (ctx, deps = {}) {
         result = await withTimeout(p.handler(ctx, args ?? {}, { signal, user, taskId }), p.timeoutMs, `${op} timeout`)
       } finally {
         ctx._caller = prevCaller
+        if (p.exclusiveClass !== 'readonly') actionBusy = false
       }
       entry.ok = true
       entry.result = result

@@ -315,6 +315,41 @@ function setSession (role, user, value) {
   putBounded(SESSIONS, `${role}:${user}`, Array.isArray(value) ? { history: value, calls: [] } : value)
 }
 
+/**
+ * 读取会话：内存优先，miss 时从磁盘回填（含 v1.3.0 旧裸 key 双路径迁移）。
+ * setGoal/getGoal/clearGoal 与 chat 共用——此前只有 chat 有磁盘回填，重启或
+ * LRU 驱逐后首次 setGoal 用空会话兜底整体覆盖落盘 → 多轮历史与滚动摘要
+ * 永久丢失（确定性数据丢失）
+ * @param {string} role 角色名（会话 key 前缀）
+ * @param {string} user 玩家名
+ * @param {{ get(user: string): object|null, set(user: string, value: object): void, reset(user: string): void, snapshot?(): { sessions?: Record<string, any> } }|null} [sessionStore]
+ * @returns {Record<string, any>|null} 会话对象（非副本——与 getSession 语义一致）
+ */
+function loadSession (role, user, sessionStore) {
+  let session = getSession(role, user)
+  if (session !== null) return session
+  // v1.3.0 旧裸 key 内存迁移：读到后移到角色前缀 key（无缝继承旧会话）
+  const legacyMem = SESSIONS.get(user)
+  if (legacyMem !== undefined) {
+    SESSIONS.delete(user)
+    setSession(role, user, legacyMem)
+    return getSession(role, user)
+  }
+  if (!sessionStore) return null
+  const key = `${role}:${user}`
+  let disk = sessionStore.get(key)
+  if (disk === null) {
+    // v1.3.0 旧裸 key 磁盘迁移（sessions.json 旧数据）
+    const legacyDisk = sessionStore.get(user)
+    if (legacyDisk) { sessionStore.set(key, legacyDisk); sessionStore.reset(user); disk = legacyDisk }
+  }
+  if (disk) {
+    putBounded(SESSIONS, key, disk)
+    return disk
+  }
+  return null
+}
+
 /** 有界 Map（LRU 上限驱逐最久未访问者；cooldowns 与 SESSIONS 共用）。 */
 function putBounded (map, key, value, max = MAX_SESSIONS) {
   if (map.has(key)) map.delete(key)
@@ -447,7 +482,7 @@ function buildPlanningTools (executor, whitelist = null) {
 export class AgentInterface {
   /**
    * @param {{ bot, cfg, logger, tasks, conn, plugins }} ctx
-   * @param {{ provider: { chat: Function, diagnose?: Function, contextWindow?: Function }, executor: { executeBatch: Function, executeOne: Function, primitives: Map<string, { permission: string, exclusiveClass: string, description?: string, schema?: object }> }, config: Record<string, any>, sessionStore?: { get(user: string): object|null, set(user: string, value: object): void, reset(user: string): void }|null, experience?: { add(entry: object): void, recent(n?: number): Array<object>, match(ops: Array<string>, n?: number): Array<object> }|null, skills?: { add(entry: object): void, recent(n?: number): Array<object>, match(taskTypes: Array<string>, n?: number): Array<object> }|null, systemPrompt?: string, toolWhitelist?: string[]|null }} deps
+   * @param {{ provider: { chat: Function, diagnose?: Function, contextWindow?: Function }, executor: { executeBatch: Function, executeOne: Function, primitives: Map<string, { permission: string, exclusiveClass: string, description?: string, schema?: object }> }, config: Record<string, any>, sessionStore?: { get(user: string): object|null, set(user: string, value: object): void, reset(user: string): void, snapshot?(): { sessions?: Record<string, any> } }|null, experience?: { add(entry: object): void, recent(n?: number): Array<object>, match(ops: Array<string>, n?: number): Array<object> }|null, skills?: { add(entry: object): void, recent(n?: number): Array<object>, match(taskTypes: Array<string>, n?: number): Array<object> }|null, systemPrompt?: string, toolWhitelist?: string[]|null }} deps
    */
   constructor (ctx, deps, role = 'primary') {
     this.ctx = ctx
@@ -531,30 +566,8 @@ export class AgentInterface {
     try {
       // 会话注入：历史（裁剪后）+ 本轮用户消息（history 是副本，工具循环内 push 不污染存储）。
       // session.calls 是跨对话工具操作记录（最近 20 条，注入用）
-      // 内存优先，miss 时从磁盘回填（重启后恢复多轮上下文）
-      let session = getSession(this.role, user)
-      if (session === null) {
-        // v1.3.0 旧裸 key 内存迁移：读到后移到角色前缀 key（无缝继承旧会话）
-        const legacy = SESSIONS.get(user)
-        if (legacy !== undefined) {
-          SESSIONS.delete(user)
-          setSession(this.role, user, legacy)
-          session = getSession(this.role, user)
-        }
-      }
-      if (session === null && this.sessionStore) {
-        const key = `${this.role}:${user}`
-        let disk = this.sessionStore.get(key)
-        if (disk === null) {
-          // v1.3.0 旧裸 key 磁盘迁移（sessions.json 旧数据）
-          const legacy = this.sessionStore.get(user)
-          if (legacy) { this.sessionStore.set(key, legacy); this.sessionStore.reset(user); disk = legacy }
-        }
-        if (disk) {
-          putBounded(SESSIONS, key, disk)
-          session = disk
-        }
-      }
+      // 内存优先，miss 时从磁盘回填（重启后恢复多轮上下文）——统一 loadSession
+      const session = loadSession(this.role, user, this.sessionStore)
       const history = (session?.history ?? []).slice(-MAX_HISTORY_MESSAGES)
       // 拷贝而非活引用——session 是 SESSIONS 中存储对象的引用（getSession 不克隆），
       // 循环内 toolCalls.push 会直接改写存储；若本轮回写 setSession 因中途抛错
@@ -581,8 +594,12 @@ export class AgentInterface {
       // 轮前（本轮 system 用上轮的失败集），Reflexion 语义的正确时序
       let prevRoundOps = []
       for (let step = 0; step < maxSteps && !finished; step++) {
-        // 固定工具集 = act + 观察/回复（从原语注册表生成；角色白名单过滤）
-        const tools = buildTools(this.executor, this.cfg.maxActionsPerCall ?? 8, this.toolWhitelist)
+        // 工具集：planner 角色（含手动 !agent role planner chat）恒走受限工具集
+        //（人设/文档承诺"只有观察与任务管理"——此前手动通道拿全量 act，提示词
+        // 约束可被模型忽略）；其余角色 act + 观察/回复（角色白名单过滤）
+        const tools = this.role === 'planner'
+          ? buildPlanningTools(this.executor, this.toolWhitelist)
+          : buildTools(this.executor, this.cfg.maxActionsPerCall ?? 8, this.toolWhitelist)
         // 环境自动注入——每次工具轮重新生成（bot 移动后数据新鲜）；开关可关；
         // 缺失字段 environmentLine 内部兜底（返回空串）
         // 最近工具操作注入（≤3 条 × ≤60 字符摘要）——跨对话规划连续性的核心：
@@ -709,10 +726,6 @@ export class AgentInterface {
         // maxSteps 耗尽：返回显式文案提示重试（占位"（无回复）"会写入会话污染下一轮）
         reply = `已达最大工具步数（${maxSteps}），请重试`
       }
-      // 反思——本轮运行时失败 → 一句话总结教训 → 写入经验库
-      //（fire-and-forget：8s 上限，失败静默；60s 全局冷却复用 summarize 通道；
-      // 显式 catch 声明——不依赖内部 try/catch 覆盖所有路径的不变量）
-      if (failures.length > 0) this._reflect(user, failures).catch(() => {})
       // 回写会话：本轮 user 轮 + 最终 assistant 轮（纯文本，裁剪到上限）+ 工具操作记录
       history.push({ role: 'user', content: userMsg })
       history.push({ role: 'assistant', content: reply.slice(0, REPLY_MAX_CHARS) })
@@ -751,6 +764,12 @@ export class AgentInterface {
           })
           .catch(() => {})
       }
+      // 反思——本轮运行时失败 → 一句话总结教训 → 写入经验库
+      //（fire-and-forget：8s 上限，失败静默；60s 全局冷却复用 summarize 通道；
+      // 显式 catch 声明——不依赖内部 try/catch 覆盖所有路径的不变量）。
+      // 调用序在滚动摘要之后：summarize 冷却先到先得，反思先消费会把滚动摘要
+      //（长时记忆，高价值）与死亡/任务播报饿死在失败对话（恰是高频场景）
+      if (failures.length > 0) this._reflect(user, failures).catch(() => {})
       return { reply: reply.slice(0, REPLY_MAX_CHARS) }
     } catch (err) {
       if (err.name === 'AbortError') return { reply: '请求已中止' }
@@ -859,13 +878,13 @@ export class AgentInterface {
 
   /** 读取指定玩家的长期目标（!agent goal 查看）。 */
   getGoal (user) {
-    const session = getSession(this.role, user)
+    const session = loadSession(this.role, user, this.sessionStore)
     return session?.goal ?? null
   }
 
   /** 设置长期目标（!agent goal set / set_goal 原语；同 text 重复 set 不更新）。 */
   setGoal (user, text, plan = []) {
-    const session = getSession(this.role, user) ?? { history: [], calls: [], goal: null, summary: null }
+    const session = loadSession(this.role, user, this.sessionStore) ?? { history: [], calls: [], goal: null, summary: null }
     const goal = {
       text: String(text).slice(0, 200),
       plan: (plan ?? []).slice(0, 5).map(String),
@@ -881,7 +900,7 @@ export class AgentInterface {
 
   /** 清除长期目标（!agent goal clear / set_goal 原语传空）。 */
   clearGoal (user) {
-    const session = getSession(this.role, user)
+    const session = loadSession(this.role, user, this.sessionStore)
     if (!session?.goal) return false
     session.goal = null
     setSession(this.role, user, session)
@@ -920,9 +939,9 @@ export class AgentInterface {
   pickGoalSession () {
     let best = null
     let bestTs = -1
-    for (const [k, v] of SESSIONS) {
+    const consider = (k, v) => {
       const g = v?.goal
-      if (!g?.text) continue
+      if (!g?.text) return
       if ((g.updatedAt ?? 0) > bestTs) {
         // 剥离角色前缀返回裸 user——goal 只存于 primary 会话（!agent goal set 走主角色），
         // planOnce 以 setBy 身份执行 start_task（isOp 按裸名判定，前缀会误拒）
@@ -930,6 +949,13 @@ export class AgentInterface {
         best = { user, goal: g }
         bestTs = g.updatedAt ?? 0
       }
+    }
+    for (const [k, v] of SESSIONS) consider(k, v)
+    // 磁盘回填：重启后 SESSIONS 为空（首条 chat 前不回灌）——planOnce 在任务完成
+    // 时触发，早于任何对话，目标在磁盘却查不到 → 自主推进静默失效。直接扫快照
+    //（≤32 条）找回有 goal 的会话，不把它回灌内存（避免无谓膨胀）
+    if (!best && this.sessionStore?.snapshot) {
+      for (const [k, v] of Object.entries(this.sessionStore.snapshot().sessions ?? {})) consider(k, v)
     }
     return best
   }

@@ -13,6 +13,7 @@
 // 战斗（op / combat / 冷却 500ms，exclusive 拒绝）
 import { createMovement, REASON_TEXT } from '../movement.js'
 import { attackEntity } from '../entity-actions.js'
+import { isArea } from '../../tasks/util.js'
 import { ACTION_COOLDOWN_MS, checkActionCooldown } from './common.js'
 
 /**
@@ -27,7 +28,11 @@ export function registerCombat (register, _ctx) {
       required: ['filter'],
       properties: {
         filter: { type: 'string', description: '实体名子串或类型（hostile/zombie...）' },
-        maxHits: { type: 'integer', min: 1, max: 20, description: '单次最多连击数（默认 5）' }
+        maxHits: { type: 'integer', min: 1, max: 20, description: '单次最多连击数（默认 5）' },
+        // 目标选择口径（与任务脚本 observe_entities 的 aggroRange/area 一致）——
+        // 此前全图重扫取最近，区域内巡逻任务会被区域外怪拉走最远 64 格作战
+        maxDistance: { type: 'number', min: 1, max: 256, description: '目标搜索与追击半径（默认 64）' },
+        area: { type: 'object', description: '区域 {x1,y1,z1,x2,y2,z2}（只攻击区域内目标）' }
       }
     },
     permission: 'op',
@@ -35,16 +40,24 @@ export function registerCombat (register, _ctx) {
     guardText: '攻击',
     timeoutMs: 60000,
     cooldownMs: ACTION_COOLDOWN_MS,
-    handler: async (c, { filter, maxHits }, runtime) => {
+    handler: async (c, { filter, maxHits, maxDistance, area }, runtime) => {
       // 冷却在实体扫描前（与原技能层一致：无目标也占冷却——防止"打不到"刷调用）
       checkActionCooldown('attack')
       if (!c.bot?.entities || !c.bot.entity?.position) throw new Error('实体表/位置不可用')
       const me = c.bot.entity
       const f = filter?.toLowerCase()
+      // 空串 filter 匹配一切实体（含玩家/动物）——必填形同虚设，显式拒绝
+      if (!f) throw new Error('attack 需要非空 filter（空串会匹配一切实体）')
+      if (area !== undefined && !isArea(area)) {
+        throw new Error('attack 的 area 不完整（需要 x1..z2 六坐标）——与其他原语口径一致显式报错')
+      }
+      const searchRadius = maxDistance ?? 64
       const matches = []
       for (const e of c.bot.entities instanceof Map ? c.bot.entities.values() : Object.values(c.bot.entities)) {
         if (!e || e === me || !e.position) continue
         if (f && !String(e.name ?? '').toLowerCase().includes(f) && e.type !== f) continue
+        if (e.position.distanceTo(me.position) > searchRadius) continue
+        if (area && !(e.position.x >= area.x1 && e.position.x <= area.x2 && e.position.y >= area.y1 && e.position.y <= area.y2 && e.position.z >= area.z1 && e.position.z <= area.z2)) continue
         matches.push(e)
       }
       if (matches.length === 0) return { hits: 0, targetGone: false, targetName: null, reason: `附近没有匹配 ${filter} 的实体（observe_entities 查看）` }
@@ -67,7 +80,9 @@ export function registerCombat (register, _ctx) {
           const r = await move.approachEntity(target, {
             range: 2,
             timeoutMs: 15000,
-            isInterrupted: () => !target?.position || me.position.distanceTo(target.position) > 64
+            // 追击上限 = 目标选择半径（LLM 缺省 64 与旧硬编码一致；任务脚本传
+            // aggroRange——目标逃出扫描半径即放弃，不再被拉出区域）
+            isInterrupted: () => !target?.position || me.position.distanceTo(target.position) > searchRadius
           })
           if (r.ok) continue
           if (r.reason === 'interrupted') {

@@ -13,7 +13,7 @@
 // 交互（op / interact，exclusive 拒绝）
 import { withTimeout } from '../../util/promise-timeout.js'
 import { nearbyEntities } from '../entities.js'
-import { createMovement } from '../movement.js'
+import { createMovement, REASON_TEXT } from '../movement.js'
 import { useEntityOn } from '../entity-actions.js'
 import { SEED_BY_CROP } from '../crops.js'
 import { interruptibleSleep } from './common.js'
@@ -90,6 +90,22 @@ export function registerInteract (register, _ctx) {
         // 喂食前目标存在检查（写无效 entityId 的 use_entity 包按协议违规处理）
         const alive = c.bot.entities instanceof Map ? c.bot.entities.has(target.id) : !!c.bot.entities?.[target.id]
         if (!alive) return { fed, targetGone: true, targetName: target.name }
+        // 距离门 + 接近：服务端 reach 校验对 ~>4 格交互静默拒绝——不接近则 fed++
+        // 假成功（繁殖计数虚报、冷却表照记、实际零繁殖）；旧版 breed 的
+        // approachEntity 在脚本化后回归，此处补回统一语义（坐标直算距离——
+        // 不依赖 Vec3 方法，plain object 亦可用）
+        const dp = target.position
+        const dist = Math.hypot(dp.x - c.bot.entity.position.x, dp.y - c.bot.entity.position.y, dp.z - c.bot.entity.position.z)
+        if (dist > 4) {
+          const move = await createMovement(c.bot, c.logger).approachEntity(target, {
+            range: 3,
+            timeoutMs: 15000,
+            isInterrupted: () => runtime?.signal?.aborted === true || !target?.position
+          })
+          if (!move.ok) {
+            return { fed, targetGone: false, targetName: target.name, reason: `无法接近: ${REASON_TEXT[move.reason] ?? move.err?.message}` }
+          }
+        }
         useEntityOn(c.bot, target) // 走 entity-actions 原始包
         // 冷却表只在启用间隔时记录（默认 0 的 LLM act 调用不写表——无冷却语义
         // 且避免跨调用污染）

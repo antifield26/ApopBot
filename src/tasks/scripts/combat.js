@@ -80,8 +80,9 @@ export default {
             { ctrl: 'wait', ms: { expr: '${checkIntervalSeconds} * 1000' } }
           ] }
         ], else: [
-          // 攻击最近目标（maxHits 1：每轮一击 + 原语内 600ms 冷却）
-          { op: 'attack', args: { filter: 'hostile', maxHits: 1 }, as: 'atk' },
+          // 攻击最近目标（maxHits 1：每轮一击 + 原语内 600ms 冷却）；maxDistance/
+          // area 与扫描口径一致——原语不再全图重扫（防被区域外怪拉走 64 格）
+          { op: 'attack', args: { filter: 'hostile', maxHits: 1, maxDistance: '${aggroRange}', area: '${area}' }, as: 'atk' },
           // 击杀（targetGone）→ kills 计数 + maxTargets 上限
           { ctrl: 'if', cond: { type: 'result', ref: 'atk', field: 'targetGone', equals: true }, then: [
             { ctrl: 'count', name: 'kills', by: 1 },

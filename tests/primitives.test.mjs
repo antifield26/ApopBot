@@ -6,26 +6,31 @@ import { createPrimitiveRegistry } from '../src/core/primitives/index.js'
 
 // 动作原语层直测（不经 executor 管线）：registry 由工厂创建，handler 直接调用。
 
-/** interact_entity 用最小 fake bot：位置/实体表/背包/equip/写包通道。 */
+/** interact_entity 用最小 fake bot：位置/实体表/背包/equip/写包通道。
+ *  含最小寻路桩（H8 修复后 >4 格需 approachEntity——movement 的 runOnce 要求
+ *  pathfinder.goto + once/removeListener 事件通道）。 */
 function makeInteractBot (entities) {
-  return {
-    entity: { position: { x: 0, y: 64, z: 0 } },
+  const pos = { x: 0, y: 64, z: 0, distanceTo: (p) => Math.hypot(p.x - pos.x, p.y - pos.y, p.z - pos.z) }
+  const bot = {
+    entity: { position: pos },
     entities: new Map(entities.map(e => [e.id, e])),
     inventory: { items: () => [{ name: 'wheat_seeds', count: 10 }] },
     equip: async () => {},
-    _client: { write: () => {} }
+    pathfinder: { goto: async () => {}, stop: () => {}, setGoal: () => {} },
+    once: () => {},
+    removeListener: () => {},
+    _client: { write: () => {}, state: 'play' }
   }
+  return bot
 }
 
 function animal (id, name, x, z) {
-  return {
-    id,
-    name,
-    position: {
-      x, y: 64, z,
-      distanceTo: (p) => Math.abs(x - p.x) + Math.abs(z - p.z)
-    }
+  const pos = {
+    x, y: 64, z,
+    distanceTo: (p) => Math.abs(x - p.x) + Math.abs(z - p.z),
+    clone: () => ({ x: pos.x, y: pos.y, z: pos.z, distanceTo: pos.distanceTo, clone: pos.clone })
   }
+  return { id, name, position: pos }
 }
 
 function interactHandler () {
@@ -63,7 +68,7 @@ test('M3: interact_entity 默认不限冷却（LLM act 行为不变）', async (
 
 // ---- M9：多角色共享 executor 的 user 指代消解 ----
 
-test('M9: 多角色并发——follow_player 无 name 解析各自 runtime.user（不被交叉覆盖）', async () => {
+test('M9: 多角色共享 executor——follow_player 无 name 解析各自 runtime.user（不被残留 _caller 串扰）', async () => {
   const { createActionExecutor } = await import('../src/core/executor.js')
   const targets = []
   const bot = {
@@ -83,28 +88,52 @@ test('M9: 多角色并发——follow_player 无 name 解析各自 runtime.user�
     _caller: null
   }
   const reg = new Map(createPrimitiveRegistry(ctx))
-  // 角色 A 的第一动作挂起（模拟工具循环 await 窗口）
+  const executor = createActionExecutor(ctx, { primitives: reg, audit: null })
+  // 动作串行化（M4）后角色并发被拒——此处验证顺序场景：B 先执行使 ctx._caller
+  // 残留 'bob'，A 的 follow_player 无 name 必须读 per-action runtime.user='alice'
+  //（修复前读共享 ctx._caller → 解析到 bob）
+  const rB = await executor.executeBatch([{ op: 'follow_player', args: { name: 'me' } }], { user: 'bob', source: 'llm' })
+  assert.ok(rB.results[0].result.includes('开始跟随 bob'), `B 应解析到自己: ${JSON.stringify(rB.results[0])}`)
+  const rA = await executor.executeBatch([{ op: 'follow_player', args: {} }], { user: 'alice', source: 'llm' })
+  assert.ok(rA.results[0].result.includes('开始跟随 alice'), `A 应解析到自己（修复前串到 bob）: ${JSON.stringify(rA.results[0])}`)
+  assert.deepEqual(targets, [{ id: 2 }, { id: 1 }], '目标顺序：B 先、A 后，各随各的调用者')
+})
+
+test('M4: 动作互斥——非 readonly 动作执行期间其它角色动作被拒；readonly 观察放行', async () => {
+  const { createActionExecutor } = await import('../src/core/executor.js')
+  const ctx = {
+    bot: { entity: { position: { x: 0, y: 64, z: 0 } }, chat: () => {} },
+    cfg: { l2: { maxActionsPerCall: 8 }, ops: ['alice', 'bob'], log: { dir: null } },
+    logger: makeLogger(),
+    tasks: { getStatus: () => [] },
+    conn: { getStatus: () => ({ state: 'connected' }) },
+    plugins: null,
+    _caller: null
+  }
+  const reg = new Map(createPrimitiveRegistry(ctx))
   let releaseSlow
   const slowGate = new Promise(r => { releaseSlow = r })
   reg.set('slow_op', {
     schema: {},
-    permission: 'all',
-    exclusiveClass: 'flow',
-    guardText: '',
+    permission: 'op',
+    exclusiveClass: 'movement',
+    guardText: '慢动作',
     timeoutMs: 60000,
     handler: async () => { await slowGate; return 'slow done' }
   })
   const executor = createActionExecutor(ctx, { primitives: reg, audit: null })
-  // 角色 A（alice）：[slow_op, follow_player 无 name]——修复前 A 的"跟随我"在
-  // B 的 act 覆盖共享 ctx._caller 后解析到 bob
-  const pA = executor.executeBatch([{ op: 'slow_op' }, { op: 'follow_player', args: {} }], { user: 'alice', source: 'llm' })
-  await new Promise(r => setImmediate(r)) // A 的 slow_op 挂起中
-  const rB = await executor.executeBatch([{ op: 'follow_player', args: { name: 'me' } }], { user: 'bob', source: 'llm' })
-  assert.ok(rB.results[0].result.includes('开始跟随 bob'), `B 应解析到自己: ${JSON.stringify(rB.results[0])}`)
+  const pA = executor.executeBatch([{ op: 'slow_op', args: {} }], { user: 'alice', source: 'llm' })
+  await new Promise(r => setImmediate(r)) // A 的 slow_op 挂起（占锁）
+  // B 的非 readonly 动作被拒（此前实例级 busy 无法跨角色——双 goto 互覆盖）
+  const rB = await executor.executeBatch([{ op: 'goto', args: { x: 10, y: 64, z: 10 } }], { user: 'bob', source: 'llm' })
+  assert.equal(rB.results[0].ok, false, '非 readonly 动作在锁内应被拒')
+  assert.ok(rB.results[0].result.includes('另一个会话'), JSON.stringify(rB.results[0]))
+  // readonly 观察不占锁也不被锁拦（观察并发是无害的）
+  const rObs = await executor.executeBatch([{ op: 'observe_status', args: {} }], { user: 'bob', source: 'llm' })
+  assert.equal(rObs.results[0].ok, true, 'readonly 观察应放行')
   releaseSlow()
   const rA = await pA
-  assert.ok(rA.results[1].result.includes('开始跟随 alice'), `A 应解析到自己（修复前串到 bob）: ${JSON.stringify(rA.results[1])}`)
-  assert.deepEqual(targets, [{ id: 2 }, { id: 1 }], '目标顺序：B 先、A 后，各随各的调用者')
+  assert.equal(rA.results[0].ok, true, 'A 的慢动作应正常完成')
 })
 
 // ---- M4：sleep 原语 abort 监听器配对移除 ----
