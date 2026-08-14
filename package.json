@@ -43,7 +43,7 @@
     "globals": "^17.9.0",
     "minecraft-protocol": "^1.66.2",
     "pino-pretty": "^11.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "~6.0.3"
   },
   "overrides": {
     "minecraft-data": "^3.113.0",

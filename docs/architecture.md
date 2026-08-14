@@ -132,7 +132,7 @@ minecraft-bot (Node.js ≥24, ESM；src 全量 .ts——Node 原生类型剥离�
 ## 质量工具
 
 - **ESLint 10 flat config**（`eslint.config.js`）：eslint:recommended + 项目风格（无分号/单引号/2 空格），覆盖 src/tests/scripts；src 的 .ts 文件经 @typescript-eslint/parser 同一套规则解析；CI 门禁 `npm run lint`
-- **全量 TS（第二阶段完成）**：src 72 个文件全部 .ts，Node ≥24 原生类型剥离直接运行（无构建步骤）；`npm run typecheck`（tsc -p，noEmit + allowImportingTsExtensions）门禁。迁移注意点（此 TS 版本行为）：JSDoc `@type` 表达式断言与带默认初始化器的 `@param` 在 .ts 中失效——类型修正一律用内联注解/`as` 断言；类属性需显式声明（不再从构造函数赋值推断）。typescript devDep 为 5.x 稳定线（typescript-eslint 尚不支持 7.x）
+- **全量 TS（第二阶段完成）**：src 72 个文件全部 .ts，Node ≥24 原生类型剥离直接运行（无构建步骤）；`npm run typecheck`（tsc -p，noEmit + allowImportingTsExtensions）门禁。迁移注意点（此 TS 版本行为）：JSDoc `@type` 表达式断言与带默认初始化器的 `@param` 在 .ts 中失效——类型修正一律用内联注解/`as` 断言；类属性需显式声明（不再从构造函数赋值推断）。typescript devDep 为 6.0 线（typescript-eslint 支持的 TS 6 API；TS 7 支持仍在 typescript-eslint 跟踪中，合并后再升级）
 - **覆盖率**：`npm run test:coverage`（node --test lcov → coverage/lcov.info，CI artifact）；基线多数模块 85-100% 行覆盖，**暂不设阈值**（mock 为主，阈值意义有限）——引入真机集成测试后再设
 - 类型门禁已拦截的真实缺陷示例（证明工具价值）：observe_blocks regex 路径 TDZ 使用 dim（运行时必崩）、collect_blocks const chests 重新赋值（NoChests 分支必抛）——同类错误在开发期暴露
 
