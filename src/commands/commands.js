@@ -3,7 +3,7 @@ import { CommandRegistry } from './registry.js'
 import { isOp } from './permissions.js'
 import { sendChat } from '../core/chat.js'
 import { findSurfaceBlocks, createMovement, REASON_TEXT } from '../core/movement.js'
-import { validateTaskOptions } from '../core/task-schemas.js'
+import { validateTaskOptions, validateCron } from '../core/task-schemas.js'
 import { hasExclusiveActive, getExclusiveOwner } from '../core/arbiter.js'
 
 // !find 防重入：行走期间重复 find 拒绝（单 bot 架构，模块级标志）。
@@ -95,8 +95,21 @@ export function registerBuiltinCommands (registry, _ctx) {
           await sendChat(c.bot, `§c参数校验失败: ${v.error}`, c.cfg.chat?.maxLength)
           return
         }
+        // options.schedule 提升到条目顶层：调度器只消费 entry.schedule——此前
+        // !task new 带 options.schedule 会静默变成常驻任务（与 start_task 原语
+        // 的消费口径不一致）；cron 非法显式报错（与 config 校验同款语义）
+        let schedule
+        if (options.schedule !== undefined) {
+          const vc = validateCron(options.schedule)
+          if (!vc.ok) {
+            await sendChat(c.bot, `§c参数校验失败: ${vc.error}`, c.cfg.chat?.maxLength)
+            return
+          }
+          schedule = options.schedule
+          delete options.schedule
+        }
         try {
-          c.tasks.addTask({ id: newId, type, options, notifyChat: true })
+          c.tasks.addTask({ id: newId, type, options, notifyChat: true, ...(schedule ? { schedule } : {}) })
           await sendChat(c.bot, `§a已创建任务 ${newId} (${type})`, c.cfg.chat?.maxLength)
           // 等一个事件循环轮：init 抛错在 fire-and-forget 微任务内置 failed——立即查会误判
           //（skills.js run_task 同款模式）

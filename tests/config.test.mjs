@@ -90,11 +90,11 @@ test('A2/F3: config 任务 options 过统一 schema（此前静默放行 → ini
   const v1 = validateConfig(bad1)
   assert.equal(v1.ok, false)
   assert.ok(v1.errors.some(e => e.includes('intervalMinutes')), v1.errors.join('; '))
-  // combat attackRange:-1（病态行为：dist > -1 恒真永不攻击）——schema min 0.5 拦截
-  const bad2 = { ...base(), tasks: [{ id: 'c', type: 'combat', options: { attackRange: -1 } }] }
+  // combat aggroRange:0（病态行为：半径 0 永不发现目标）——schema min 1 拦截
+  const bad2 = { ...base(), tasks: [{ id: 'c', type: 'combat', options: { aggroRange: 0 } }] }
   const v2 = validateConfig(bad2)
   assert.equal(v2.ok, false)
-  assert.ok(v2.errors.some(e => e.includes('attackRange')), v2.errors.join('; '))
+  assert.ok(v2.errors.some(e => e.includes('aggroRange')), v2.errors.join('; '))
   // mine 缺 blockTypes（required）
   const bad3 = { ...base(), tasks: [{ id: 'm', type: 'mine', options: {} }] }
   assert.equal(validateConfig(bad3).ok, false)

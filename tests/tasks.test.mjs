@@ -435,14 +435,15 @@ test('E 修复：scheduled exclusive 排队启动后仍到时停止（时长上�
 test('F 修复：脚本任务 init 失败 → 通知失败而非上抛（croner 漂浮 rejection → fatal exit）', async () => {
   // v1.0.0 C9 语义迁移：脚本化后运行时错误软失败（任务持续巡逻）——run 抛错
   // 路径只剩 init 失败/maxActions 超限；F 的核心守卫（异常不经过 runScheduled
-  // 上抛 → croner 无漂浮 rejection）由 BaseTask.start catch + 此处验证
+  // 上抛 → croner 无漂浮 rejection）由 BaseTask.start catch + 此处验证。
+  // init 失败触发用不完整 area（combat init 校验）——此前用 attackRange 陷阱，
+  // 该死选项已随 M10 移除
   const bot = makeCombatBot()
   const manager = new TaskManager({}, makeLogger(), { bot })
   const notices = []
   manager._notify = (rec, state) => { notices.push(state) }
   await manager.load({
-    // aggroRange < attackRange 陷阱 → combat 脚本 init 校验抛错
-    tasks: [{ id: 's1', type: 'combat', schedule: '0 3 * * *', options: { aggroRange: 2, attackRange: 5 }, notifyChat: false }]
+    tasks: [{ id: 's1', type: 'combat', schedule: '0 3 * * *', options: { area: { x1: 1 } }, notifyChat: false }]
   })
   let rejected = false
   try {
@@ -453,6 +454,7 @@ test('F 修复：脚本任务 init 失败 → 通知失败而非上抛（croner 
   assert.equal(rejected, false, 'runScheduled 不得上抛')
   const s1 = manager.getStatus().find(t => t.id === 's1')
   assert.equal(s1.state, 'failed')
+  // M11：scheduled 任务 init 失败必须有通知（此前只有日志、每次触发重复静默失败）
   assert.ok(notices.some(n => n.includes('failed')), `应通知失败: ${notices}`)
   await manager.stopAll()
 })

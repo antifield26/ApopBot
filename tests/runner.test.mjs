@@ -604,14 +604,14 @@ test('combat 脚本: 武器自动装备（init 钩子解析背包第一把剑）
   assert.ok(equipped.includes('iron_sword'), `应自动装备剑: ${JSON.stringify(equipped)}`)
 })
 
-test('combat 脚本: init 校验——aggroRange < attackRange 报错（配置陷阱）', async () => {
+test('combat 脚本: init 校验——area 不完整报错（攻击距离由 attack 原语统一 3.5 格）', async () => {
   const { bot } = makeCombatBot()
   const ctx = makeCtx(bot)
   const { default: combatScript } = await import('../src/tasks/scripts/combat.js')
-  const task = makeTask(combatScript, { aggroRange: 2, attackRange: 5 }, ctx)
+  const task = makeTask(combatScript, { area: { x1: 1 } }, ctx)
   await task.start()
   assert.equal(task.state, 'failed')
-  assert.ok(task.lastError.includes('aggroRange'), task.lastError)
+  assert.ok(task.lastError.includes('area'), task.lastError)
 })
 
 test('breed 脚本: 无动物 + stopWhenNoAnimals → 完成', async () => {

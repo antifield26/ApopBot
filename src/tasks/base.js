@@ -248,8 +248,10 @@ export class BaseTask {
       await runPromise
       // 自然完成判定限本代（gen 匹配）：stop 超时强制结束 + 同 id 重启后旧代协程
       // 醒来时 _stopRequested 已被新代 _reset 清空、state 是新代的 running，不加
-      // 代际检查会把新代任务误置 completed
-      if (gen === this._runGen && !this._stopRequested && this._state === 'running') this._setState('completed') // 自然完成
+      // 代际检查会把新代任务误置 completed。paused 也算完成：run 自然退出后落进
+      // 完成窗口的 pause()（用户命令与 run 尾部竞态）会使 state=paused 而 run 已
+      // 退出——若只认 running，任务卡 paused 假活（resume 后无 run 协程）
+      if (gen === this._runGen && !this._stopRequested && ['running', 'paused'].includes(this._state)) this._setState('completed') // 自然完成
     } catch (err) {
       if (gen !== this._runGen) return null // 旧代际的失败不影响新 run 的状态
       this.lastError = err.message

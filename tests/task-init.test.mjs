@@ -105,10 +105,9 @@ test('chop 默认正则（/_log$|_wood$/）与显式 logTypes 校验', async () 
   assert.ok(bad.lastError.includes('未知方块类型'), bad.lastError)
 })
 
-test('combat init: area 校验与必填 pathfinder + aggroRange 陷阱', async () => {
+test('combat init: area 校验与必填 pathfinder', async () => {
   await expectFail(combatScript, { area: { x1: 1 } }, makeCtx(), 'area')
   await expectFail(combatScript, {}, makeCtx({ pathfinder: undefined }), 'pathfinder')
-  await expectFail(combatScript, { aggroRange: 2, attackRange: 5 }, makeCtx(), 'aggroRange')
 })
 
 test('breed init: area 校验、默认动物白名单、exclusive', async () => {

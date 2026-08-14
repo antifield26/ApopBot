@@ -60,7 +60,7 @@ export function installGuardResponse (ctx, bot, log) {
       // enabled:false 禁用 addTask 自动启动——否则自动启动（fire-and-forget）与
       // 显式 startTask 竞态：任务 init 但 _runPromise 未赋值时 startTask 返回 null
       // → guard 跳过 await → 立即 removeTask（combat 未执行就被移除，实测）
-      ctx.tasks?.addTask({ id, type: 'combat', options: { aggroRange: radius, attackRange: 3.5, stopWhenNoTargets: true, maxTargets: 0 }, notifyChat: false, enabled: false })
+      ctx.tasks?.addTask({ id, type: 'combat', options: { aggroRange: radius, stopWhenNoTargets: true, maxTargets: 0 }, notifyChat: false, enabled: false })
       // ignorePaused：用户手动暂停的 exclusive 任务不挡 combat（preemptForCombat
       // 已停掉/保持暂停的 running exclusive——战斗后由 restartStopped 恢复）
       const runPromise = ctx.tasks?.startTask?.(id, undefined, undefined, { ignorePaused: true })

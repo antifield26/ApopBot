@@ -129,8 +129,6 @@ export const TASK_OPTION_SCHEMAS = {
       aggroRange: { type: 'number', min: 1 },
       minHealth: { type: 'number', min: 1 },
       eatWhenLowHealth: { type: 'boolean' },
-      attackRange: { type: 'number', min: 0.5 },
-      attackCooldownMs: { type: 'integer', min: 0 },
       checkIntervalSeconds: { type: 'number', min: 0.1 },
       weapon: { type: 'string' }
     }

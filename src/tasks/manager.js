@@ -123,9 +123,12 @@ export class TaskManager {
     const newIds = new Set((cfg.tasks ?? []).map(e => e.id))
     const newMap = new Map((cfg.tasks ?? []).map(e => [e.id, e]))
 
-    // 移除的
+    // 移除的（ad-hoc 任务除外——!task new/LLM start_task 的任务不在配置中，
+    // reload 的 diff 语义只作用于 config 条目；移除会与"ad-hoc 跨重启保留"
+    // 承诺矛盾，且 _syncStateTasks 会把清空后的集合覆写进快照）
     for (const id of oldIds) {
       if (!newIds.has(id)) {
+        if (this.tasks.get(id)?.entry?.adHoc) continue
         await this.stopTask(id)
         this.tasks.get(id)?.cron?.stop() // cron 定时器必须随任务移除而停止
         this.tasks.delete(id)
@@ -175,6 +178,11 @@ export class TaskManager {
   async startTask (id, rec, maxMinutes, opts = {}) {
     rec = rec ?? this.tasks.get(id)
     if (!rec) return null
+    // 时长上限统一入口：显式参数（runScheduled 传入）优先，否则回退条目级
+    // durationMinutes / options.durationMinutes——此前仅 runScheduled 挂载，
+    // 常驻/链接力/热重载任务配了时长上限被静默忽略（无限运行），!task list
+    // 却按条目配置显示"余 Nm"误导
+    maxMinutes = maxMinutes ?? rec.entry.durationMinutes ?? rec.entry.options?.durationMinutes
     // 时长上限入口持久化：直启/排队/guard 抢占重启统一记录到 rec——
     // 此前只记在排队路径的 pendingMaxMinutes 且启动即消费置空，guard 抢占
     // 重启后任务无上限可无限运行
@@ -266,7 +274,10 @@ export class TaskManager {
     for (const [id, rec] of this.tasks) {
       if (rec.task.state !== 'init' && rec.task.state !== 'running') continue
       if (rec.task.exclusive) {
-        await this.stopTask(id) // 含 _releaseArbiter + 排队过滤 + drain
+        // drain:false——stopTask 默认的 _drainExclusive 会把排队中的 exclusive
+        // 立即补启动，先于下方的排队拦截执行（队列已被排空，拦不到）→ guard
+        // 战斗启动时 busy 判定命中该任务 → startTask 返回 null → 战斗永不执行
+        await this.stopTask(id, { drain: false }) // 含 _releaseArbiter + 排队过滤
         stopped.push(id)
       } else {
         paused.push(id)
@@ -275,7 +286,7 @@ export class TaskManager {
     }
     // 排队中的 exclusive（created）经 stopTask 的 drain 会补启动——同拦下，战斗后统一重启
     for (const rec of [...this._pendingExclusive]) {
-      await this.stopTask(rec.entry.id)
+      await this.stopTask(rec.entry.id, { drain: false })
       stopped.push(rec.entry.id)
     }
     return { paused, stopped }
@@ -400,7 +411,15 @@ export class TaskManager {
     // maxMinutes 透传 startTask 入口持久化（排队路径 drain 启动时挂载）；
     // attachTimeout:false——直启路径本函数自带 withTimeout，不重复挂载
     const p = this.startTask(id, undefined, maxMinutes, { attachTimeout: false })
-    if (!p) return // 排队：到期处理由 startTask 的 maxMinutes 挂载路径完成
+    if (!p) {
+      // 排队（exclusive 冲突，startTask 内部已入队）还是 init 失败？failed 必须
+      // 通知——cron 任务在 _notifyCompletion 跳过明文通知，否则只有日志、
+      // 每次触发重复静默失败且运维无感知
+      if (rec.task.state === 'failed') {
+        this._notify(rec, `failed: ${rec.task.lastError ?? '未知原因'}`)
+      }
+      return // 排队：到期处理由 startTask 的 maxMinutes 挂载路径完成
+    }
 
     if (maxMinutes) {
       try {
@@ -491,9 +510,12 @@ export class TaskManager {
 
   /**
    * 停止任务。注：!task stop 只停当前运行，cron 调度保持（下次触发重新启动）。
+   * @param {string} id
+   * @param {{ drain?: boolean }} [opts] drain:false = 跳过排队补启动（guard 抢占
+   *   路径用——先全停再统一 drain，防"停 A 立即补启动 B"绕过拦截）
    * @returns {Promise<boolean>} 任务是否存在（命令层反馈用）
    */
-  async stopTask (id) {
+  async stopTask (id, opts = {}) {
     const rec = this.tasks.get(id)
     if (!rec) return false
     this.log.info({ task: id }, 'stopping task')
@@ -504,7 +526,7 @@ export class TaskManager {
     this._pendingExclusive = this._pendingExclusive.filter(r => r !== rec)
     // stop 超时强制结束时 run 永不 settle → startTask 的 drain 点永不触发——
     // 排队任务必须在此补 drain（否则永久卡在队列 created）
-    this._drainExclusive()
+    if (opts.drain !== false) this._drainExclusive()
     return true
   }
 

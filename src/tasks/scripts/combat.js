@@ -2,7 +2,7 @@
 import { isArea } from '../util.js'
 // 战斗任务脚本：区域内对敌对实体巡逻战斗。
 // 语义说明：
-// - init 校验（area 完整/aggroRange<attackRange 陷阱/pathfinder 插件）
+// - init 校验（area 完整/pathfinder 插件）
 // - 武器：显式 weapon 或背包第一把剑（init 钩子解析进 options.weaponName；
 //   null = 空手跳过装备）
 // - 低血优先：health < minHealth（默认 8）→ eat（eatWhenLowHealth 默认 true，
@@ -14,7 +14,8 @@ import { isArea } from '../util.js'
 // - 击杀（targetGone）→ kills 计数；maxTargets 上限（0 = 不限）
 // - 攻击失败 → checkInterval 重扫；每轮尾部 500ms combat-scan 等待
 // - entityGone 由 attack 原语的 targetGone 返回判定；低血处理为等待而非远离敌人
-//   （不追出区域的语义由 observe_entities 的 aggroRange 过滤 + 每轮重扫保证）
+//   （不追出区域的语义由 observe_entities 的 aggroRange 过滤 + attack 原语的
+//   maxDistance 口径一致保证）
 
 export default {
   id: 'combat',
@@ -22,8 +23,8 @@ export default {
   naturalCompletion: true,
   maxActions: 100000,
   defaultOptions: {
-    maxTargets: 0, aggroRange: 12, minHealth: 8, attackRange: 3.5,
-    checkIntervalSeconds: 3, eatWhenLowHealth: true, attackCooldownMs: 600
+    maxTargets: 0, aggroRange: 12, minHealth: 8,
+    checkIntervalSeconds: 3, eatWhenLowHealth: true
   },
   /** init 校验 + 武器解析。 */
   async init (task) {
@@ -33,12 +34,6 @@ export default {
       throw new Error('combat 任务 options.area 不完整（可省略或给全 x1..z2）')
     }
     if (!task.bot.pathfinder) throw new Error('combat 任务需要 pathfinder 插件')
-    // 配置陷阱：aggroRange < attackRange 时中间距离的怪既找不到也不打
-    const aggroRange = o.aggroRange ?? 12
-    const attackRange = o.attackRange ?? 3.5
-    if (o.aggroRange !== undefined && o.attackRange !== undefined && aggroRange < attackRange) {
-      throw new Error('combat 任务 options.aggroRange 不能小于 attackRange（中间距离的怪将永不攻击）')
-    }
     // 武器解析：显式 weapon 或背包第一把剑（模板 ${weaponName} 读取；null = 空手）
     if (typeof o.weapon === 'string') {
       task.options.weaponName = o.weapon

@@ -6,7 +6,7 @@ import { validateTaskOptions, TASK_OPTION_SCHEMAS } from '../src/core/task-schem
 test('schema: 合法 options 放行', () => {
   assert.deepEqual(validateTaskOptions('afk', { intervalMinutes: 5 }), { ok: true })
   assert.deepEqual(validateTaskOptions('mine', { blockTypes: ['iron_ore'], radius: 32 }), { ok: true })
-  assert.deepEqual(validateTaskOptions('combat', { aggroRange: 12, attackRange: 3.5 }), { ok: true })
+  assert.deepEqual(validateTaskOptions('combat', { aggroRange: 12 }), { ok: true })
   assert.deepEqual(validateTaskOptions('fish', { durationMinutes: 30 }), { ok: true })
 })
 
