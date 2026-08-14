@@ -37,6 +37,7 @@
 - 工程杂项：overrides 补 pin prismarine-world；README audit 表述收紧；deploy.md 重复行；upstream-lib 过期注释；docs/l2.md 原语表补全 8 项 + 36 原语数量断言
 - P2 观测：/metrics 各角色 token 计量（input/output/budgetTrimmed）+ 上下文预算裁剪量；提示词 op 清单与注册表同源生成（{OP_LIST} 占位）
 - **TS 第二阶段完成**：src 72 个文件全量 .js → .ts（Node ≥24 原生类型剥离直接运行，无构建步骤；import 说明符显式 .ts 扩展名；入口 src/index.ts，deploy.ps1/package.json 同步）；eslint 经 @typescript-eslint/parser 解析 .ts；类型修正习语迁移（此 TS 版本 JSDoc 在 .ts 中部分失效——内联注解/as 断言替代）；typescript devDep 7.x → 6.0 线（typescript-eslint 支持的 TS 6 API；TS 7 支持待 upstream，见 architecture.md）；acceptance.md 增补 v1.5.2 修复档 10 项真机验收条目（H1/H2/H3/H5/H6/H7/H8/H10/M15）
+- **文档治理**：移除 docs/roadmap.md——历史变更与决策统一由 CHANGELOG 记录；「明确不做」决策表迁移至 docs/architecture.md；README/architecture 的 roadmap 引用同步清理
 - 上游合并条件项（PR #3902/#1487 合并后 migrate-upstream）保持待外部事件触发，docs/upstream-migration.md 流程不变
 
 ## [1.5.1] - 2026-08-13
@@ -72,7 +73,7 @@ v1.5.0 之后的维护档：受击响应（guard）新功能 + 时间链路 + �
 
 ### 文档
 
-- 对齐 10 处文档与代码不一致：maxSteps 8→15（README/deploy）、补丁清单 4→5 + prismarine-world、use_entity 新格式描述、guard 功能补记（README/architecture/acceptance）、结构树更新（fl-* 拆分/reload/http-status/primitives/skills 等）、roadmap 缓做项勾销、注释规范补丁哨兵例外条款
+- 对齐 10 处文档与代码不一致：maxSteps 8→15（README/deploy）、补丁清单 4→5 + prismarine-world、use_entity 新格式描述、guard 功能补记（README/architecture/acceptance）、结构树更新（fl-* 拆分/reload/http-status/primitives/skills 等）、缓做项勾销、注释规范补丁哨兵例外条款
 
 ## [1.5.0] - 2026-08-12
 
@@ -139,12 +140,12 @@ LLM 自主性深化（ChatGPT 评估驱动的两档功能增量——Planner + W
 
 ## [1.1.0] - 2026-08-11
 
-- **第 13 轮：Bot 功能扩展 + LLM 能力深化（全档实施，见 docs/roadmap.md）**：
+- **第 13 轮：Bot 功能扩展 + LLM 能力深化（全档实施）**：
   - **LLM 深化（A1-A7）**：目标记忆（sessions v2：goal+plan 跨会话持久化，`!agent goal` 查看/设置/清除 + set_goal 原语）；对话滚动摘要（历史超限 LLM 压缩替代硬丢——"继续"不再断片）；检索式经验（按失败 op 匹配注入 ≤3 条 + 同教训去重合并计数）；退化状态自动注入（低血/饥饿/背包满/工具将坏，正常零成本）；observe_tasks 任务状态感知原语（注册即进工具集）；世界事件被动感知（被攻击/低血/背包满/稀有收集 → 下次对话注入）；命名地点（!home set/list/remove + set_place/remove_place 原语 + query_map place 分支，带维度）
   - **Bot 扩展（B1/B2/B4/B5+B6）**：仓库管理（`storage.chests` 配置 + store_items/fetch_items 原语 + autoDeposit 优先配置仓库）；工具耐久管理（挖掘前自动换最优工具——材料等级排序 + 将坏替换）+ combat 护甲自动装备（armorManager）；farm 作物扩展（甘蔗/南瓜/西瓜/甜浆果/可可——三种成熟判定：age/高度/果实块，四种种植模式）；sleep 原语（天黑找床睡觉，sleepAtNight 可选）+ harvest_animals（剪羊毛/捡掉落物）
   - **修复**：follow 前方岩浆防御；durationMinutes 条目级校验；observe_blocks 三选一互斥；未闭合引号文案修正；SIGHUP 与 shutdown 交错守卫；webhook fetch body 消费；auditCommand 耗时记录；reconnect 关键词精确化；entities null 距离过滤；start_task init 完成信号（轮询）；connection 手动断开期迟到错误守卫；移动卡住诊断日志（周围方块/手持/落地态——issue #1 排查数据）；LLM 文案进 webhook（死亡/任务终态）
-- **注释与文档规范化（第 12 轮）**：代码注释统一为"当前代码的意图/契约/边界"（现在时态）——清除全部轮次标记（`（第 N 轮）`/`（C\d+）`/`（U\d+）` 等 262 处）与历史修复叙事；历史变更统一由 CHANGELOG/roadmap 承载。规范约定写入 docs/architecture.md「注释与文档约定」节
-- **第 11 轮全面评估（5 HIGH + 20 MEDIUM + 重构 + 4 扩展主题，见 docs/roadmap.md）**：
+- **注释与文档规范化（第 12 轮）**：代码注释统一为"当前代码的意图/契约/边界"（现在时态）——清除全部轮次标记（`（第 N 轮）`/`（C\d+）`/`（U\d+）` 等 262 处）与历史修复叙事；历史变更统一由 CHANGELOG 承载。规范约定写入 docs/architecture.md「注释与文档约定」节
+- **第 11 轮全面评估（5 HIGH + 20 MEDIUM + 重构 + 4 扩展主题）**：
   - **5 个确认缺陷修复**：combat 冻结 options 写 weaponName 抛 TypeError（config 装载的 combat 永不运行——BaseTask 浅复制根治 + 防未来脚本再犯）；combat maxTargets 默认 0 失效首杀即完成（evalCond config 型回退 defaultOptions）；config.example.json 过不了自身校验（l2._comment 豁免 + config.test 防漂移断言）；spawn 先于插件装载时 ctx.plugins 陈旧（onPluginsReady 补发回调）；notifier 按值捕获 reload 后 webhook 变更失效（事件时实时取值）
   - **完善 20 项**：fish caught 计数虚高（超时也 +1）/abort 监听器泄漏、审计日志多写者竞争（进程级共享单例）、plant_crops 按 cropTypes 匹配种子、collect 失败批次实采复核、mine 动作级互斥（非 exclusive 任务不 bypass 守卫）、工具调用上限 4 与提示词契约对齐（超限回填失败结果）、baseUrl `/v1` 双路径、goto/explore_step abort 贯通、云端抖动重试（429/5xx ≤2 次退避）、会话 calls 活引用拷贝、query_map 大小写归一、blockUpdate 坐标索引 O(1) 判空、http-status EADDRINUSE 可恢复、日志热重载仅 level 变化不重建 transport、deathPaused promise 化（快速重生服竞态）、respawn:false 显式（mineflayer 默认 respawn:true 此前双发）、parser JSON 转义引号
   - **工程**：mineflayer-pathfinder 补丁哨兵门禁（4/4）、blockUpdate/挖除即删接线测试、3 处空断言清理、cron 测试 pollUntil 去 flaky、CI 加部署模式（--omit=dev）job

@@ -109,7 +109,6 @@ node scripts/smoke.mjs --config config/smoke.json --host mc.antifield.work --ste
 - [部署指南（Windows PC + 树莓派服务端）](docs/deploy.md)
 - [L2 LLM 层设计](docs/l2.md)
 - [上游迁移（PR pin → 正式版）](docs/upstream-migration.md)
-- [路线图（完善/升级/重构三档与取舍）](docs/roadmap.md)
 - [部署机验收清单](docs/acceptance.md)（真机验证项跟踪——release 前核对；含 issue #1 现场数据采集指引）
 
 ## 性能要点（低配 PC）

@@ -73,12 +73,6 @@
 | data 备份 | 待验收 | 部署机有 data/ | `scripts\deploy.ps1` 跑一遍，确认 `data-backup/<时间戳>/` 生成且保留 7 份 | | 部署更新自动执行 |
 | smoke 全档 | 待验收 | 服务器在线 | `scripts\deploy.ps1 -Smoke`（connect,spawn,chat）+ `node scripts/smoke.mjs` 全档（--dangerous 含 mine） | | 每次 release 后执行 |
 
-## issue #1 跟踪（跨台偶发静止）
-
-- 状态：**等待真机日志**。诊断日志已就绪（C2：卡住时记录周围 3×3 方块/手持/落地态）。
-- 采集方式：部署机遇到卡住后，从 bot.log 提取「移动卡住诊断」条目贴到 [issue #1](https://github.com/antifield26/ApopBot/issues/1)。
-- 预计根因：树叶碰撞数据不一致 / 半嵌过深，待现场数据确认。
-
 ## v1.5.2 修复档验收（2026-08-14 评估批）
 
 | 条目 | 状态 | 依赖环境 | 验证步骤 | 验证日期 | 备注 |

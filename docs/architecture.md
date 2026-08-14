@@ -124,10 +124,10 @@ minecraft-bot (Node.js ≥24, ESM；src 全量 .ts——Node 原生类型剥离�
 ## 注释与文档约定
 
 - **代码注释只解释当前代码**的意图/契约/边界（现在时态）：为什么这样设计、何时触发、什么条件下跳过、与哪里的契约对应
-- **不写历史**：注释中禁止轮次标记（`（第 N 轮）`、`（C\d+）`、`（U\d+）`、`（P\d+）` 等）、commit 引用、"此前……"修复叙事——这些信息统一记录在 CHANGELOG.md（逐轮变更）与 docs/roadmap.md（决策与验证细节）
+- **不写历史**：注释中禁止轮次标记（`（第 N 轮）`、`（C\d+）`、`（U\d+）`、`（P\d+）` 等）、commit 引用、"此前……"修复叙事——这些信息统一记录在 CHANGELOG.md（逐轮变更与决策细节）
 - **例外**：patch-package 补丁哨兵字符串（scripts/check-compat.mjs 与 patches/ 内）是补丁应用性的验证契约，其中含历史轮次标记时**不得改动**（改需同步 patches 且已应用 node_modules 无法重应用——维护成本大于规范收益，待上游合并后随补丁整体删除）
 - 历史修复若对理解当前行为必要（如"必须停在块面 ±1e-4 否则服务器拉回"），以**现在时的行为后果**表述，不叙述修复过程
-- 新代码合入时：轮次式开发中"这轮做了什么"只进 CHANGELOG/roadmap，注释保持与文档解耦（改文档不需改注释）
+- 新代码合入时：轮次式开发中"这轮做了什么"只进 CHANGELOG，注释保持与文档解耦（改文档不需改注释）
 
 ## 质量工具
 
@@ -146,3 +146,14 @@ minecraft-bot (Node.js ≥24, ESM；src 全量 .ts——Node 原生类型剥离�
 - **LLM 提示注入残余风险**：CORE_SYSTEM_PROMPT 有注入防御段（玩家消息是唯一输入），执行器 op 权限门拦截非 op 会话的危险动作；但 **op 玩家自己的会话被注入文本时无二次确认**（LLM 自主性优先的设计取舍）——不做动作确认，文档化接受；部署机验证项见 docs/acceptance.md
 - **真机验证缺口**：功能迭代以离线 mock 测试为主，真实服务器交互项（B1 仓库/B4 作物/B5 睡觉/B6 剪羊毛等）集中在 docs/acceptance.md 跟踪——release 前应核对清单，缺失验收项不阻塞 release 但需显式记录
 - 自动存储开箱依赖 collectblock 的 NoChests 错误码；找不到箱子/UI 卡死时回退 inventoryFull 语义（5 分钟等待）——不改变任务失败行为
+
+## 明确不做（决策记录）
+
+| 项 | 理由 |
+|---|---|
+| 多 bot 同进程 | ctx 单例贯穿编排层（feature-layer/commands/l2 闭包 ctx），结构性重写；8GB 机同进程双 bot 内存/CPU 不值。真多 bot 正解 = 第二进程/第二台机（配置/脚本已支持不同 username） |
+| Web 管理面板 | 零新依赖约束下成本高于收益；U3 端点 + PowerShell/NSSM 已覆盖运维闭环 |
+| L2 流式输出 | 10-30 tok/s 下流式只省首包时延，需改双 provider 协议解析与 chat 接口，收益/复杂度不成比例 |
+| NSSM stdout 轮转 | 业务日志已 pino-roll 按天轮转（keepDays 14），stdout 仅兜底 |
+| 依赖链另起升级路径 | overrides + check-compat 门禁闭环已锁死；任何上游升级走现有 `migrate-upstream`（见 docs/upstream-migration.md） |
+| 运行时任务现场恢复 | mineflayer 无可靠状态导出，8GB 机不值得；U1 只保"配置即真相 + 遥测不丢" |
