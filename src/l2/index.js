@@ -76,6 +76,9 @@ export function createL2 (cfg, ctx, deps = null) {
     roles.set(name, buildRole(cfg.l2, ctx, shared, name, name === 'planner' ? PLANNER_SYSTEM_PROMPT : null))
   }
   const primary = roles.get('primary')
+  // 防御兜底：config 校验已拒绝 primary.enabled=false，此处防未来角色构造路径
+  // 绕过——primary 缺失会让全部委托方法 TypeError（启动期显式失败而非运行期崩）
+  if (!primary) throw new Error('primary 角色未实例化（l2.roles 不允许 primary.enabled:false）')
   return {
     // ---- 角色注册表 ----
     primary,

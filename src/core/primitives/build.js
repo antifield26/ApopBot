@@ -32,7 +32,11 @@ export function registerBuild (register, _ctx) {
       type: 'object',
       required: ['x', 'y', 'z'],
       properties: {
-        x: { type: 'integer' }, y: { type: 'integer' }, z: { type: 'integer' }
+        // 坐标世界边界（同 goto 口径）：LLM 幻觉坐标在 schema 层拦截，
+        // y 越界会让 prismarine-chunk 抛 TypeError（可归因性差）
+        x: { type: 'integer', min: -30000000, max: 30000000 },
+        y: { type: 'integer', min: -64, max: 319 },
+        z: { type: 'integer', min: -30000000, max: 30000000 }
       }
     },
     permission: 'op',
@@ -62,7 +66,9 @@ export function registerBuild (register, _ctx) {
       type: 'object',
       required: ['x', 'y', 'z'],
       properties: {
-        x: { type: 'integer' }, y: { type: 'integer' }, z: { type: 'integer' },
+        x: { type: 'integer', min: -30000000, max: 30000000 },
+        y: { type: 'integer', min: -64, max: 319 },
+        z: { type: 'integer', min: -30000000, max: 30000000 },
         face: { type: 'string', description: '放置方向：up/down/north/south/east/west（默认 up）' }
       }
     },
@@ -83,7 +89,10 @@ export function registerBuild (register, _ctx) {
       checkActionCooldown('place')
       const itemName = c.bot.heldItem.name
       // 竞速取消（placeBlock 无取消 API）：stop 后不再等待放置结果
-      await raceAbort(withTimeout(c.bot.placeBlock(refBlock, face), 30000, 'place timeout'), runtime?.signal, '放置被中断')
+      // faceVector 是"参考块→目标"方向（恰为 off 的负向量）——mineflayer 要求
+      // Vec3：字符串 face 会走到 vectorToDirection 的 assert.ok(false) 抛
+      // AssertionError（发包前抛出，无服务器副作用但该动作必失败）
+      await raceAbort(withTimeout(c.bot.placeBlock(refBlock, new Vec3(-off[0], -off[1], -off[2])), 30000, 'place timeout'), runtime?.signal, '放置被中断')
       return `已放置 ${itemName} @ ${x},${y},${z}`
     }
   })
@@ -113,7 +122,10 @@ export function registerBuild (register, _ctx) {
       // 的 UnknownType 崩溃（整批失败、已采数量不入账、脚本对同一批坐标无限重试）
       const toBlocks = (pts) => pts
         .map(p => {
+          // 坐标边界（schema 层不校验数组内元素——此处兜底）：越界点直接跳过，
+          // 否则 y 越界 blockAt 抛 TypeError 整批失败且文案不可归因
           if (!Array.isArray(p) || p.length < 3 || !p.slice(0, 3).every(Number.isFinite)) return null
+          if (Math.abs(p[0]) > 30000000 || Math.abs(p[2]) > 30000000 || p[1] < -64 || p[1] > 319) return null
           return c.bot.blockAt?.(new Vec3(p[0], p[1], p[2])) ?? null
         })
         .filter(Boolean)
@@ -130,7 +142,10 @@ export function registerBuild (register, _ctx) {
             found.push(...r.candidates)
           } catch { /* 未知方块类型跳过该名 */ }
         }
-        if (area && isArea(area)) {
+        if (area !== undefined && !isArea(area)) {
+          throw new Error('collect_blocks 的 area 不完整（需要 x1..z2 六坐标）——与其他原语口径一致显式报错')
+        }
+        if (area) {
           found = found.filter(p => p.x >= area.x1 && p.x <= area.x2 && p.y >= area.y1 && p.y <= area.y2 && p.z >= area.z1 && p.z <= area.z2)
         }
         targets = toBlocks(found)
@@ -228,7 +243,7 @@ export function registerBuild (register, _ctx) {
       // 会种小麦进胡萝卜田）
       const wantedCrops = Array.isArray(cropTypes) && cropTypes.length > 0
         ? cropTypes
-        : Object.keys(seedByCrop)
+        : Object.keys(seedByCrop).filter(c => CROP_PLANT_MODE[c] !== undefined) // 默认集排除无种植模式的作物（cocoa 只收不种）
       // farm._scanArea 同款扫描（找区域内耕地）
       const diag = Math.hypot(area.x2 - area.x1, area.y2 - area.y1, area.z2 - area.z1)
       const maxDistance = Math.min(Math.ceil(diag) + 16, 256)
@@ -261,10 +276,15 @@ export function registerBuild (register, _ctx) {
           }
         }
       }
-      // 按种植模式分组作物（crops.js CROP_PLANT_MODE 单一来源）
+      // 按种植模式分组作物（crops.js CROP_PLANT_MODE 单一来源）；无模式的作物
+      //（如显式传入 cocoa）跳过并告警——在耕地上种可可必然失败（需丛林原木侧面）
       const modes = new Map()
       for (const crop of wantedCrops) {
-        const mode = CROP_PLANT_MODE[crop] ?? 'farmland'
+        const mode = CROP_PLANT_MODE[crop]
+        if (!mode) {
+          c.logger.warn({ crop }, 'plant_crops: 作物无种植模式（只收不种），跳过')
+          continue
+        }
         if (!modes.has(mode)) modes.set(mode, [])
         modes.get(mode).push(crop)
       }

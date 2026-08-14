@@ -176,6 +176,10 @@ export class ConnectionManager {
     bot.on('error', (err) => {
       if (seq !== this._connectSeq) return
       if (this._manuallyDisconnecting) return
+      // 同 end 处理器守卫：kicked 已计数的同一断线，其 socket 关闭 error 不得再
+      // 计一次（reconnectCount 双计 → 广播/metrics 失真、reconnect-alert 误触发）；
+      // fatal 判定后的迟到 error 不得在退出窗口内再调度重连
+      if (this.state === STATE_RECONNECTING || this._fatalExit) return
       this._handleDisconnect(err, 'error')
     })
 

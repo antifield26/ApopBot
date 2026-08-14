@@ -417,6 +417,11 @@ export function validateConfig (cfg) {
           if (r.tools !== undefined && (!Array.isArray(r.tools) || !r.tools.every(t => typeof t === 'string'))) {
             errors.push(`${label}.tools 必须是字符串数组（原语名白名单）`)
           }
+          // primary 是 ctx.agent 全部委托方法的调用目标（!agent/死亡播报/任务终态
+          // 通知/规划器兜底）——enabled:false 会跳过实例化，委托面全面 TypeError
+          if (r.name === 'primary' && r.enabled === false) {
+            errors.push(`${label} primary 不允许 enabled:false（对话入口与委托面必须可用）`)
+          }
         }
         if (!seen.has('primary')) errors.push('l2.roles 必须包含 primary 角色（多角色配置的对话入口）')
       }

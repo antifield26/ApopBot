@@ -102,7 +102,10 @@ export function registerObserve (register, _ctx) {
       } else {
         ents = nearbyEntities(c.bot, { name: filter, kind: filter, maxDistance: maxDistance ?? 32, limit: 32 })
       }
-      if (area && isArea(area)) {
+      if (area !== undefined && !isArea(area)) {
+        throw new Error('observe_entities 的 area 不完整（需要 x1..z2 六坐标）——与其他原语口径一致显式报错')
+      }
+      if (area) {
         ents = ents.filter(e => {
           const p = e.position
           if (!p) return false
@@ -141,9 +144,19 @@ export function registerObserve (register, _ctx) {
       const registry = c.bot?.registry
       let ids = null
       if (regex) {
+        // 正则长度上限 + 预编译 try/catch：非法正则以友好文案返回；病态正则
+        //（灾难性回溯）对全部方块名同步逐条 test——同步 CPU 无法被 executor
+        // 超时中断，长度上限是主线程冻结面的第一道防线
+        if (regex.length > 64) throw new Error('observe_blocks 的 regex 长度不能超过 64 字符')
+        let re
+        try {
+          re = new RegExp(regex)
+        } catch (err) {
+          throw new Error(`observe_blocks 的 regex 非法: ${err.message}`, { cause: err })
+        }
         ids = new Set()
         for (const [name, block] of Object.entries(registry?.blocksByName ?? {})) {
-          if (new RegExp(regex).test(name)) ids.add(block.id)
+          if (re.test(name)) ids.add(block.id)
         }
       }
       // 观察即记录（记录带维度；chunk 去重 + 全局上限天然防膨胀）——声明在
@@ -159,7 +172,10 @@ export function registerObserve (register, _ctx) {
           .map(p => ({ p, d: me ? dist2(p, me) : 0 }))
           .sort((a, b) => a.d - b.d)
           .map(x => x.p)
-        if (area && isArea(area)) {
+        if (area !== undefined && !isArea(area)) {
+          throw new Error('observe_blocks 的 area 不完整（需要 x1..z2 六坐标）——与其他原语口径一致显式报错')
+        }
+        if (area) {
           if (me) {
             const d = Math.hypot(me.x - (area.x1 + area.x2) / 2, me.z - (area.z1 + area.z2) / 2)
             if (d > (maxDistance ?? 64)) {
@@ -213,7 +229,10 @@ export function registerObserve (register, _ctx) {
       type: 'object',
       required: ['x', 'y', 'z'],
       properties: {
-        x: { type: 'integer' }, y: { type: 'integer' }, z: { type: 'integer' }
+        // 坐标世界边界（同 goto/dig/place 口径——LLM 幻觉坐标 schema 层拦截）
+        x: { type: 'integer', min: -30000000, max: 30000000 },
+        y: { type: 'integer', min: -64, max: 319 },
+        z: { type: 'integer', min: -30000000, max: 30000000 }
       }
     },
     permission: 'all',

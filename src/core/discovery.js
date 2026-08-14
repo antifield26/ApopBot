@@ -332,8 +332,11 @@ export function recordDangerZone (pos, { hostileNames = [], threatLevel } = {}, 
   const x = Math.floor(pos.x); const y = Math.floor(pos.y); const z = Math.floor(pos.z)
   const names = [...new Set(hostileNames.map(String).filter(Boolean))].slice(0, 8)
   const level = typeof threatLevel === 'number' ? threatLevel : Math.min(Math.max(names.length, 1), 5)
-  const chunkKey = `${x >> 4},${z >> 4}`
-  const existing = state.dangerZones.find(d => `${d.x >> 4},${d.z >> 4}` === chunkKey)
+  // 去重键拼入维度（同 recordResource 口径）：下界/末地与主世界存在相同 x/z 坐标，
+  // 仅按 x/z 去重会跨维度吞并——原地改写坐标与 dimension，某维度的真实危险记录
+  // 从查询中消失（queryDangerZones 按维度过滤后永远查不到）
+  const chunkKey = `${dimension ?? ''}:${x >> 4},${z >> 4}`
+  const existing = state.dangerZones.find(d => `${d.dimension ?? ''}:${d.x >> 4},${d.z >> 4}` === chunkKey)
   if (existing) {
     // 原地刷新：位置更新为最近目击、名字并集（≤8）、threatLevel 取新值
     existing.x = x; existing.y = y; existing.z = z

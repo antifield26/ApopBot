@@ -184,7 +184,9 @@ class CloudProvider {
           signal: makeSignal(signal, this.timeoutMs)
         })
       } catch (err) {
-        if (err?.name === 'AbortError') throw err
+        // 超时（AbortSignal.timeout 产生 TimeoutError）不得当网络错误重试——
+        // 每次尝试都重新计时，重试会把单次 60s 超时放大为 180s busy 锁死
+        if (err?.name === 'AbortError' || err?.name === 'TimeoutError') throw err
         lastErr = err
         if (attempt < 2) { await wait(500 * 2 ** attempt); continue }
         break

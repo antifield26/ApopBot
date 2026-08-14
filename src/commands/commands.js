@@ -419,9 +419,12 @@ export function registerBuiltinCommands (registry, _ctx) {
           }
           const text = rest.slice(1).join(' ').trim()
           if (!text) { await sendChat(c.bot, '§c用法: !agent goal set <目标文本> [--plan=<JSON 数组>]', c.cfg.chat?.maxLength); return }
-          // 尾部 --plan=<JSON 数组> token（parser 引号感知——含空格 JSON 需双引号包裹）
+          // --plan=<JSON 数组> 从拼合后的全文提取：token 级切分会把含空格的 JSON
+          //（--plan=["挖 矿"]）拆散（parser 只对 { 起头 token 跟踪括号），正则
+          // 失配导致 plan 静默丢失、目标文本混入 --plan 片段且无任何报错
           let plan
-          const m = /^--plan=(.+)$/.exec(rest.at(-1) ?? '')
+          let goalText = text
+          const m = /(?:^|\s)--plan=(.+)$/.exec(text)
           if (m) {
             try {
               const parsed = JSON.parse(m[1])
@@ -434,11 +437,12 @@ export function registerBuiltinCommands (registry, _ctx) {
               await sendChat(c.bot, '§c计划必须是 JSON 数组，如 --plan=["挖矿","烧炼"]', c.cfg.chat?.maxLength)
               return
             }
+            goalText = text.slice(0, m.index).trim()
           }
-          const goalText = m ? rest.slice(1, -1).join(' ').trim() : text
           if (!goalText) { await sendChat(c.bot, '§c用法: !agent goal set <目标文本> [--plan=<JSON 数组>]', c.cfg.chat?.maxLength); return }
           target.setGoal(sender, goalText, plan)
-          await sendChat(c.bot, `§a长期目标已设置: ${goalText.slice(0, 80)}${plan?.length ? `（计划 ${plan.length} 步）` : ''}`, c.cfg.chat?.maxLength)
+          // 步数按实际存储口径回显（setGoal 内部 slice(0,5)）——>5 步时如实截断
+          await sendChat(c.bot, `§a长期目标已设置: ${goalText.slice(0, 80)}${plan?.length ? `（计划 ${Math.min(plan.length, 5)} 步）` : ''}`, c.cfg.chat?.maxLength)
           return
         }
         if (rest[0] === 'clear') {
