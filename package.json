@@ -2,7 +2,7 @@
   "name": "minecraft-bot",
   "private": true,
   "type": "module",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "Production Minecraft bot for PaperMC 26.1.2",
   "engines": {
     "node": ">=24"

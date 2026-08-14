@@ -3,9 +3,9 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 **版本单一来源 = package.json**（`node scripts/release.mjs [patch|minor|major]` bump，check:compat 交叉校验 package.json ↔ lockfile）。
 
-## [Unreleased]
+## [1.6.0] - 2026-08-14
 
-2026-08-14 全面评估批（6 并行审查 + 主审逐项源码验证，评估报告见 docs/review-2026-08-14.md）——HIGH 10 + MEDIUM 22 + LOW 18 全档实施：
+2026-08-14 全面评估批（6 并行审查 + 主审逐项源码验证，评估报告见 docs/review-2026-08-14.md）——HIGH 10 + MEDIUM 22 + LOW 18 全档实施 + TS 第二阶段（全量 .ts 化）：
 
 ### 修复（HIGH，全部经源码实证 + 回归测试）
 
