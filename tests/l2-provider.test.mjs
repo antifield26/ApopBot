@@ -85,14 +85,14 @@ test('DeepSeek 预设：thinking=disabled 显式发送且不带 reasoning_effort
   }
 })
 
-test('thinking=enabled + effort 注入 reasoning_effort', async () => {
+test('thinking=enabled + effort 注入 reasoning_effort + budget_tokens（Anthropic 协议必填）', async () => {
   const calls = mockFetch(() => ({ ok: true, status: 200, json: async () => ({ content: [] }) }))
-  const l2 = { ...l2Base, thinking: 'enabled', effort: 'high' }
+  const l2 = { ...l2Base, thinking: 'enabled', effort: 'high', thinkingBudgetTokens: 2048 }
   process.env.ANTHROPIC_API_KEY = 'sk-test'
   try {
     const p = createProvider({ l2 }, makeLogger())
     await p.chat([{ role: 'user', content: 'x' }])
-    assert.deepEqual(calls[0].body.thinking, { type: 'enabled' })
+    assert.deepEqual(calls[0].body.thinking, { type: 'enabled', budget_tokens: 2048 })
     assert.equal(calls[0].body.reasoning_effort, 'high')
   } finally {
     delete process.env.ANTHROPIC_API_KEY

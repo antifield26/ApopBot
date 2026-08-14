@@ -259,9 +259,16 @@ test('l2 数值/模型校验（maxSteps/超时/maxActionsPerCall）', () => {
     assert.equal(ok, false, JSON.stringify(patch))
     assert.ok(errors.some(e => e.includes(kw)), `${kw} 未报错: ${JSON.stringify(errors)}`)
   }
-  // 合法值放行（enabled 门内）
-  const good = validateConfig({ ...base, l2: { ...base.l2, thinking: 'enabled', effort: 'high' } })
+  // 合法值放行（enabled 门内；thinking=enabled 时 maxTokens 必须 > budget）
+  const good = validateConfig({ ...base, l2: { ...base.l2, thinking: 'enabled', effort: 'high', maxTokens: 8192, thinkingBudgetTokens: 4096 } })
   assert.equal(good.ok, true, good.errors.join('; '))
+  // thinking=enabled 时 budget 校验（Anthropic 协议：budget ≥1024 且 maxTokens > budget）
+  const badBudget = validateConfig({ ...base, l2: { ...base.l2, thinking: 'enabled', maxTokens: 1024 } })
+  assert.equal(badBudget.ok, false)
+  assert.ok(badBudget.errors.some(e => e.includes('thinkingBudgetTokens')), badBudget.errors.join('; '))
+  const tinyBudget = validateConfig({ ...base, l2: { ...base.l2, thinking: 'enabled', maxTokens: 8192, thinkingBudgetTokens: 100 } })
+  assert.equal(tinyBudget.ok, false)
+  assert.ok(tinyBudget.errors.some(e => e.includes('≥1024')), tinyBudget.errors.join('; '))
 })
 
 test('v1.4.0: l2.roles 校验（非数组/重复/缺 primary/字段集/合法放行/旧配置通过）', () => {

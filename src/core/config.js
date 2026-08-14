@@ -64,6 +64,9 @@ const BUILTIN_DEFAULTS = {
     // thinking=enabled 时按 effort（low/medium/high/max）注入 reasoning_effort。
     thinking: 'disabled',
     effort: 'low',
+    // thinking=enabled 时的 thinking 预算 tokens（Anthropic 协议要求 budget_tokens
+    // 必填；maxTokens 必须大于该值——校验联动）
+    thinkingBudgetTokens: 4096,
     // 云端上下文窗口——云端同样走预算守卫（window − maxTokens − reserve），
     // 是动作数组/观察结果回填的容量基础；32k 上下文端点请调低
     cloudMaxContextWindow: 65536,
@@ -91,7 +94,11 @@ const BUILTIN_DEFAULTS = {
   // 聊天安全层：服务端单条消息上限 256 字符，Bot 分片发送时留冗余
   chat: {
     maxLength: 250,
-    commandCooldownMs: 750
+    commandCooldownMs: 750,
+    // 回复限流（per-sender token bucket）：窗口内最多回复 N 条，桶满静默丢弃
+    //（防刷屏踢服 DoS——全部反馈路径在聊天入口统一纳入）
+    replyLimit: 5,
+    replyWindowMs: 10000
   },
   // 只读 HTTP 状态端点：默认关闭；只绑 127.0.0.1（暴露到局域网需自行加防火墙）
   http: {
@@ -132,6 +139,7 @@ const ENV_MAP = {
   MCBOT_L2_MAX_ACTIONS_PER_CALL: ['l2', 'maxActionsPerCall'],
   MCBOT_L2_THINKING: ['l2', 'thinking'],
   MCBOT_L2_EFFORT: ['l2', 'effort'],
+  MCBOT_L2_THINKING_BUDGET_TOKENS: ['l2', 'thinkingBudgetTokens'],
   MCBOT_L2_ENV_INJECTION: ['l2', 'envInjection'],
   MCBOT_L2_STATE_INJECTION: ['l2', 'stateInjection'],
   MCBOT_L2_DANGER_INJECTION: ['l2', 'dangerInjection'],
@@ -143,6 +151,8 @@ const ENV_MAP = {
   MCBOT_L2_EXPERIENCE_CAPACITY: ['l2', 'experienceCapacity'],
   MCBOT_CHAT_MAX_LENGTH: ['chat', 'maxLength'],
   MCBOT_CHAT_COMMAND_COOLDOWN_MS: ['chat', 'commandCooldownMs'],
+  MCBOT_CHAT_REPLY_LIMIT: ['chat', 'replyLimit'],
+  MCBOT_CHAT_REPLY_WINDOW_MS: ['chat', 'replyWindowMs'],
   MCBOT_HTTP_ENABLED: ['http', 'enabled'],
   MCBOT_HTTP_PORT: ['http', 'port'],
   MCBOT_SCHEDULE_TIMEZONE: ['scheduleTimezone'],
@@ -216,7 +226,7 @@ function parseEnv (env) {
       value = raw === 'true'
     } else if (!Number.isNaN(Number(raw)) && /^-?\d+(\.\d+)?$/.test(raw) && pathArr[pathArr.length - 1].toLowerCase().includes('ms')) {
       value = Number(raw)
-    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && ['keepDays', 'port', 'maxSteps', 'maxLength', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'experienceCapacity'].includes(pathArr[pathArr.length - 1])) {
+    } else if (!Number.isNaN(Number(raw)) && /^-?\d+$/.test(raw) && ['keepDays', 'port', 'maxSteps', 'maxLength', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'experienceCapacity', 'thinkingBudgetTokens', 'replyLimit', 'replyWindowMs'].includes(pathArr[pathArr.length - 1])) {
       value = Number(raw)
     } else {
       value = raw
@@ -392,6 +402,16 @@ export function validateConfig (cfg) {
     if (cfg.l2.thinking !== undefined && !['enabled', 'disabled'].includes(cfg.l2.thinking)) {
       errors.push(`l2.thinking 必须是 enabled 或 disabled，当前: ${cfg.l2.thinking}`)
     }
+    if (cfg.l2.thinking === 'enabled') {
+      // Anthropic 协议要求 thinking.enabled 必带 budget_tokens，且 maxTokens
+      // 必须大于 budget（否则无输出空间——严格端点 400）
+      if (!Number.isInteger(cfg.l2.thinkingBudgetTokens) || cfg.l2.thinkingBudgetTokens < 1024) {
+        errors.push(`l2.thinkingBudgetTokens 必须是 ≥1024 的整数，当前: ${cfg.l2.thinkingBudgetTokens}`)
+      }
+      if (Number.isInteger(cfg.l2.thinkingBudgetTokens) && cfg.l2.maxTokens <= cfg.l2.thinkingBudgetTokens) {
+        errors.push(`l2.maxTokens（${cfg.l2.maxTokens}）必须大于 l2.thinkingBudgetTokens（${cfg.l2.thinkingBudgetTokens}）——thinking 预算占用了全部输出空间`)
+      }
+    }
     if (cfg.l2.effort !== undefined && !['low', 'medium', 'high', 'max'].includes(cfg.l2.effort)) {
       errors.push(`l2.effort 必须是 low/medium/high/max，当前: ${cfg.l2.effort}`)
     }
@@ -432,7 +452,7 @@ export function validateConfig (cfg) {
     const L2_KNOWN_KEYS = new Set([
       'enabled', 'model', 'cloudBaseUrl', 'cloudApiKeyEnv', 'maxSteps', 'cooldownMs',
       'cloudTimeoutMs', 'maxTokens', 'cloudMaxContextWindow', 'maxActionsPerCall', 'envInjection',
-      'stateInjection', 'dangerInjection', 'thinking', 'effort', 'planEnabled', 'planCooldownMs',
+      'stateInjection', 'dangerInjection', 'thinking', 'effort', 'thinkingBudgetTokens', 'planEnabled', 'planCooldownMs',
       'roles', // v1.4.0 多角色数组（缺省 = 内置 primary+planner）
       'skillEnabled', 'skillLearnCooldownMs', 'skillInjection', // v1.5.0 技能学习
       'experienceCapacity', // v1.5.0 经验库容量可配
@@ -450,6 +470,12 @@ export function validateConfig (cfg) {
   }
   if (!Number.isInteger(cfg.chat?.commandCooldownMs) || cfg.chat.commandCooldownMs < 0) {
     errors.push(`chat.commandCooldownMs 必须是非负整数，当前: ${cfg.chat?.commandCooldownMs}`)
+  }
+  if (!Number.isInteger(cfg.chat?.replyLimit) || cfg.chat.replyLimit < 1) {
+    errors.push(`chat.replyLimit 必须是 ≥1 的整数，当前: ${cfg.chat?.replyLimit}`)
+  }
+  if (!Number.isInteger(cfg.chat?.replyWindowMs) || cfg.chat.replyWindowMs < 1000) {
+    errors.push(`chat.replyWindowMs 必须是 ≥1000 的整数（毫秒），当前: ${cfg.chat?.replyWindowMs}`)
   }
   if (typeof cfg.http?.enabled !== 'boolean') errors.push('http.enabled 必须是布尔值')
   if (!Number.isInteger(cfg.http?.port) || cfg.http.port < 1 || cfg.http.port > 65535) {

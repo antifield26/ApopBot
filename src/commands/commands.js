@@ -18,6 +18,22 @@ function auditCommand (c, op, args, ok, result, durationMs = 0) {
 }
 
 /**
+ * 混合权限子命令的 op 冷却自检（命令注册为 'all' 不受 dispatch 冷却约束——
+ * op 门通过后调用，与 op 命令同款防刷屏）。超限返回 true（调用方返回，冷却
+ * 提示已发）。
+ */
+async function enforceOpCooldown (c, sender) {
+  if (!c.commands?.checkOpCooldown || !c.commands?.markOpDispatch) return false
+  const cd = c.commands.checkOpCooldown(sender, c.cfg)
+  if (cd.limited) {
+    await sendChat(c.bot, `§c命令冷却中（${cd.remain}s 后可再试）`, c.cfg.chat?.maxLength)
+    return true
+  }
+  c.commands.markOpDispatch(sender)
+  return false
+}
+
+/**
  * 注册内置命令。
  * ctx: { bot, cfg, logger, tasks, conn, agent, plugins, onReload }
  */
@@ -276,6 +292,7 @@ export function registerBuiltinCommands (registry, _ctx) {
           await sendChat(c.bot, '§c权限不足：!home set 需要 op', c.cfg.chat?.maxLength)
           return
         }
+        if (await enforceOpCooldown(c, sender)) return
         const p = c.bot?.entity?.position
         if (!name || !p) {
           await sendChat(c.bot, '§c用法: !home set <name>（当前位置命名）', c.cfg.chat?.maxLength)
@@ -291,6 +308,7 @@ export function registerBuiltinCommands (registry, _ctx) {
           await sendChat(c.bot, '§c权限不足：!home remove 需要 op', c.cfg.chat?.maxLength)
           return
         }
+        if (await enforceOpCooldown(c, sender)) return
         if (!name) { await sendChat(c.bot, '§c用法: !home remove <name>', c.cfg.chat?.maxLength); return }
         await sendChat(c.bot, removePlace(name) ? `§a地点 ${name} 已删除` : `§c地点 ${name} 不存在`, c.cfg.chat?.maxLength)
         return
@@ -430,6 +448,7 @@ export function registerBuiltinCommands (registry, _ctx) {
             await sendChat(c.bot, '§c权限不足：!agent goal set 需要 op', c.cfg.chat?.maxLength)
             return
           }
+          if (await enforceOpCooldown(c, sender)) return
           const text = rest.slice(1).join(' ').trim()
           if (!text) { await sendChat(c.bot, '§c用法: !agent goal set <目标文本> [--plan=<JSON 数组>]', c.cfg.chat?.maxLength); return }
           // --plan=<JSON 数组> 从拼合后的全文提取：token 级切分会把含空格的 JSON
@@ -463,6 +482,7 @@ export function registerBuiltinCommands (registry, _ctx) {
             await sendChat(c.bot, '§c权限不足：!agent goal clear 需要 op', c.cfg.chat?.maxLength)
             return
           }
+          if (await enforceOpCooldown(c, sender)) return
           target.clearGoal(sender)
           await sendChat(c.bot, '§a长期目标已清除', c.cfg.chat?.maxLength)
           return
@@ -489,6 +509,7 @@ export function registerBuiltinCommands (registry, _ctx) {
           await sendChat(c.bot, '§c权限不足：!agent act 需要 op', c.cfg.chat?.maxLength)
           return
         }
+        if (await enforceOpCooldown(c, sender)) return
         const name = rest[0]
         if (!name) { await sendChat(c.bot, '§c用法: !agent act <name> [json]', c.cfg.chat?.maxLength); return }
         let params

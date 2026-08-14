@@ -1,17 +1,29 @@
-import { test } from 'node:test'
+import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { loadConfig } from '../src/core/config.js'
 import { createFeatureLayerManager } from '../src/core/feature-layer.js'
+import { _resetReplyBuckets } from '../src/core/fl-chat.js'
 
-// 假 bot：EventEmitter + chat 收集
+// 回复限流桶是模块级状态（跨测试/跨文件累积——每次测试前重置）
+beforeEach(() => { _resetReplyBuckets() })
+
+// 假 bot：EventEmitter + chat 收集（entity.uuid 供 message 通道自我回显比对）
 class FakeBot extends EventEmitter {
   constructor () {
     super()
     this.messages = []
+    this.entity = { uuid: '11111111-1111-1111-1111-111111111111' }
+    this.players = {}
   }
 
   chat (msg) { this.messages.push(msg) }
+}
+
+/** 以 message 事件模拟玩家聊天（fl-chat 走 playerChat/systemChat 权威通道）。 */
+function emitChat (bot, username, text, opts = {}) {
+  const sender = opts.uuid !== undefined ? { uuid: opts.uuid } : null
+  bot.emit('message', { toString: () => `<${username}> ${text}` }, opts.position ?? 'chat', sender)
 }
 
 function makeLogger () {
@@ -33,13 +45,13 @@ test('B1 修复：每次 spawn 全量重建功能层并挂新 bot 的 chat 监�
   assert.equal(ctx.bot, bot1)
   assert.ok(ctx.tasks, 'tasks 应已初始化')
   assert.ok(ctx.commands, 'commands 应已初始化')
-  assert.equal(bot1.listenerCount('chat'), 1, 'chat 监听应挂在 bot1 上（fl-chat；time-query 挂 messagestr）')
+  assert.equal(bot1.listenerCount('message'), 1, 'message 监听应挂在 bot1 上（fl-chat；time-query 挂 messagestr）')
 
   const tasks1 = ctx.tasks
   await layer.rebuild(bot2)
   assert.equal(ctx.bot, bot2, 'ctx.bot 应指向新 bot')
   assert.notEqual(ctx.tasks, tasks1, 'tasks 应为新实例（旧实例已 stopAll 拆除）')
-  assert.equal(bot2.listenerCount('chat'), 1, 'chat 监听应挂在 bot2 上（fl-chat；time-query 挂 messagestr）')
+  assert.equal(bot2.listenerCount('message'), 1, 'message 监听应挂在 bot2 上（fl-chat；time-query 挂 messagestr）')
   assert.equal(ctx.tasks.getStatus().length, 0, '重建后无残留任务')
 
   await layer.teardown()
@@ -64,8 +76,9 @@ test('B1 修复：重建后新 bot 上命令可分发（真实 commands 注册�
   const bot = new FakeBot()
   await layer.rebuild(bot)
 
-  // 非命令消息不触发分发（不崩溃即可）
-  bot.emit('chat', 'steve', 'hello world')
+  // 非命令消息不触发分发（不崩溃即可）——权威 uuid 通道
+  bot.players.steve = { username: 'steve', uuid: 'uuid-steve' }
+  emitChat(bot, 'steve', 'hello world', { uuid: 'uuid-steve' })
 
   // !ping 是内置命令（permission all）：必须在新 bot 上命中并回复
   const hit = await ctx.commands.dispatch('!ping', { sender: 'steve', ctx })
@@ -85,8 +98,8 @@ test('B1 修复：chatHandler 读取实时 ctx（bot 重建后仍工作）', asy
   await layer.rebuild(bot2)
   assert.notEqual(ctx.chatHandler, handler1, '每次重建生成新 handler 引用（旧监听随旧 bot 消亡）')
 
-  // 触发 bot2 的 chat 监听 → 命令分发到新 bot（!ping 只依赖 bot.chat）
-  bot2.emit('chat', 'alex', '!ping')
+  // 触发 bot2 的 message 监听 → 命令分发到新 bot（!ping 只依赖 bot.chat）
+  emitChat(bot2, 'alex', '!ping')
   await new Promise(r => setTimeout(r, 10))
   assert.ok(bot2.messages.some(m => m.startsWith('pong')), `新 bot 应响应命令，实际: ${bot2.messages}`)
   await layer.teardown()
@@ -97,12 +110,13 @@ test('安全：chatHandler 过滤 Bot 自己的消息（服务器回显——LLM
   const layer = createFeatureLayerManager(ctx, ctx.logger)
   const bot = new FakeBot()
   await layer.rebuild(bot)
-  // 自己的消息（回显）不得触发命令分发
-  bot.emit('chat', ctx.cfg.username, '!ping')
+  // 自己的消息（回显）不得触发命令分发——uuid 权威比对（sender.uuid ===
+  // bot.entity.uuid），昵称插件下显示名 != 用户名也不漏
+  emitChat(bot, ctx.cfg.username, '!ping', { uuid: bot.entity.uuid })
   await new Promise(r => setTimeout(r, 10))
   assert.ok(!bot.messages.some(m => m.startsWith('pong')), `自己的消息不得触发命令: ${bot.messages}`)
-  // 其他玩家照常触发
-  bot.emit('chat', 'steve', '!ping')
+  // 其他玩家照常触发（无 uuid 回退正则提取路径——system 渲染场景）
+  emitChat(bot, 'steve', '!ping')
   await new Promise(r => setTimeout(r, 10))
   assert.ok(bot.messages.some(m => m.startsWith('pong')), `其他玩家应正常触发: ${bot.messages}`)
   await layer.teardown()
@@ -113,7 +127,7 @@ test('chatHandler：未知命令明确反馈（含可用命令列表，不再静
   const layer = createFeatureLayerManager(ctx, ctx.logger)
   const bot = new FakeBot()
   await layer.rebuild(bot)
-  bot.emit('chat', 'steve', '!fly-away')
+  emitChat(bot, 'steve', '!fly-away')
   await new Promise(r => setTimeout(r, 10))
   assert.ok(bot.messages.some(m => m.includes('未知命令')), `应反馈未知命令: ${bot.messages}`)
   assert.ok(bot.messages.some(m => m.includes('!ping')), `应列出可用命令: ${bot.messages}`)
@@ -125,7 +139,7 @@ test('C1 修复：未知命令反馈走 sendChat（含 § 前缀但发送层剥�
   const layer = createFeatureLayerManager(ctx, ctx.logger)
   const bot = new FakeBot()
   await layer.rebuild(bot)
-  bot.emit('chat', 'steve', '!fly-away')
+  emitChat(bot, 'steve', '!fly-away')
   await new Promise(r => setTimeout(r, 10))
   const msg = bot.messages.find(m => m.includes('未知命令'))
   assert.ok(msg, `应反馈未知命令: ${bot.messages}`)

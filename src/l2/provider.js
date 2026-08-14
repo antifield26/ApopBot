@@ -79,6 +79,7 @@ class CloudProvider {
     this.model = l2.model ?? 'deepseek-v4-flash'
     this.thinking = l2.thinking ?? 'disabled'
     this.effort = l2.effort ?? 'low'
+    this.thinkingBudgetTokens = l2.thinkingBudgetTokens ?? 4096
     this.timeoutMs = l2.cloudTimeoutMs ?? DEFAULT_TIMEOUT_MS
     this.maxTokens = l2.maxTokens ?? DEFAULT_MAX_TOKENS
     // 云端上下文窗口（预算守卫用）——l2.cloudMaxContextWindow 可配
@@ -117,9 +118,10 @@ class CloudProvider {
       messages: messages.map(toAnthropicMessage)
     }
     // thinking/effort（预设 DeepSeek）：disabled 显式关思考但不带 reasoning_effort
-    // （DeepSeek 端点两者互斥 400，见文件头注释）；enabled 时按 effort 注入
+    // （DeepSeek 端点两者互斥 400，见文件头注释）；enabled 时按 effort 注入并带
+    // budget_tokens（Anthropic 协议必填——严格端点缺该字段 400）
     if (this.thinking === 'enabled') {
-      body.thinking = { type: 'enabled' }
+      body.thinking = { type: 'enabled', budget_tokens: this.thinkingBudgetTokens }
       body.reasoning_effort = this.effort
     } else {
       body.thinking = { type: 'disabled' }

@@ -71,7 +71,9 @@ export function createFeatureLayerManager (ctx, logger, deps = {}) {
     if (!ctx.plugins) ctx.plugins = ctx.conn?.plugins ?? null
     log().info('rebuilding feature layer (tasks/commands/agent)')
 
-    ctx.tasks = new TaskManager(ctx.cfg, log(), { bot }, ctx.stateStore, () => ctx.agent)
+    // 惰性 logger getter 传入（TaskManager 内部按实例缓存 child）——logRebuild
+    // 替换 ctx.logger 后任务日志跟随新 transport（构造期求值会固化旧 logger）
+    ctx.tasks = new TaskManager(ctx.cfg, log, { bot }, ctx.stateStore, () => ctx.agent)
     await ctx.tasks.load(ctx.cfg) // load 内部按条目容错，不抛
     // webhook 通知：必须实时取 ctx.notifier——reload 只更新 ctx.notifier（index.js），
     // 不重建 feature layer；按值捕获一次会让闭包引用旧句柄——reload 改 webhook 后

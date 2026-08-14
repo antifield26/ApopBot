@@ -35,13 +35,18 @@ const RUNNING_STATES = ['init', 'running', 'paused']
 export class TaskManager {
   /**
    * @param {Record<string, any>} cfg
-   * @param {import('pino').Logger} logger
+   * @param {import('pino').Logger | (() => import('pino').Logger)} logger logger 或惰性
+   *   getter（热重载 logRebuild 会替换 ctx.logger——传 getter 时任务日志跟随新
+   *   transport；传对象时行为与旧版一致）
    * @param {{ bot: import('mineflayer').Bot }} ctx 运行上下文
    * @param {{ counters?: object, tasks?: Array<object>, memory?: object, setTasks?: (tasks: Array<object>) => void, setCounter?: (id: string, counters: object) => void, deleteCounter?: (id: string) => void }} [stateStore] 运行状态快照：ad-hoc 条目 + 计数器持久化
    */
   constructor (cfg, logger, ctx, stateStore = null, getAgent = null) {
     this.cfg = cfg
-    this.log = logger.child({ module: 'tasks' })
+    // 惰性 logger：getter 按当前 logger 实例缓存 child（base 变化时重建）
+    this._getLogger = typeof logger === 'function' ? logger : () => logger
+    this._logBase = null
+    this._log = null
     this.ctx = ctx
     this.tasks = new Map() // id → { entry, task, cron }
     this._pendingExclusive = [] // 被 exclusive 互斥拒绝的任务（冲突任务终态后按序补启动）
@@ -51,6 +56,16 @@ export class TaskManager {
     this._getAgent = getAgent ?? null
     this._lastSummaryAt = 0
     this._notifier = createNotifier(cfg, this.log) // webhook 通知（cfg 变化时重建）
+  }
+
+  /** 任务日志：跟随当前 logger 实例（热重载替换 ctx.logger 后自动切 transport）。 */
+  get log () {
+    const base = this._getLogger()
+    if (base !== this._logBase) {
+      this._logBase = base
+      this._log = base?.child ? base.child({ module: 'tasks' }) : base
+    }
+    return this._log
   }
 
   _makeTaskCtx () {

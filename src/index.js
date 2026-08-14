@@ -14,6 +14,7 @@ import { createStateStore } from './core/state.js'
 import { createNotifier } from './core/notify.js'
 import { registerChatLogger } from './core/chat.js'
 import * as discovery from './core/discovery.js'
+import { withTimeout } from './util/promise-timeout.js'
 
 // 入口：参数 → 配置 → logger → ConnectionManager → 功能层（tasks/命令/L2）→ 信号处理
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -33,15 +34,15 @@ try {
 }
 
 let logger = createLogger(cfg)
-// 聊天发送日志注册（spam kick/消息丢失排查——sendChat 内记发送方/摘要/分片数）
-registerChatLogger((msg) => logger.child({ module: 'chat' }).info(msg))
+// 聊天发送日志注册（spam kick/消息丢失排查——sendChat 内记发送方/摘要/分片数）。
+// 闭包运行时取 ctx.logger：热重载 logRebuild 会替换 logger 变量——注册期捕获的
+// 初始 logger 会把聊天日志永久写旧 transport/旧文件（chat.js 模块级单次注册）
+registerChatLogger((msg) => ctx.logger.child({ module: 'chat' }).info(msg))
 
 // 进程级错误兜底：未捕获 rejection/异常不得静默崩溃走 NSSM 无限重启循环——
 // 与连接层 fatal 语义一致 exit(2) 停止等人工（flush 带 1s 兜底防卡死）
-function fatalExit (err, label) {
+async function fatalExit (err, label) {
   logger.fatal({ err: err?.message ?? String(err) }, `${label} —— 按 fatal 停止等人工`)
-  // fatal 停服推送（无人值守时唯一感知通道；ctx.notifier 随 reload 更新）
-  ctx.notifier?.send('fatal', `Bot 停止等人工（${label}）`, err?.message ?? String(err))
   let exited = false
   // 硬杀兜底（同 connection.js fatal 路径——Windows exit(2) 偶发不生效，
   // 残留进程保持连接导致后续重启 duplicate_login）
@@ -54,6 +55,12 @@ function fatalExit (err, label) {
     const t = setTimeout(() => process.kill(process.pid), 1000)
     t.unref()
   }
+  // fatal 停服推送（无人值守时唯一感知通道；ctx.notifier 随 reload 更新）：
+  // 先 await 通知（≤3s）再退出——fire-and-forget 后立即 exit(2) 会让 fetch
+  // 来不及完成，通知静默丢失
+  try {
+    await withTimeout(Promise.resolve(ctx.notifier?.send('fatal', `Bot 停止等人工（${label}）`, err?.message ?? String(err))), 3000, 'notify timeout')
+  } catch { /* 通知失败不阻塞退出（尽力而为） */ }
   try { logger.flush(exitNow) } catch { exitNow() }
   setTimeout(exitNow, 1000)
 }
@@ -109,7 +116,10 @@ const conn = new ConnectionManager(cfg, logger, {
       // unhandledRejection → fatalExit 停服（teardown 内部虽全防御，纵深防线）
       layer.queue(() => layer.teardown()).catch(err => logger.warn({ err: err.message }, 'teardown 失败'))
     }
-  }
+  },
+  // fatal 断线通知（无人值守唯一感知通道）：classified = 断线分类结果——
+  // 此前致命断线路径无任何 notifier 调用，README 承诺的 fatal 推送不成立
+  onFatal: (classified) => ctx.notifier?.send('fatal', '致命断线，退出等待人工介入', classified?.detail ?? '')
 })
 ctx.conn = conn
 

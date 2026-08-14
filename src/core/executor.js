@@ -22,7 +22,25 @@ import { createAuditLogger } from './audit.js'
  */
 export function createActionExecutor (ctx, deps = {}) {
   const primitives = deps.primitives ?? createPrimitiveRegistry(ctx)
-  const audit = deps.audit === undefined ? createAuditLogger({ dir: ctx.cfg?.log?.dir, logger: ctx.logger }) : deps.audit
+  // 审计随 log.dir 热重载动态解析（reload 不重建 executor——构造期快照 dir 会让
+  // 热重载后的动作继续写旧目录）；audit 实例本身进程级共享单例（dir+keepDays 键）
+  /** @type {{ append(entry: object): void }|null} */
+  let audit = deps.audit !== undefined ? /** @type {{ append(entry: object): void }|null} */ (deps.audit) : null
+  let auditDir = null
+  /** @returns {{ append(entry: object): void }|null} */
+  const getAudit = () => {
+    if (deps.audit !== undefined) return /** @type {{ append(entry: object): void }|null} */ (deps.audit)
+    const dir = ctx.cfg?.log?.dir ?? null
+    if (auditDir !== dir) {
+      auditDir = dir
+      try {
+        audit = createAuditLogger({ dir, keepDays: ctx.cfg?.log?.rotate?.keepDays, logger: ctx.logger })
+      } catch {
+        audit = null
+      }
+    }
+    return audit
+  }
   const maxActionsPerCall = ctx.cfg?.l2?.maxActionsPerCall ?? 8
   // follow_player 的"跟随我"指代消解：handler 优先读 runtime.user（per-action
   // 不可变），ctx._caller 仅作兼容兜底——见 runAction 的注释
@@ -44,8 +62,9 @@ export function createActionExecutor (ctx, deps = {}) {
     const entry = { op, args: args ?? {}, ok: false, result: null, durationMs: 0 }
     const finish = async () => {
       entry.durationMs = Date.now() - t0
-      if (audit) {
-        try { audit.append({ ...entry, source, user, taskId }) } catch (err) { ctx.logger.warn({ err: err.message }, '审计写入失败') }
+      const auditLogger = getAudit()
+      if (auditLogger) {
+        try { auditLogger.append({ ...entry, source, user, taskId }) } catch (err) { ctx.logger.warn({ err: err.message }, '审计写入失败') }
       }
       return entry
     }
@@ -88,10 +107,24 @@ export function createActionExecutor (ctx, deps = {}) {
       // 覆盖它，指代消解一律优先 per-action 的 runtime.user（见 task.js）
       const prevCaller = ctx._caller
       ctx._caller = user
+      // per-run signal：executor 超时只拒绝等待会让 handler 继续后台真实执行
+      //（幽灵动作——继续喂食/挖掘/移动且不落审计、与下一动作争抢 pathfinder）。
+      // 超时触发 onTimeout → abort per-run signal → handler 内部可取消点
+      //（raceAbort/谓词）立即收手；外部 signal（任务 stop/断线）经监听器转发
+      const runSignal = new AbortController()
+      const onExternalAbort = () => runSignal.abort()
       let result
       try {
-        result = await withTimeout(p.handler(ctx, args ?? {}, { signal, user, taskId }), p.timeoutMs, `${op} timeout`)
+        if (signal?.aborted) runSignal.abort()
+        else signal?.addEventListener('abort', onExternalAbort, { once: true })
+        result = await withTimeout(
+          p.handler(ctx, args ?? {}, { signal: runSignal.signal, user, taskId }),
+          p.timeoutMs,
+          `${op} timeout`,
+          () => runSignal.abort()
+        )
       } finally {
+        signal?.removeEventListener('abort', onExternalAbort)
         ctx._caller = prevCaller
         if (p.exclusiveClass !== 'readonly') actionBusy = false
       }
@@ -116,9 +149,10 @@ export function createActionExecutor (ctx, deps = {}) {
   async function executeBatch (actions, opts = {}) {
     // 解析期拒绝也写审计——自主行为追溯不得有静默空洞（整批拒/缺 op 也留痕）
     const logRejected = (result) => {
-      if (!audit) return
+      const auditLogger = getAudit()
+      if (!auditLogger) return
       try {
-        audit.append({ op: 'batch', args: null, ok: false, result, durationMs: 0, source: opts.source ?? 'llm', user: opts.user, taskId: opts.taskId })
+        auditLogger.append({ op: 'batch', args: null, ok: false, result, durationMs: 0, source: opts.source ?? 'llm', user: opts.user, taskId: opts.taskId })
       } catch (err) { ctx.logger.warn({ err: err.message }, '审计写入失败') }
     }
     if (!Array.isArray(actions) || actions.length === 0) {

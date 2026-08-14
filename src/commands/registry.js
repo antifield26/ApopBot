@@ -36,6 +36,32 @@ export class CommandRegistry {
   }
 
   /**
+   * op 级操作冷却检查（混合权限命令在 handler 内 op 门后调用——def.permission
+   * 'all' 的命令不受 dispatch 冷却约束，此前 !home set/!agent act 等可绕过防刷屏）。
+   * @param {string} sender
+   * @param {Record<string, any>} cfg
+   * @returns {{ limited: boolean, remain: number }}
+   */
+  checkOpCooldown (sender, cfg) {
+    const cooldownMs = cfg?.chat?.commandCooldownMs ?? 750
+    const now = Date.now()
+    const last = this._lastDispatch.get(sender) ?? 0
+    if (now - last < cooldownMs) {
+      return { limited: true, remain: Math.ceil((cooldownMs - (now - last)) / 1000) }
+    }
+    return { limited: false, remain: 0 }
+  }
+
+  /** 记录 op 级操作分发时间（checkOpCooldown 的配套写入；与 dispatch 共用 Map）。 */
+  markOpDispatch (sender) {
+    this._lastDispatch.set(sender, Date.now())
+    // 上限 64：以 sender 为键的 Map 长期运行无限增长是微内存泄漏
+    if (this._lastDispatch.size > 64) {
+      this._lastDispatch.delete(this._lastDispatch.keys().next().value) // Map 插入序：删最旧
+    }
+  }
+
+  /**
    * 分发一条聊天消息。
    * @param {string} line 完整消息（含 ! 前缀）
    * @param {{ sender: string, ctx: Record<string, any> }} dispatchCtx 命令上下文 { bot, cfg, logger, tasks, conn, agent, plugins }
@@ -59,21 +85,15 @@ export class CommandRegistry {
         this.log.warn({ sender, cmd: name }, 'permission denied')
         return true
       }
-      // op 命令速率限制（防刷屏；all 命令不限制）
-      const cooldownMs = ctx.cfg.chat?.commandCooldownMs ?? 750
-      const now = Date.now()
-      const last = this._lastDispatch.get(sender) ?? 0
-      if (now - last < cooldownMs) {
+      // op 命令速率限制（防刷屏；all 命令不限制——混合权限子命令在 handler 内
+      // 经 checkOpCooldown/markOpDispatch 自检）
+      const cd = this.checkOpCooldown(sender, ctx.cfg)
+      if (cd.limited) {
         this.log.warn({ sender, cmd: name }, 'command rate limited')
-        const remain = Math.ceil((cooldownMs - (now - last)) / 1000)
-        await sendChat(ctx.bot, `§c命令冷却中（${remain}s 后可再试）`, ctx.cfg.chat?.maxLength)
+        await sendChat(ctx.bot, `§c命令冷却中（${cd.remain}s 后可再试）`, ctx.cfg.chat?.maxLength)
         return true
       }
-      this._lastDispatch.set(sender, now)
-      // 上限 64：以 sender 为键的 Map 长期运行无限增长是微内存泄漏
-      if (this._lastDispatch.size > 64) {
-        this._lastDispatch.delete(this._lastDispatch.keys().next().value) // Map 插入序：删最旧
-      }
+      this.markOpDispatch(sender)
     }
 
     this.log.debug({ sender, cmd: name, args }, 'command dispatched')

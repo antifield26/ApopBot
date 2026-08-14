@@ -19,7 +19,7 @@ export class ConnectionManager {
   /**
    * @param {Record<string, any>} cfg 完整配置
    * @param {import('pino').Logger} logger
-   * @param {{ onSpawn?: (bot: import('mineflayer').Bot) => void, onStateChange?: (state: string) => void, onPluginsReady?: (plugins: object) => void }} hooks
+   * @param {{ onSpawn?: (bot: import('mineflayer').Bot) => void, onStateChange?: (state: string) => void, onPluginsReady?: (plugins: object) => void, onFatal?: (classified: { type: string, isFatal: boolean, detail: string }) => Promise<void>|void }} hooks
    * @param {{ createBot?: (cfg: object) => import('mineflayer').Bot, loadMineflayerPlugins?: (bot: import('mineflayer').Bot, cfg: object, logger: object) => Promise<object> }} deps 测试注入
    */
   constructor (cfg, logger, hooks = {}, deps = {}) {
@@ -218,7 +218,9 @@ export class ConnectionManager {
       this.log.fatal({ type: classified.type, reason: classified.detail },
         '致命断线原因，退出等待人工介入（服务管理器已配置为 fatal 退出不自动重启）')
       this._fatalExit = true
-      // 退出前 flush pino transport（异步，直接 exit 会丢最后一条 fatal 日志）；300ms 兜底防卡死
+      // 退出前：fatal 停服通知（onFatal 钩子——此前致命断线路径无任何 webhook
+      // 推送，无人值守时唯一感知通道静默失效）→ flush pino transport（异步，
+      // 直接 exit 会丢最后一条 fatal 日志）。通知 ≤3s 尽力而为，不阻塞退出
       let exited = false
       // 硬杀兜底：实测 Windows 下 process.exit(2) 偶发不生效（flush 阻塞事件循环
       // 时 300ms 兜底 timer 不触发）——残留进程保持服务器连接，后续重启
@@ -233,8 +235,13 @@ export class ConnectionManager {
         const t = setTimeout(() => process.kill(process.pid), 1000)
         t.unref()
       }
-      try { this.log.flush(exitNow) } catch { /* logger stub 可能无 flush */ }
-      setTimeout(exitNow, 300)
+      void (async () => {
+        try {
+          await withTimeout(Promise.resolve(this.hooks.onFatal?.(classified)), 3000, 'notify timeout')
+        } catch { /* 通知失败不阻塞退出（尽力而为） */ }
+        try { this.log.flush(exitNow) } catch { /* logger stub 可能无 flush */ }
+        setTimeout(exitNow, 300)
+      })()
       return
     }
 
